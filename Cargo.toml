@@ -1,0 +1,12 @@
+[package]
+name = "dkls23"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+curv-kzen = "0.10.0"
+bitcoin_hashes = "0.12.0"
+rand = "0.8.5"
+hex = "0.4.3"
