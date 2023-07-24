@@ -15,8 +15,10 @@ use bitcoin_hashes::{Hash, sha256};
 use curv::elliptic::curves::{Secp256k1, Scalar, Point};
 use curv::arithmetic::*;
 
+use crate::SECURITY;
+
 //We are using SHA-256, so the hash values have 256 bits
-pub type HashOutput = [u8;32];
+pub type HashOutput = [u8;SECURITY];
 
 //From bytes to bytes
 pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
