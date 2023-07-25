@@ -113,7 +113,6 @@ pub fn dkg_step3(party_index: u16, session_id: &[u8], poly_fragments: &Vec<Scala
 }
 
 /// Step 4 is a communication round (see the description below).
-/// At the end, it should produce an instance of the following struct:
 
 /// Step 5 - Each party validates the other proofs. They also recover the "public keys fragements" from the other parties.
 /// Finally, a consistency check is done. In the process, the publick key is computed (Step 6).
