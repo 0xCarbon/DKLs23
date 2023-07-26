@@ -14,6 +14,8 @@
 /// the authors suggest some replacements for their VSOT protocol for better performance
 /// and better round counts. The DKLs23 paper (https://eprint.iacr.org/2023/765.pdf) especifically
 /// suggests the endemic OT protocol of Zhou et al.: https://eprint.iacr.org/2022/1525.pdf.
+/// 
+/// A solution for changing the session id is needed when working with batches.
 
 
 use curv::elliptic::curves::{Scalar, Point, Secp256k1};
@@ -163,6 +165,9 @@ impl Sender {
     // private messages containg the session id.
     // Remark: our phases are not the same as the phases from the paper.
 
+    // Except for the first phase, we provide a "batch" version that reproduce the
+    // protocol multiple times. It will be used for the OT extension.
+
     /// Phase 1 = Steps 1 and 2 ("Public key" phase in the paper)
     /// Input: Session id
     /// Output: Sender ready to participate and a proof of knowledge
@@ -190,6 +195,23 @@ impl Sender {
         (pads, hashes, double_hash_pad0, challenge)
     }
 
+    pub fn phase2batch(&self, batch_size: usize, session_id: &[u8], vec_encoded_choice_bit: &Vec<Point<Secp256k1>>) -> (Vec<SenderOutput>, Vec<SenderHashData>, Vec<HashOutput>, Vec<HashOutput>) {
+        let mut vec_pads: Vec<SenderOutput> = Vec::with_capacity(batch_size);
+        let mut vec_hashes: Vec<SenderHashData> = Vec::with_capacity(batch_size);
+        let mut vec_double: Vec<HashOutput> = Vec::with_capacity(batch_size);
+        let mut vec_challenge: Vec<HashOutput> = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            //DECIDE HOW TO UPDATE THE SESSION ID.
+            //For the moment, we use the same session id.
+            let (pads, hashes, double, challenge) = self.phase2output(session_id, &vec_encoded_choice_bit[i]);
+            vec_pads.push(pads);
+            vec_hashes.push(hashes);
+            vec_double.push(double);
+            vec_challenge.push(challenge);
+        }
+        (vec_pads, vec_hashes, vec_double, vec_challenge)
+    }
+
     // Communication round 3
     // The sender transmits the challenge to the receiver.
 
@@ -201,6 +223,16 @@ impl Sender {
     /// Output: Abort message (if verification fails)
     pub fn phase3verify(&self, double_hash_pad0: &HashOutput, response: &HashOutput) -> Result<(),ErrorOT> {
         self.step7openchallenge(double_hash_pad0, response)
+    }
+
+    pub fn phase3batch(&self, batch_size: usize, vec_double_hash_pad0: &Vec<HashOutput>, vec_response: &Vec<HashOutput>) -> Result<(),ErrorOT> {
+        for i in 0..batch_size {
+            let result = self.phase3verify(&vec_double_hash_pad0[i], &vec_response[i]);
+            if let Err(error) = result {
+                return Err(ErrorOT::new(&format!("Batch, iteration {}: {:?}", i, error.description)));
+            }
+        }
+        Ok(())
     }
 
     // Communication round 5
@@ -321,6 +353,8 @@ impl Receiver {
     // private messages containg the session id.
     // Remark: our phases are not the same as the phases from the paper.
 
+    // Except for the first phase, we provide a "batch" version that reproduce the
+    // protocol multiple times. It will be used for the OT extension.
 
     // Communication round 1
     // The receiver receives a proof from the sender.
@@ -342,6 +376,19 @@ impl Receiver {
         self.step3padtransfer(session_id, choice_bit)
     }
 
+    pub fn phase2batch(&self, batch_size: usize, session_id: &[u8], vec_choice_bit: &Vec<bool>) -> (Vec<ReceiverOutput>, Vec<Point<Secp256k1>>) {
+        let mut vec_output: Vec<ReceiverOutput> = Vec::with_capacity(batch_size);
+        let mut vec_encoded: Vec<Point<Secp256k1>> = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            //DECIDE HOW TO UPDATE THE SESSION ID.
+            //For the moment, we use the same session id.
+            let (output, encoded) = self.phase2padtransfer(session_id, vec_choice_bit[i]);
+            vec_output.push(output);
+            vec_encoded.push(encoded);
+        }
+        (vec_output, vec_encoded)
+    }
+
     // Communication round 2
     // The receiver sends his choice bit encoded.
 
@@ -355,6 +402,19 @@ impl Receiver {
         self.step6respond(session_id, output, challenge)
     }
 
+    pub fn phase3batch(&self, batch_size: usize, session_id: &[u8], vec_output: &Vec<ReceiverOutput>, vec_challenge: &Vec<HashOutput>) -> (Vec<ReceiverHashData>, Vec<HashOutput>) {
+        let mut vec_hashes: Vec<ReceiverHashData> = Vec::with_capacity(batch_size);
+        let mut vec_response: Vec<HashOutput> = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            //DECIDE HOW TO UPDATE THE SESSION ID.
+            //For the moment, we use the same session id.
+            let (hashes, response) = self.phase3respond(session_id, &vec_output[i], &vec_challenge[i]);
+            vec_hashes.push(hashes);
+            vec_response.push(response);
+        }
+        (vec_hashes, vec_response)
+    }
+
     // Communication round 4
     // The receiver sends his response to the challenge.
 
@@ -366,6 +426,18 @@ impl Receiver {
     /// Output: Abort message (if verification fails)
     pub fn phase4verification(&self, session_id: &[u8], output: &ReceiverOutput, hashes: &ReceiverHashData, sender_hashes: &SenderHashData) -> Result<(),ErrorOT> {
         self.step8verification(session_id, output, hashes, sender_hashes)
+    }
+
+    pub fn phase4batch(&self, batch_size: usize, session_id: &[u8], vec_output: &Vec<ReceiverOutput>, vec_hashes: &Vec<ReceiverHashData>, vec_sender_hashes: &Vec<SenderHashData>) -> Result<(),ErrorOT> {
+        for i in 0..batch_size {
+            //DECIDE HOW TO UPDATE THE SESSION ID.
+            //For the moment, we use the same session id.
+            let result = self.phase4verification(session_id, &vec_output[i], &vec_hashes[i], &vec_sender_hashes[i]);
+            if let Err(error) = result {
+                return Err(ErrorOT::new(&format!("Batch, iteration {}: {:?}", i, error.description)));
+            }
+        }
+        Ok(())
     }
 
 }
@@ -426,6 +498,45 @@ pub mod tests {
         Ok((sender_output,receiver_output))
     }
 
+    // Batch version for the previous function.
+    pub fn ideal_functionality_batch(session_id: &[u8], sender: &Sender, receiver: &Receiver, choice_bits: &Vec<bool>) -> Result<(Vec<SenderOutput>, Vec<ReceiverOutput>),ErrorOT> {
+
+        let batch_size = choice_bits.len();
+
+        //Phase 2 - Receiver
+        let (vec_receiver_output, vec_encoded_choice_bit) = receiver.phase2batch(batch_size, session_id, choice_bits);
+
+        //Receiver transmits encoded_choice_bit
+
+        //Phase 2 - Sender
+        let (vec_sender_output, vec_sender_hashes, vec_sender_double_hash, vec_challenge) = sender.phase2batch(batch_size, session_id, &vec_encoded_choice_bit);
+
+        //Sender transmits challenge
+
+        //Phase 3 - Receiver
+        let (vec_receiver_hashes, vec_response) = receiver.phase3batch(batch_size, session_id, &vec_receiver_output, &vec_challenge);
+
+        //Receiver transmits response
+
+        //Phase 3 - Sender
+        let sender_result = sender.phase3batch(batch_size, &vec_sender_double_hash, &vec_response);
+
+        if let Err(error) = sender_result {
+            return Err(error);
+        }
+
+        //Sender transmits sender_hashes
+
+        //Phase 4 - Receiver
+        let receiver_result = receiver.phase4batch(batch_size, session_id, &vec_receiver_output, &vec_receiver_hashes, &vec_sender_hashes);
+
+        if let Err(error) = receiver_result {
+            return Err(error);
+        }
+
+        Ok((vec_sender_output,vec_receiver_output))
+    }
+
     #[test]
     fn test_ot_base() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
@@ -463,5 +574,47 @@ pub mod tests {
         }
     }
 
+    #[test]
+    fn test_ot_base_batch() {
+        let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
+        //Initialize and verify if it worked
+        let init_result = ideal_initialization(&session_id);
+
+        let sender: Sender;
+        let receiver: Receiver;
+        match init_result {
+            Ok((s,r)) => {
+                sender = s;
+                receiver = r;
+            },
+            Err(error) => {
+                panic!("OT error: {:?}", error.description);
+            },
+        }
+
+        //Execute the protocol and verify if it did what it should do.
+        let batch_size = 256;
+        let mut vec_choice_bit: Vec<bool> = Vec::with_capacity(batch_size);
+        for _ in 0..batch_size {
+            vec_choice_bit.push(rand::random());
+        }
+
+        let func_result = ideal_functionality_batch(&session_id, &sender, &receiver, &vec_choice_bit);
+        match func_result {
+            Ok((vec_sender_output, vec_receiver_output)) => {
+                for i in 0..batch_size {
+                    //Depending on the choice the receiver made, he should receive one of the pads.
+                    if vec_receiver_output[i].choice_bit {
+                        assert_eq!(vec_sender_output[i].pad1, vec_receiver_output[i].pad);
+                    } else {
+                        assert_eq!(vec_sender_output[i].pad0, vec_receiver_output[i].pad);
+                    }
+                }
+            },
+            Err(error) => {
+                panic!("OT error: {:?}", error.description);
+            },
+        }
+    }
 }

@@ -1,4 +1,5 @@
 pub mod ot_base;
+pub mod ot_extension;
 
 #[derive(Debug, Clone)]
 pub struct ErrorOT {
