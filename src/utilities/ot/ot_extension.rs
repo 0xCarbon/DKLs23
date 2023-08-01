@@ -27,11 +27,11 @@ use crate::utilities::ot::ot_base::*;
 // If you do, some parts of the code must be changed.
 const KAPPA: usize = RAW_SECURITY;
 const OT_SECURITY: usize = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
-const BATCH_SIZE: usize = RAW_SECURITY + 2*STAT_SECURITY;
+pub const BATCH_SIZE: usize = RAW_SECURITY + 2*STAT_SECURITY;
 const EXTENDED_BATCH_SIZE: usize = BATCH_SIZE + OT_SECURITY;
 
-type PRGOutput = [u8; EXTENDED_BATCH_SIZE/8]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
-type FieldElement = [u8; OT_SECURITY/8];      //The same for OT_SECURITY
+pub type PRGOutput = [u8; EXTENDED_BATCH_SIZE/8]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
+pub type FieldElement = [u8; OT_SECURITY/8];      //The same for OT_SECURITY
 
 pub struct OTESender {
     correlation: Vec<bool>, //We will deal with bits separetely
@@ -85,7 +85,7 @@ impl OTESender {
         receiver.phase3batch(KAPPA, session_id, output, challenge)
     }
 
-    pub fn init_phase4(receiver: &Receiver, session_id: &[u8], output: &Vec<ReceiverOutput>, hashes: &Vec<ReceiverHashData>, sender_hashes: &Vec<SenderHashData>) -> Result<(),ErrorOT>{
+    pub fn init_phase4(receiver: &Receiver, session_id: &[u8], output: &Vec<ReceiverOutput>, hashes: &Vec<ReceiverHashData>, sender_hashes: &Vec<SenderHashData>) -> Result<(),ErrorOT> {
         receiver.phase4batch(KAPPA, session_id, output, hashes, sender_hashes)
     }
 
@@ -535,8 +535,6 @@ pub fn cut_and_transpose(input: &Vec<PRGOutput>) -> Vec<HashOutput> {
 
     output
 }
-
-
 
 /// This function implements multiplication in the finite field of order 2^208.
 /// 
