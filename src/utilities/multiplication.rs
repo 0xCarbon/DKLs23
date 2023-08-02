@@ -12,7 +12,7 @@ use crate::utilities::proofs::DLogProof;
 
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::ot::ot_base::*;
-use crate::utilities::ot::ot_extension::{OTESender, OTEReceiver, BATCH_SIZE, PRGOutput, FieldElement};
+use crate::utilities::ot::ot_extension::{OTESender, OTEReceiver, OTEDataToSender, BATCH_SIZE, PRGOutput};
 
 // Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
 const L: usize = 2;
@@ -25,6 +25,23 @@ pub struct MulSender {
 pub struct MulReceiver {
     public_gadget: Vec<Scalar<Secp256k1>>,
     ote_receiver: OTEReceiver,
+}
+
+// These structs are for better readability of the code.
+pub struct MulDataToReceiver {
+    pub tau_tilde: Vec<Vec<Scalar<Secp256k1>>>,
+    pub tau_hat: Vec<Vec<Scalar<Secp256k1>>>,
+    pub verify_r: HashOutput,
+    pub verify_u: Vec<Scalar<Secp256k1>>,
+    pub gamma_sender: Vec<Scalar<Secp256k1>>,
+}
+
+pub struct MulDataToKeepReceiver {
+    pub b: Scalar<Secp256k1>,
+    pub choice_bits: Vec<bool>,
+    pub extended_seeds: Vec<PRGOutput>,
+    pub chi_tilde: Vec<Scalar<Secp256k1>>,
+    pub chi_hat: Vec<Scalar<Secp256k1>>,
 }
 
 // We create a new struct for errors in this protocol.
@@ -91,7 +108,9 @@ impl MulSender {
     // the same as the parameter l from DKLs23. To highlight the difference,
     // we will always denote the DKLs23 parameter by a capital L.
 
-    pub fn run(&self, session_id: &[u8], input: &Vec<Scalar<Secp256k1>>, u: &Vec<PRGOutput>, verify_x: &FieldElement, verify_t: &Vec<FieldElement>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Vec<Scalar<Secp256k1>>>, Vec<Vec<Scalar<Secp256k1>>>, HashOutput, Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorMul> {
+    // Input: Protocol's input and data coming from receiver.
+    // Output: Protocol's output and data to receiver.
+    pub fn run(&self, session_id: &[u8], input: &Vec<Scalar<Secp256k1>>, data: &OTEDataToSender) -> Result<(Vec<Scalar<Secp256k1>>, MulDataToReceiver), ErrorMul> {
 
         // RANDOMIZED MULTIPLICATION
 
@@ -151,7 +170,7 @@ impl MulSender {
         for i in 0..L {
             
             //Running OT protocol for tilde values.
-            let result = self.ote_sender.run(session_id, &correlation_tilde[i], u, verify_x, verify_t);
+            let result = self.ote_sender.run(session_id, &correlation_tilde[i], data);
     
             match result {
                 Ok((output,tau)) => {
@@ -164,7 +183,7 @@ impl MulSender {
             }
 
             //Running OT protocol for hat values.
-            let result = self.ote_sender.run(session_id, &correlation_hat[i], u, verify_x, verify_t);
+            let result = self.ote_sender.run(session_id, &correlation_hat[i], data);
     
             match result {
                 Ok((output,tau)) => {
@@ -179,8 +198,8 @@ impl MulSender {
 
         // Step 4 - We compute the shared random values.
 
-        // As a transcript from Step 3, we use u, verify_x and verify_t.
-        let transcript = [u.concat(), verify_x.to_vec(), verify_t.concat()].concat();
+        // We use data as a transcript from Step 3.
+        let transcript = [data.u.concat(), data.verify_x.to_vec(), data.verify_t.concat()].concat();
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
@@ -252,16 +271,16 @@ impl MulSender {
         }
 
         // We now return all values.
+        
+        let data_to_receiver = MulDataToReceiver {
+            tau_tilde,
+            tau_hat,
+            verify_r,
+            verify_u,
+            gamma_sender: gamma,
+        };
 
-        // output is kept by the sender as the protocol's output.
-        // tau_tilde and tau_hat are transmitted to the receiver
-        // for him to finish the OT protocol.
-        // verify_r and verify_u are also trasmitted so that the
-        // receiver can verify the multiplication.
-        // gamma is transmitted so that the receiver can finish
-        // the protocol.
-
-        Ok((output, tau_tilde, tau_hat, verify_r, verify_u, gamma))
+        Ok((output, data_to_receiver))
     }
 }
 
@@ -317,7 +336,10 @@ impl MulReceiver {
     // the same as the parameter l from DKLs23. To highlight the difference,
     // we will always denote the DKLs23 parameter by a capital L.
 
-    pub fn run_phase1(&self, session_id: &[u8]) -> (Vec<bool>, Scalar<Secp256k1>, Vec<PRGOutput>, Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>, Vec<PRGOutput>, FieldElement, Vec<FieldElement>) {
+    // Input: Only the session id.
+    // Output: First of protocol's outputs, data to keep for next phase and data to the sender.
+    // (Recall that the receiver gets the random factor from the multiplication as output.) 
+    pub fn run_phase1(&self, session_id: &[u8]) -> (Scalar<Secp256k1>, MulDataToKeepReceiver, OTEDataToSender) {
 
         // RANDOMIZED MULTIPLICATION
 
@@ -345,12 +367,12 @@ impl MulReceiver {
         // cannot get the output immediately. This will only be computed
         // at the beginning of the next phase for the receiver.
 
-        let (extended_seeds, u, verify_x, verify_t) = self.ote_receiver.run_phase1(session_id, &choice_bits);
+        let (extended_seeds, data_to_sender) = self.ote_receiver.run_phase1(session_id, &choice_bits);
 
         // Step 4 - We compute the shared random values.
 
-        // As a transcript from Step 3, we use u, verify_x and verify_t.
-        let transcript = [u.concat(), verify_x.to_vec(), verify_t.concat()].concat();
+        // We use data_to_sender as a transcript from Step 3.
+        let transcript = [data_to_sender.u.concat(), data_to_sender.verify_x.to_vec(), data_to_sender.verify_t.concat()].concat();
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
@@ -369,12 +391,22 @@ impl MulReceiver {
         // Step 5 - No action for the receiver, but he will receive
         // some values for the next step, so we stop here.
 
-        // The first five values are kept for the next phase.
-        // The last three are trasmitted to the sender.  
-        (choice_bits, b, extended_seeds, chi_tilde, chi_hat, u, verify_x, verify_t)
+        // We now return all values.
+
+        let data_to_keep = MulDataToKeepReceiver {
+            b: b.clone(),
+            choice_bits,
+            extended_seeds,
+            chi_tilde,
+            chi_hat,
+        };
+
+        (b, data_to_keep, data_to_sender)
     }
 
-    pub fn run_phase2(&self, session_id: &[u8], choice_bits: &Vec<bool>, extended_seeds: &Vec<PRGOutput>, tau_tilde: &Vec<Vec<Scalar<Secp256k1>>>, tau_hat: &Vec<Vec<Scalar<Secp256k1>>>, chi_tilde: &Vec<Scalar<Secp256k1>>, chi_hat: &Vec<Scalar<Secp256k1>>, verify_r: &HashOutput, verify_u: &Vec<Scalar<Secp256k1>>, b: &Scalar<Secp256k1>, gamma_sender: &Vec<Scalar<Secp256k1>>) -> Result<Vec<Scalar<Secp256k1>>,ErrorMul> {
+    // Input: Data from previous phase and data from sender.
+    // Output: Second of protocol's outputs.
+    pub fn run_phase2(&self, session_id: &[u8], data_kept: &MulDataToKeepReceiver, data_received: &MulDataToReceiver) -> Result<Vec<Scalar<Secp256k1>>,ErrorMul> {
 
         // Step 3 (Conclusion) - We conclude the OT protocol.
 
@@ -385,8 +417,8 @@ impl MulReceiver {
         let mut z_tilde: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
         let mut z_hat: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
         for i in 0..L {
-            let output_tilde = self.ote_receiver.run_phase2(session_id, choice_bits, extended_seeds, &tau_tilde[i]);
-            let output_hat = self.ote_receiver.run_phase2(session_id, choice_bits, extended_seeds, &tau_hat[i]);
+            let output_tilde = self.ote_receiver.run_phase2(session_id, &data_kept.choice_bits, &data_kept.extended_seeds, &data_received.tau_tilde[i]);
+            let output_hat = self.ote_receiver.run_phase2(session_id, &data_kept.choice_bits, &data_kept.extended_seeds, &data_received.tau_hat[i]);
 
             z_tilde.push(output_tilde);
             z_hat.push(output_hat);
@@ -409,9 +441,9 @@ impl MulReceiver {
             for j in 0..BATCH_SIZE {
 
                 // The entry depends on the choice bits.
-                let mut entry = (-(&chi_tilde[i] * &z_tilde[i][j])) - (&chi_hat[i] * &z_hat[i][j]);
-                if choice_bits[j] {
-                    entry = entry + &verify_u[i];
+                let mut entry = (-(&data_kept.chi_tilde[i] * &z_tilde[i][j])) - (&data_kept.chi_hat[i] * &z_hat[i][j]);
+                if data_kept.choice_bits[j] {
+                    entry = entry + &data_received.verify_u[i];
                 }
 
                 let entry_as_bytes = scalar_to_bytes(&entry);
@@ -426,7 +458,7 @@ impl MulReceiver {
         let expected_verify_r: HashOutput = hash(&r_as_bytes, session_id);
 
         // We compare the values.
-        if *verify_r != expected_verify_r {
+        if data_received.verify_r != expected_verify_r {
             return Err(ErrorMul::new("Sender cheated in multiplication protocol: Consistency check failed!"));
         }
 
@@ -444,7 +476,7 @@ impl MulReceiver {
             for j in 0..BATCH_SIZE {
                 summation = summation + (&self.public_gadget[j] * &z_tilde[i][j]);
             }
-            let final_sum = (b * &gamma_sender[i]) + summation; 
+            let final_sum = (&data_kept.b * &data_received.gamma_sender[i]) + summation; 
             output.push(final_sum);
         }
 
@@ -498,31 +530,23 @@ mod tests {
     // As before, this should not be used for real applications.
     pub fn ideal_functionality_mul(session_id: &[u8], mul_sender: &MulSender, mul_receiver: &MulReceiver, sender_input: &Vec<Scalar<Secp256k1>>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>, Scalar<Secp256k1>), ErrorMul> {
 
-        let (choice_bits, b, extended_seeds, chi_tilde, chi_hat, u, verify_x, verify_t) = mul_receiver.run_phase1(session_id);
+        let (b, data_to_keep, data_to_sender) = mul_receiver.run_phase1(session_id);
 
-        let sender_result = mul_sender.run(session_id, sender_input, &u, &verify_x, &verify_t);
+        let sender_result = mul_sender.run(session_id, sender_input, &data_to_sender);
 
         let sender_output: Vec<Scalar<Secp256k1>>;
-        let tau_tilde: Vec<Vec<Scalar<Secp256k1>>>;
-        let tau_hat: Vec<Vec<Scalar<Secp256k1>>>;
-        let verify_r: HashOutput;
-        let verify_u: Vec<Scalar<Secp256k1>>;
-        let gamma_sender: Vec<Scalar<Secp256k1>>;
+        let data_to_receiver: MulDataToReceiver;
         match sender_result {
-            Ok((o, tt, th, vr, vu, g)) => {
-                sender_output = o;
-                tau_tilde = tt;
-                tau_hat = th;
-                verify_r = vr;
-                verify_u = vu;
-                gamma_sender = g;
+            Ok((output, data)) => {
+                sender_output = output;
+                data_to_receiver = data;
             },
             Err(error) => {
                 return Err(error);
             },
         }
 
-        let receiver_result = mul_receiver.run_phase2(session_id, &choice_bits, &extended_seeds, &tau_tilde, &tau_hat, &chi_tilde, &chi_hat, &verify_r, &verify_u, &b, &gamma_sender);
+        let receiver_result = mul_receiver.run_phase2(session_id, &data_to_keep, &data_to_receiver);
 
         let receiver_output: Vec<Scalar<Secp256k1>>;
         match receiver_result {

@@ -43,6 +43,13 @@ pub struct OTEReceiver {
     seeds1: Vec<HashOutput>,
 }
 
+// This struct is for better readability of the code.
+pub struct OTEDataToSender {
+    pub u: Vec<PRGOutput>,
+    pub verify_x: FieldElement,
+    pub verify_t: Vec<FieldElement>,
+}
+
 impl OTESender {
     
     // INITIALIZE
@@ -94,7 +101,7 @@ impl OTESender {
 
     // Input: Correlation for the points (as in Functionality 3 of DKLs19) and values transmitted by the receiver.
     // Output: Protocol's output and a value to be sent to the receiver.
-    pub fn run(&self, session_id: &[u8], input_correlation: &Vec<Scalar<Secp256k1>>, u: &Vec<PRGOutput>, verify_x: &FieldElement, verify_t: &Vec<FieldElement>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorOT> {
+    pub fn run(&self, session_id: &[u8], input_correlation: &Vec<Scalar<Secp256k1>>, data: &OTEDataToSender) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorOT> {
 
         // EXTEND
 
@@ -135,7 +142,7 @@ impl OTESender {
         for i in 0..KAPPA {
             let mut q_i = [0; EXTENDED_BATCH_SIZE/8];
             for j in 0..EXTENDED_BATCH_SIZE/8 {
-                q_i[j] = ((self.correlation[i] as u8) * u[i][j]) ^ extended_seeds[i][j];
+                q_i[j] = ((self.correlation[i] as u8) * data.u[i][j]) ^ extended_seeds[i][j];
             }
             q.push(q_i);
         }
@@ -157,7 +164,7 @@ impl OTESender {
         let salt2 = [&(2usize).to_be_bytes(), session_id].concat();
 
         // We concatenate the rows of the matrix u.
-        let msg = u.concat();
+        let msg = data.u.concat();
 
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; OT_SECURITY/8];
@@ -190,7 +197,7 @@ impl OTESender {
         for i in 0..KAPPA {
             let mut verify_sender_i = [0u8;OT_SECURITY/8];
             for k in 0..OT_SECURITY/8 {
-                verify_sender_i[k] = verify_t[i][k] ^ ((self.correlation[i] as u8) * verify_x[k]);
+                verify_sender_i[k] = data.verify_t[i][k] ^ ((self.correlation[i] as u8) * data.verify_x[k]);
             }
 
             verify_sender.push(verify_sender_i);
@@ -308,7 +315,7 @@ impl OTEReceiver {
 
     // Input: Choice bits.
     // Output: Extended seeds (used in the next phase) and values to be sent to the sender.
-    pub fn run_phase1(&self, session_id: &[u8], choice_bits: &Vec<bool>) -> (Vec<PRGOutput>, Vec<PRGOutput>, FieldElement, Vec<FieldElement>) {
+    pub fn run_phase1(&self, session_id: &[u8], choice_bits: &Vec<bool>) -> (Vec<PRGOutput>, OTEDataToSender) {
 
         // EXTEND
 
@@ -436,12 +443,18 @@ impl OTEReceiver {
 
         // Step 3 - No action for the receiver.
 
-        // extended_seeds0 has to be kept for the next phase.
-        // The other values are transmited to the sender.        
-        (extended_seeds0, u, verify_x, verify_t)
+        // These values are transmited to the sender.
+        let data_to_sender = OTEDataToSender {
+            u,
+            verify_x,
+            verify_t,
+        };
+
+        // extended_seeds0 has to be kept for the next phase.        
+        (extended_seeds0, data_to_sender)
     }
 
-    // Input: Previous inputs and value sent by the sender.
+    // Input: Previous inputs and value tau sent by the sender.
     // Output: Protocol's output.
     pub fn run_phase2(&self, session_id: &[u8], choice_bits: &Vec<bool>, extended_seeds: &Vec<PRGOutput>, tau: &Vec<Scalar<Secp256k1>>) -> Vec<Scalar<Secp256k1>> {
         
@@ -689,9 +702,11 @@ mod tests {
     // As before, this should not be used for real applications.
     pub fn ideal_functionality_ote(session_id: &[u8], ote_sender: &OTESender, ote_receiver: &OTEReceiver, sender_input_correlation: &Vec<Scalar<Secp256k1>>, receiver_choice_bits: &Vec<bool>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorOT> {
 
-        let (extended_seeds, u, verify_x, verify_t) = ote_receiver.run_phase1(session_id, receiver_choice_bits);
+        let (extended_seeds, data_to_sender) = ote_receiver.run_phase1(session_id, receiver_choice_bits);
 
-        let sender_result = ote_sender.run(session_id, sender_input_correlation, &u, &verify_x, &verify_t);
+        // Receiver keeps exteded_seeds and transmits data_to_sender.
+
+        let sender_result = ote_sender.run(session_id, sender_input_correlation, &data_to_sender);
 
         let sender_output: Vec<Scalar<Secp256k1>>;
         let tau: Vec<Scalar<Secp256k1>>;
@@ -699,6 +714,8 @@ mod tests {
             Ok((v0, t)) => { (sender_output, tau) = (v0,t); },
             Err(error) => { return Err(error); },
         }
+
+        // Sender transmits tau.
 
         let receiver_output = ote_receiver.run_phase2(session_id, receiver_choice_bits, &extended_seeds, &tau);
 
