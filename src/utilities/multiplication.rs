@@ -17,11 +17,13 @@ use crate::utilities::ot::ot_extension::{OTESender, OTEReceiver, OTEDataToSender
 // Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
 const L: usize = 2;
 
+#[derive(Clone)]
 pub struct MulSender {
     public_gadget: Vec<Scalar<Secp256k1>>,
     ote_sender: OTESender,
 }
 
+#[derive(Clone)]
 pub struct MulReceiver {
     public_gadget: Vec<Scalar<Secp256k1>>,
     ote_receiver: OTEReceiver,

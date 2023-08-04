@@ -5,13 +5,13 @@
 
 use crate::utilities::hashes::*;
 use crate::utilities::commits;
-use curv::arithmetic::*;
+
 use curv::elliptic::curves::{Scalar, Secp256k1};
 use rand::Rng;
 
 //Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
-type Seed = [u8; SECURITY];
+pub type Seed = [u8; SECURITY];
 
 //This struct represents the common seed a pair of parties shares.
 //The variable "lowest_index" verifies if the party that owns this
@@ -19,7 +19,7 @@ type Seed = [u8; SECURITY];
 #[derive(Debug, Clone)]
 pub struct SeedPair {
     lowest_index: bool,
-    index_counterparty: u16,
+    index_counterparty: usize,
     seed: Seed,
 }
 
@@ -47,7 +47,7 @@ impl ZeroShare {
     }
 
     /// For each pair, we create a common seed.
-    pub fn generate_seed_pair(index_party: u16, index_counterparty: u16, seed_party: &Seed, seed_counterparty: &Seed) -> SeedPair {
+    pub fn generate_seed_pair(index_party: usize, index_counterparty: usize, seed_party: &Seed, seed_counterparty: &Seed) -> SeedPair {
         
         //Instead of adding the seeds, as suggested in DKLs23, we apply the XOR operation.
         let mut seed: Seed = [0u8; SECURITY];
@@ -82,7 +82,7 @@ impl ZeroShare {
     /// for the "random number generator". This is achieved by using the current session id.
     /// Moreover, not all parties need to participate in this step, so we need to provide a
     /// list of counterparties.
-    pub fn compute(&self, counterparties: &Vec<u16>, session_id: &[u8]) -> Scalar<Secp256k1> {
+    pub fn compute(&self, counterparties: &Vec<usize>, session_id: &[u8]) -> Scalar<Secp256k1> {
         let mut share = Scalar::<Secp256k1>::zero();
         let seeds = self.seeds.clone();
         for seed_pair in seeds {
@@ -91,8 +91,7 @@ impl ZeroShare {
             if !counterparties.contains(&seed_pair.index_counterparty) { continue; }
 
             //Seeds generate fragments that add up to the share that will be returned.
-            let fragment_as_bytes = hash(&seed_pair.seed, session_id);
-            let fragment = Scalar::<Secp256k1>::from_bigint(&BigInt::from_bytes(&fragment_as_bytes));
+            let fragment = hash_as_scalar(&seed_pair.seed, session_id);
             
             //This sign guarantees that the shares from different parties add up to zero.
             if seed_pair.lowest_index {
@@ -143,21 +142,21 @@ mod tests {
                     let (seed_party,_,_) = step1[i][j];
                     let (seed_counterparty,_,_) = step1[j][i];
                     //We add 1 below because indexes for parties start at 1 and not 0.
-                    seeds.push(ZeroShare::generate_seed_pair((i+1) as u16, (j+1) as u16, &seed_party, &seed_counterparty));
+                    seeds.push(ZeroShare::generate_seed_pair(i+1, j+1, &seed_party, &seed_counterparty));
                 }
                 zero_shares.push(ZeroShare::initialize(seeds));
         }
 
         //We can finally execute the functionality.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let executing_parties: Vec<u16> = vec![1,3,5,7,8]; //These are the parties running the protocol.
+        let executing_parties: Vec<usize> = vec![1,3,5,7,8]; //These are the parties running the protocol.
         let mut shares: Vec<Scalar<Secp256k1>> = Vec::with_capacity(executing_parties.len()); 
         for party in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party);
             //Compute the share (there is a -1 because indexes for parties start at 1).
-            let share = zero_shares[(party - 1) as usize].compute(&counterparties, &session_id);
+            let share = zero_shares[party - 1].compute(&counterparties, &session_id);
             shares.push(share);
         }
 

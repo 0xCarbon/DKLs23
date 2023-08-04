@@ -33,11 +33,13 @@ const EXTENDED_BATCH_SIZE: usize = BATCH_SIZE + OT_SECURITY;
 pub type PRGOutput = [u8; EXTENDED_BATCH_SIZE/8]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
 pub type FieldElement = [u8; OT_SECURITY/8];      //The same for OT_SECURITY
 
+#[derive(Clone)]
 pub struct OTESender {
     correlation: Vec<bool>, //We will deal with bits separetely
     seeds: Vec<HashOutput>,
 }
 
+#[derive(Clone)]
 pub struct OTEReceiver {
     seeds0: Vec<HashOutput>,
     seeds1: Vec<HashOutput>,
