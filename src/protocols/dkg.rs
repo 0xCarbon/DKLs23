@@ -1,3 +1,11 @@
+/// This file implements Protocol 9.1 in https://eprint.iacr.org/2023/602.pdf,
+/// as instructed in DKLs23 (https://eprint.iacr.org/2023/765.pdf). It is
+/// the distributed key generation which setups the main signing protocol.
+/// 
+/// During the protocol, we also initialize the functionalities that will
+/// be used during signing. Their implementations can be found in the files
+/// zero_sharings.rs and multiplication.rs.
+
 use std::collections::HashMap;
 
 use curv::elliptic::curves::{Secp256k1, Scalar, Point};
@@ -150,8 +158,6 @@ impl PartiesMessage {
 ///////////////////////////////////////////////////////////////////////////////
 
 // DISTRIBUTED KEY GENERATION (DKG)
-// Implementation of Protocol 9.1 in https://eprint.iacr.org/2023/602.pdf, as instructed
-// in DKLs23 (https://eprint.iacr.org/2023/765.pdf).
 
 // STEPS
 // We implement each step of the protocol.
@@ -246,7 +252,7 @@ pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8],
 
 // We also include here the initialization procedures of Functionalities 3.4 and 3.5 of DKLs23 (https://eprint.iacr.org/2023/765.pdf).
 // The first one comes from the file zero_sharings.rs and needs two communication rounds.
-// The second one comes from the file multiplication.rs and needs four communication rounds.
+// The second one comes from the file multiplication.rs and needs five communication rounds.
 
 // Phase 1 = Steps 1 and 2
 // Input (DKG): Parameters for the key generation.
@@ -691,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    // 3-of-5 scenario
+    // General t-of-n scenario
     fn test_dkg_random() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
@@ -870,9 +876,9 @@ mod tests {
     // We now test if the initialization procedures don't abort.
 
     // Disclaimer: this implementation is not efficient, we
-    // are only testing if everything works! Note as well that,
+    // are only testing if everything works! Note as well that
     // parties are being simulated one after the other, but they
-    // should in reality execute the protocol simultaneously.
+    // should actually execute the protocol simultaneously.
 
     #[test]
     fn test_dkg_initialization() {
