@@ -30,6 +30,7 @@ pub struct MulReceiver {
 }
 
 // These structs are for better readability of the code.
+#[derive(Clone)]
 pub struct MulDataToReceiver {
     pub tau_tilde: Vec<Vec<Scalar<Secp256k1>>>,
     pub tau_hat: Vec<Vec<Scalar<Secp256k1>>>,
@@ -38,6 +39,7 @@ pub struct MulDataToReceiver {
     pub gamma_sender: Vec<Scalar<Secp256k1>>,
 }
 
+#[derive(Clone)]
 pub struct MulDataToKeepReceiver {
     pub b: Scalar<Secp256k1>,
     pub choice_bits: Vec<bool>,

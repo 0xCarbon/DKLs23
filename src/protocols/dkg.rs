@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use curv::elliptic::curves::{Secp256k1, Scalar, Point};
 use curv::cryptographic_primitives::secret_sharing::Polynomial;
 
-use crate::protocols::{Abort, Parameters, Party};
+use crate::protocols::{Abort, Parameters, Party, PartiesMessage};
 
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::proofs::DLogProof;
@@ -28,13 +28,6 @@ pub struct ProofCommitment {
 }
 
 ////////// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
-
-// This struct saves the sender and receiver of a message.
-#[derive(Clone)]
-pub struct PartiesMessage {
-    sender: usize,
-    receiver: usize,
-}
 
 // Initializing zero sharing protocol. 
 #[derive(Clone)]
@@ -137,24 +130,6 @@ pub struct KeepInitMulPhase5to6 {
     mul_receiver: MulReceiver,
 }
 
-//////////// USEFUL IMPLEMENTATIONS
-
-impl ProofCommitment {
-    pub fn new(index: usize, proof: DLogProof, commitment:HashOutput) -> ProofCommitment {
-        ProofCommitment {
-            index,
-            proof,
-            commitment,
-        }
-    }
-}
-
-impl PartiesMessage {
-    pub fn reverse(&self) -> PartiesMessage {
-        PartiesMessage { sender: self.receiver, receiver: self.sender }
-    }
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 // DISTRIBUTED KEY GENERATION (DKG)
@@ -185,7 +160,7 @@ pub fn dkg_step3(party_index: usize, session_id: &[u8], poly_fragments: &Vec<Sca
     let poly_point: Scalar<Secp256k1> = poly_fragments.iter().sum();
 
     let (proof, commitment) = DLogProof::prove_commit(&poly_point, session_id);
-    let proof_commitment = ProofCommitment::new(party_index, proof, commitment);
+    let proof_commitment = ProofCommitment { index: party_index, proof, commitment };
 
     (poly_point, proof_commitment)
 }
@@ -298,10 +273,8 @@ pub fn dkg_phase1(parameters: &Parameters, party_index: usize, session_id: &[u8]
         if i == party_index { continue; }
 
         // We first compute a new session id.
-        // As in Functionality 3.6 of DKLs23, we include the indexes from the parties.
-        // To distinguish it from other ids that may be used by these two parties, we
-        // also concatenate the string "mul-sid".
-        let mul_sid = ["mul-sid".as_bytes(), &party_index.to_be_bytes(), &i.to_be_bytes(), session_id].concat();
+        // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
+        let mul_sid = [&party_index.to_be_bytes(), &i.to_be_bytes(), session_id].concat();
 
         let (base_sender, proof, nonce) = MulReceiver::init_phase1(&mul_sid);
 
@@ -371,7 +344,7 @@ pub fn dkg_phase2(parameters: &Parameters, party_index: usize, session_id: &[u8]
 
         // We retrieve the id used for multiplication. Note that the first party
         // is the receiver and the second, the sender.
-        let mul_sid = ["mul-sid".as_bytes(), &their_index.to_be_bytes(), &my_index.to_be_bytes(), session_id].concat();
+        let mul_sid = [&their_index.to_be_bytes(), &my_index.to_be_bytes(), session_id].concat();
 
         // Although we are acting as a sender for the multiplication protocol,
         // we act as a receiver for the OT base protocol. Here, we verify if
@@ -458,7 +431,7 @@ pub fn dkg_phase3(parameters: &Parameters, session_id: &[u8], zero_kept: &HashMa
 
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
-            let mul_sid = ["mul-sid".as_bytes(), &my_index.to_be_bytes(), &their_index.to_be_bytes(), session_id].concat();
+            let mul_sid = [&my_index.to_be_bytes(), &their_index.to_be_bytes(), session_id].concat();
 
             // We continue executing the base OT.
             let (mul_receiver, sender_hashes, double_hash, challenge) = MulReceiver::init_phase2(&message_kept.base_sender, &mul_sid, &message_received.encoded, &message_kept.nonce);
@@ -518,7 +491,7 @@ pub fn dkg_phase4(parameters: &Parameters, party_index: usize, session_id: &[u8]
 
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
-            let mul_sid = ["mul-sid".as_bytes(), &their_index.to_be_bytes(), &my_index.to_be_bytes(), session_id].concat();
+            let mul_sid = [&their_index.to_be_bytes(), &my_index.to_be_bytes(), session_id].concat();
 
             // We continue executing the base OT.
             let (receiver_hashes, response) = MulSender::init_phase3(&message_kept.base_receiver, &mul_sid, &message_kept.receiver_output, &message_received.challenge);
@@ -610,7 +583,7 @@ pub fn dkg_phase6(parameters: &Parameters, party_index: usize, session_id: &[u8]
 
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
-            let mul_sid = ["mul-sid".as_bytes(), &their_index.to_be_bytes(), &my_index.to_be_bytes(), session_id].concat();
+            let mul_sid = [&their_index.to_be_bytes(), &my_index.to_be_bytes(), session_id].concat();
 
             let receiver_result = MulSender::init_phase4(&message_kept.base_receiver, &mul_sid, &message_kept.receiver_output, &message_kept.receiver_hashes, &message_received.sender_hashes);
             if let Err(error) = receiver_result {

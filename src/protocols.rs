@@ -44,3 +44,16 @@ impl Abort {
         }
     }
 }
+
+// This struct saves the sender and receiver of a message.
+#[derive(Clone)]
+pub struct PartiesMessage {
+    sender: usize,
+    receiver: usize,
+}
+
+impl PartiesMessage {
+    pub fn reverse(&self) -> PartiesMessage {
+        PartiesMessage { sender: self.receiver, receiver: self.sender }
+    }
+}
