@@ -6,6 +6,7 @@ use crate::utilities::multiplication::{MulSender, MulReceiver};
 use crate::utilities::zero_sharings::ZeroShare;
 
 pub mod dkg;
+pub mod re_key;
 pub mod signing;
 
 #[derive(Clone)]

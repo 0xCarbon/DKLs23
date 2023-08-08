@@ -18,9 +18,9 @@ pub type Seed = [u8; SECURITY];
 //data has the lowest index in the pair.
 #[derive(Debug, Clone)]
 pub struct SeedPair {
-    lowest_index: bool,
-    index_counterparty: usize,
-    seed: Seed,
+    pub lowest_index: bool,
+    pub index_counterparty: usize,
+    pub seed: Seed,
 }
 
 #[derive(Debug, Clone)]

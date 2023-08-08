@@ -25,7 +25,7 @@ use crate::utilities::ot::ot_base::*;
 
 // You should not change these numbers!
 // If you do, some parts of the code must be changed.
-const KAPPA: usize = RAW_SECURITY;
+pub const KAPPA: usize = RAW_SECURITY;
 const OT_SECURITY: usize = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
 pub const BATCH_SIZE: usize = RAW_SECURITY + 2*STAT_SECURITY;
 const EXTENDED_BATCH_SIZE: usize = BATCH_SIZE + OT_SECURITY;
@@ -35,14 +35,14 @@ pub type FieldElement = [u8; OT_SECURITY/8];      //The same for OT_SECURITY
 
 #[derive(Clone)]
 pub struct OTESender {
-    correlation: Vec<bool>, //We will deal with bits separetely
-    seeds: Vec<HashOutput>,
+    pub correlation: Vec<bool>, //We will deal with bits separetely
+    pub seeds: Vec<HashOutput>,
 }
 
 #[derive(Clone)]
 pub struct OTEReceiver {
-    seeds0: Vec<HashOutput>,
-    seeds1: Vec<HashOutput>,
+    pub seeds0: Vec<HashOutput>,
+    pub seeds1: Vec<HashOutput>,
 }
 
 // This struct is for better readability of the code.

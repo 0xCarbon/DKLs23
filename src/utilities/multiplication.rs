@@ -19,14 +19,14 @@ const L: usize = 2;
 
 #[derive(Clone)]
 pub struct MulSender {
-    public_gadget: Vec<Scalar<Secp256k1>>,
-    ote_sender: OTESender,
+    pub public_gadget: Vec<Scalar<Secp256k1>>,
+    pub ote_sender: OTESender,
 }
 
 #[derive(Clone)]
 pub struct MulReceiver {
-    public_gadget: Vec<Scalar<Secp256k1>>,
-    ote_receiver: OTEReceiver,
+    pub public_gadget: Vec<Scalar<Secp256k1>>,
+    pub ote_receiver: OTEReceiver,
 }
 
 // These structs are for better readability of the code.
