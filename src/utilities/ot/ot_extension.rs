@@ -46,6 +46,7 @@ pub struct OTEReceiver {
 }
 
 // This struct is for better readability of the code.
+#[derive(Clone)]
 pub struct OTEDataToSender {
     pub u: Vec<PRGOutput>,
     pub verify_x: FieldElement,

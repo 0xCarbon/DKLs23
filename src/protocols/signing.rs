@@ -1,5 +1,5 @@
-/// For the future: ver se nos protocolos, é possível entrar ids diferentes
-/// para inicializar e para executar. Nesse caso, é preferível implementar isso.
+/// This file implements the signing phase of Protocol 3.6 from DKLs23
+/// (https://eprint.iacr.org/2023/765.pdf). It is the core of this repository.
 
 use std::collections::HashMap;
 
@@ -13,47 +13,19 @@ use crate::utilities::hashes::*;
 use crate::utilities::multiplication::*;
 use crate::utilities::ot::ot_extension::*;
 
-//////////////////////////
+////////// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
 
-pub struct KeepPhase1to2 {
-    salt: Vec<u8>,
-    chi: Scalar<Secp256k1>,
-    mul_keep: MulDataToKeepReceiver,
-}
+// "Transmit" messages refer to only one counterparty, hence
+// we must send a whole vector of them.
 
-pub struct KeepPhase2to3 {
-    c_u: Scalar<Secp256k1>,
-    c_v: Scalar<Secp256k1>,
-    commitment: HashOutput,
-    mul_keep: MulDataToKeepReceiver,
-    chi: Scalar<Secp256k1>,
-}
-
-//
-
-pub struct UniqueKeep1to2 {
-    instance_key: Scalar<Secp256k1>,
-    instance_point: Point<Secp256k1>,
-    inversion_mask: Scalar<Secp256k1>,
-    zeta: Scalar<Secp256k1>,
-}
-
-pub struct UniqueKeep2to3 {
-    instance_key: Scalar<Secp256k1>,
-    instance_point: Point<Secp256k1>,
-    inversion_mask: Scalar<Secp256k1>,
-    key_share: Scalar<Secp256k1>,
-    public_share: Point<Secp256k1>,
-}
-
-//
-
+#[derive(Clone)]
 pub struct TransmitPhase1to2 {
     parties: PartiesMessage,
     commitment: HashOutput,
     mul_transmit: OTEDataToSender,
 }
 
+#[derive(Clone)]
 pub struct TransmitPhase2to3 {
     parties: PartiesMessage,
     gamma_u: Point<Secp256k1>,
@@ -65,14 +37,60 @@ pub struct TransmitPhase2to3 {
     mul_transmit: MulDataToReceiver,
 }
 
-//
+// "Broadcast" messages refer to all counterparties at once,
+// hence we only need to send a unique instance of it.
 
+#[derive(Clone)]
 pub struct Broadcast3to4 {
     u: Scalar<Secp256k1>,
     w: Scalar<Secp256k1>,
 }
 
+////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
+
+// "Keep" messages refer to only one counterparty, hence
+// we must keep a whole vector of them.
+
+#[derive(Clone)]
+pub struct KeepPhase1to2 {
+    salt: Vec<u8>,
+    chi: Scalar<Secp256k1>,
+    mul_keep: MulDataToKeepReceiver,
+}
+
+#[derive(Clone)]
+pub struct KeepPhase2to3 {
+    c_u: Scalar<Secp256k1>,
+    c_v: Scalar<Secp256k1>,
+    commitment: HashOutput,
+    mul_keep: MulDataToKeepReceiver,
+    chi: Scalar<Secp256k1>,
+}
+
+// "Unique keep" messages refer to all counterparties at once,
+// hence we only need to keep a unique instance of it.
+
+#[derive(Clone)]
+pub struct UniqueKeep1to2 {
+    instance_key: Scalar<Secp256k1>,
+    instance_point: Point<Secp256k1>,
+    inversion_mask: Scalar<Secp256k1>,
+    zeta: Scalar<Secp256k1>,
+}
+
+#[derive(Clone)]
+pub struct UniqueKeep2to3 {
+    instance_key: Scalar<Secp256k1>,
+    instance_point: Point<Secp256k1>,
+    inversion_mask: Scalar<Secp256k1>,
+    key_share: Scalar<Secp256k1>,
+    public_share: Point<Secp256k1>,
+}
+
 //////////////////////////
+
+// SIGNING PROTOCOL
+// We now follow Protocol 3.6 of DKLs23.
 
 impl Party {
 
@@ -326,7 +344,7 @@ impl Party {
         let v = (&unique_kept.key_share * &first_sum_u_v) + second_sum_v;
 
         let x_coord = total_instance_point.x_coord().unwrap();
-        // There is no salt here because the hash function here is always the same.
+        // There is no salt because the hash function here is always the same.
         let w = (hash_as_scalar(message_to_sign, &[]) * &unique_kept.inversion_mask) + (v * Scalar::<Secp256k1>::from_bigint(&x_coord));
 
         let broadcast = Broadcast3to4 {
@@ -342,7 +360,7 @@ impl Party {
     // Communication round 3
     // Broadcast the messages (including to ourselves).
 
-    pub fn sign_phase4 (&self, message_to_sign: &[u8], x_coord: &BigInt, received: &Vec<Broadcast3to4>) -> Result<BigInt,Abort> {
+    pub fn sign_phase4(&self, message_to_sign: &[u8], x_coord: &BigInt, received: &Vec<Broadcast3to4>) -> Result<BigInt,Abort> {
 
         // Step 10
 
@@ -365,6 +383,7 @@ impl Party {
     }
 }
 
+// This function is the verifying function from usual ECDSA.
 pub fn verify_ecdsa_signature(msg: &[u8], pk: &Point<Secp256k1>, x_coord: &BigInt, signature: &BigInt) -> bool {
 
     // Verify if the numbers are in the correct range.
@@ -389,5 +408,136 @@ pub fn verify_ecdsa_signature(msg: &[u8], pk: &Point<Secp256k1>, x_coord: &BigIn
             let x_check_as_scalar = Scalar::<Secp256k1>::from_bigint(&x);
             x_check_as_scalar == rx_as_scalar
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocols::*;
+    use crate::protocols::re_key::re_key;
+    use rand::Rng;
+
+    #[test]
+    fn test_signing() {
+        //These numbers can (and should) be changed. If so, change executing_parties below.
+        let parameters = Parameters { threshold: 2, share_count: 2 };
+        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+
+        // We use the re_key function to quickly sample the parties.
+        let secret_key = Scalar::<Secp256k1>::random();
+        let parties = re_key(&parameters, &session_id, &secret_key);
+
+        // SIGNING
+
+        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let message_to_sign = "Message to sign!".as_bytes();
+        let executing_parties: Vec<usize> = vec![1,2];
+
+        // Phase 1
+        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
+        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        for party_index in executing_parties.clone() {
+            //Gather the counterparties
+            let mut counterparties = executing_parties.clone();
+            counterparties.retain(|index| *index != party_index);
+
+            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(&sign_id, &counterparties);
+        
+            unique_kept_1to2.insert(party_index, unique_keep);
+            kept_1to2.insert(party_index, keep);
+            transmit_1to2.insert(party_index, transmit);
+        }
+
+        // Communication round 1
+        let mut received_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+
+            let mut new_row: Vec<TransmitPhase1to2> = Vec::with_capacity(parameters.threshold - 1);
+            for (_, messages) in &transmit_1to2 {
+                for message in messages {
+                    // Check if this message should be sent to us.
+                    if message.parties.receiver == party_index {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            received_1to2.insert(party_index, new_row);
+
+        }
+
+        // Phase 2
+        let mut unique_kept_2to3: HashMap<usize,UniqueKeep2to3> = HashMap::with_capacity(parameters.threshold);
+        let mut kept_2to3: HashMap<usize,HashMap<usize,KeepPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        let mut transmit_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+            //Gather the counterparties
+            let mut counterparties = executing_parties.clone();
+            counterparties.retain(|index| *index != party_index);
+
+            let result = parties[party_index - 1].sign_phase2(&sign_id, &counterparties, unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                },
+                Ok((unique_keep, keep, transmit)) => {
+                    unique_kept_2to3.insert(party_index, unique_keep);
+                    kept_2to3.insert(party_index, keep);
+                    transmit_2to3.insert(party_index, transmit);
+                },
+            }
+        }
+
+        // Communication round 2
+        let mut received_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+
+            let mut new_row: Vec<TransmitPhase2to3> = Vec::with_capacity(parameters.threshold - 1);
+            for (_, messages) in &transmit_2to3 {
+                for message in messages {
+                    // Check if this message should be sent to us.
+                    if message.parties.receiver == party_index {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            received_2to3.insert(party_index, new_row);
+
+        }
+
+        // Phase 3
+        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+            let result = parties[party_index - 1].sign_phase3(&sign_id, &message_to_sign, unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                },
+                Ok((x_coord, broadcast)) => {
+                    x_coords.push(x_coord);
+                    broadcast_3to4.push(broadcast);
+                },
+            }
+        }
+
+        // We verify all parties got the same x coordinate.
+        let x_coord = x_coords[0].clone(); // We take the first one as reference.
+        for i in 1..parameters.threshold {
+            assert_eq!(x_coord, x_coords[i]);
+        }
+
+        // Communication round 3
+        // This is a broadcast to all parties. The desired result is already broadcast_3to4.
+
+        // Phase 4
+        // It is essentially independent of the party, so we compute just once.
+        let some_index = executing_parties[0];
+        let result = parties[some_index - 1].sign_phase4(&message_to_sign, &x_coord, &broadcast_3to4);
+        if let Err(abort) = result {
+            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+        }
+        // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
     }
 }
