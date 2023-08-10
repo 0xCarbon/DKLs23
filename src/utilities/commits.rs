@@ -15,8 +15,8 @@ use crate::SECURITY;
 pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
 
     //The paper instructs the salt to have 2*lambda_c bits.
-    let salt1 = rand::thread_rng().gen::<[u8; SECURITY]>(); //ISSO NÃO ESTÁ MUITO BEM ESCRITO
-    let salt2 = rand::thread_rng().gen::<[u8; SECURITY]>(); //Essa função não roda se aumentarmos SECURITY
+    let salt1 = rand::thread_rng().gen::<[u8; SECURITY]>(); //This function doesn't work for higher SECURITY.
+    let salt2 = rand::thread_rng().gen::<[u8; SECURITY]>(); //However, we don't expect SECURITY to be changed.
     let salt = [salt1, salt2].concat();
 
     let commitment = hash(msg, &salt);

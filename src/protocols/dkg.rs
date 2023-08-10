@@ -32,13 +32,13 @@ pub struct ProofCommitment {
 // Initializing zero sharing protocol. 
 #[derive(Clone)]
 pub struct TransmitInitZeroSharePhase1to3 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     commitment: HashOutput,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitZeroSharePhase2to3 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     seed: zero_sharings::Seed,
     salt: Vec<u8>,
 }
@@ -46,33 +46,33 @@ pub struct TransmitInitZeroSharePhase2to3 {
 // Initializating two-party multiplication protocol.
 #[derive(Clone)]
 pub struct TransmitInitMulPhase1to2 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     proof: DLogProof,
     nonce: Scalar<Secp256k1>,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase2to3 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     encoded: Vec<Point<Secp256k1>>,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase3to4 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     challenge: Vec<HashOutput>,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase4to5 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     response: Vec<HashOutput>,
 
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase5to6 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     sender_hashes: Vec<ot_base::SenderHashData>,
 }
 
@@ -847,9 +847,10 @@ mod tests {
     // DISTRIBUTED KEY GENERATION (with initializations)
     
     // We now test if the initialization procedures don't abort.
+    // The verification that they really work is done in signing.rs.
 
-    // Disclaimer: this implementation is not efficient, we
-    // are only testing if everything works! Note as well that
+    // Disclaimer: this implementation is not the most efficient,
+    // we are only testing if everything works! Note as well that
     // parties are being simulated one after the other, but they
     // should actually execute the protocol simultaneously.
 

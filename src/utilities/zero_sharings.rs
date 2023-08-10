@@ -36,7 +36,7 @@ impl ZeroShare {
 
     /// Each party sends a different seed to every other party using the commitment functionality
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
-        let seed = rand::thread_rng().gen::<Seed>();    //MELHORAR: não funciona se aumentarmos SECURITY
+        let seed = rand::thread_rng().gen::<Seed>();    //This function doesn't work for higher SECURITY.
         let (commitment, salt) = commits::commit(&seed);
         (seed, commitment, salt)
     }

@@ -20,7 +20,7 @@ pub struct Parameters {
 pub struct Party {
     parameters: Parameters,
     party_index: usize,
-    session_id: Vec<u8>, // DECIDIR O TAMANHO DISSO. DECIDIR COMO CRIAR E USAR OS SESSIONS IDS (veja o arquivo de hash)
+    session_id: Vec<u8>,
 
     poly_point: Scalar<Secp256k1>,  // It behaves as the secrect key share
     pk: Point<Secp256k1>,           // Public key
@@ -33,8 +33,8 @@ pub struct Party {
 
 #[derive(Debug,Clone)]
 pub struct Abort {
-    index: usize,
-    description: String,
+    pub index: usize,
+    pub description: String,
 }
 
 impl Abort {

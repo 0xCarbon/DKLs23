@@ -7,9 +7,11 @@
 /// each subprotocol should use a different random oracle. For this purpose, our implementation
 /// has a "salt" parameter to modify the hash function. In our main protocol, the salt is
 /// usually derived from the session id.
-
-/// DESCOBRIR COMO FAZER UM SESSION ID PRA CADA PROTOCOLO.
-/// O DKLs19 resolvia isso de um jeito complicado, e não sei se encaixa aqui (talvez precise de comunicação).
+///
+/// FOR THE FUTURE: It requires some work to really guarantee that all "salts" are
+/// different for each subprotocol. For example, the implementation above has a
+/// file just for this purporse. Thus, it's worth analyzing this code in the future
+/// and maybe implementing something similar.
 
 use bitcoin_hashes::{Hash, sha256};
 use curv::elliptic::curves::{Secp256k1, Scalar, Point};

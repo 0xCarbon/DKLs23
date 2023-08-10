@@ -14,9 +14,6 @@
 /// the authors suggest some replacements for their VSOT protocol for better performance
 /// and better round counts. The DKLs23 paper (https://eprint.iacr.org/2023/765.pdf) especifically
 /// suggests the endemic OT protocol of Zhou et al.: https://eprint.iacr.org/2022/1525.pdf.
-/// 
-/// A solution for changing the session id is needed when working with batches.
-
 
 use curv::elliptic::curves::{Scalar, Point, Secp256k1};
 
@@ -201,9 +198,11 @@ impl Sender {
         let mut vec_double: Vec<HashOutput> = Vec::with_capacity(batch_size);
         let mut vec_challenge: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-            //DECIDE HOW TO UPDATE THE SESSION ID.
-            //For the moment, we use the same session id.
-            let (pads, hashes, double, challenge) = self.phase2output(session_id, &vec_encoded_choice_bit[i]);
+            
+            // We use different ids for different iterations.
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
+
+            let (pads, hashes, double, challenge) = self.phase2output(&current_sid, &vec_encoded_choice_bit[i]);
             vec_pads.push(pads);
             vec_hashes.push(hashes);
             vec_double.push(double);
@@ -380,9 +379,11 @@ impl Receiver {
         let mut vec_output: Vec<ReceiverOutput> = Vec::with_capacity(batch_size);
         let mut vec_encoded: Vec<Point<Secp256k1>> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-            //DECIDE HOW TO UPDATE THE SESSION ID.
-            //For the moment, we use the same session id.
-            let (output, encoded) = self.phase2padtransfer(session_id, vec_choice_bit[i]);
+            
+            // We use different ids for different iterations.
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
+
+            let (output, encoded) = self.phase2padtransfer(&current_sid, vec_choice_bit[i]);
             vec_output.push(output);
             vec_encoded.push(encoded);
         }
@@ -406,9 +407,11 @@ impl Receiver {
         let mut vec_hashes: Vec<ReceiverHashData> = Vec::with_capacity(batch_size);
         let mut vec_response: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-            //DECIDE HOW TO UPDATE THE SESSION ID.
-            //For the moment, we use the same session id.
-            let (hashes, response) = self.phase3respond(session_id, &vec_output[i], &vec_challenge[i]);
+            
+            // We use different ids for different iterations.
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
+            
+            let (hashes, response) = self.phase3respond(&current_sid, &vec_output[i], &vec_challenge[i]);
             vec_hashes.push(hashes);
             vec_response.push(response);
         }
@@ -430,9 +433,11 @@ impl Receiver {
 
     pub fn phase4batch(&self, batch_size: usize, session_id: &[u8], vec_output: &Vec<ReceiverOutput>, vec_hashes: &Vec<ReceiverHashData>, vec_sender_hashes: &Vec<SenderHashData>) -> Result<(),ErrorOT> {
         for i in 0..batch_size {
-            //DECIDE HOW TO UPDATE THE SESSION ID.
-            //For the moment, we use the same session id.
-            let result = self.phase4verification(session_id, &vec_output[i], &vec_hashes[i], &vec_sender_hashes[i]);
+            
+            // We use different ids for different iterations.
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
+
+            let result = self.phase4verification(&current_sid, &vec_output[i], &vec_hashes[i], &vec_sender_hashes[i]);
             if let Err(error) = result {
                 return Err(ErrorOT::new(&format!("Batch, iteration {}: {:?}", i, error.description)));
             }
