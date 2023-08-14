@@ -245,7 +245,7 @@ pub fn dkg_phase1(parameters: &Parameters, party_index: usize, session_id: &[u8]
     // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
     let mut zero_keep: HashMap<usize,KeepInitZeroSharePhase1to2> = HashMap::with_capacity(parameters.share_count - 1);
     let mut zero_transmit: Vec<TransmitInitZeroSharePhase1to3> = Vec::with_capacity(parameters.share_count - 1);
-    for i in 0..parameters.share_count {
+    for i in 1..=parameters.share_count {
         if i == party_index { continue; }
 
         // Generate initial seeds.
@@ -269,7 +269,7 @@ pub fn dkg_phase1(parameters: &Parameters, party_index: usize, session_id: &[u8]
     // Each party prepares initialization as a receiver.
     let mut mul_keep: HashMap<usize,KeepInitMulPhase1to3> = HashMap::with_capacity(parameters.share_count - 1);
     let mut mul_transmit: Vec<TransmitInitMulPhase1to2> = Vec::with_capacity(parameters.share_count - 1);
-    for i in 0..parameters.share_count {
+    for i in 1..=parameters.share_count {
         if i == party_index { continue; }
 
         // We first compute a new session id.

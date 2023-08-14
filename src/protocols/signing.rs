@@ -20,14 +20,14 @@ use crate::utilities::ot::ot_extension::*;
 
 #[derive(Clone)]
 pub struct TransmitPhase1to2 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     commitment: HashOutput,
     mul_transmit: OTEDataToSender,
 }
 
 #[derive(Clone)]
 pub struct TransmitPhase2to3 {
-    parties: PartiesMessage,
+    pub parties: PartiesMessage,
     gamma_u: Point<Secp256k1>,
     gamma_v: Point<Secp256k1>,
     psi: Scalar<Secp256k1>,
