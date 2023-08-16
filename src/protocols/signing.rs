@@ -436,7 +436,7 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let secret_key = Scalar::<Secp256k1>::random();
-        let parties = re_key(&parameters, &session_id, &secret_key);
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
 
@@ -574,14 +574,18 @@ mod tests {
         let mut zero_transmit_1to3: Vec<Vec<TransmitInitZeroSharePhase1to3>> = Vec::with_capacity(parameters.share_count);
         let mut mul_kept_1to3: Vec<HashMap<usize,KeepInitMulPhase1to3>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_1to2: Vec<Vec<TransmitInitMulPhase1to2>> = Vec::with_capacity(parameters.share_count);
+        let mut bip_kept_1to2: Vec<KeepDerivationPhase1to2> = Vec::with_capacity(parameters.share_count);
+        let mut bip_transmit_1to3: Vec<TransmitDerivationPhase1to3> = Vec::with_capacity(parameters.share_count);
         for i in 1..=parameters.share_count {
-            let (out1, out2, out3, out4, out5) = dkg_phase1(&parameters, i, &session_id);
+            let (out1, out2, out3, out4, out5, out6, out7) = dkg_phase1(&parameters, i, &session_id);
 
             dkg_1.push(out1);
             zero_kept_1to2.push(out2);
             zero_transmit_1to3.push(out3);
             mul_kept_1to3.push(out4);
             mul_transmit_1to2.push(out5);
+            bip_kept_1to2.push(out6);
+            bip_transmit_1to3.push(out7);
         }
 
         // Communication round 1
@@ -620,6 +624,8 @@ mod tests {
 
         }
 
+        // bip_transmit_1to3 is already in the format we need.
+
         // Phase 2
         let mut poly_points: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
@@ -627,20 +633,22 @@ mod tests {
         let mut zero_transmit_2to3: Vec<Vec<TransmitInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
         let mut mul_kept_2to4: Vec<HashMap<usize,KeepInitMulPhase2to4>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_2to3: Vec<Vec<TransmitInitMulPhase2to3>> = Vec::with_capacity(parameters.share_count);
+        let mut bip_transmit_2to3: Vec<TransmitDerivationPhase2to3> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = dkg_phase2(&parameters, i+1, &session_id, &poly_fragments[i], &zero_kept_1to2[i], &mul_received_1to2[i]);
+            let result = dkg_phase2(&parameters, i+1, &session_id, &poly_fragments[i], &zero_kept_1to2[i], &mul_received_1to2[i], &bip_kept_1to2[i]);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
                 },
-                Ok((out1, out2, out3, out4, out5, out6)) => {
+                Ok((out1, out2, out3, out4, out5, out6, out7)) => {
                     poly_points.push(out1);
                     proofs_commitments.push(out2);
                     zero_kept_2to3.push(out3);
                     zero_transmit_2to3.push(out4);
                     mul_kept_2to4.push(out5);
                     mul_transmit_2to3.push(out6);
+                    bip_transmit_2to3.push(out7);
                 },
             }
         }
@@ -677,19 +685,21 @@ mod tests {
 
         }
 
+        // bip_transmit_2to3 is already in the format we need.
+
         // Phase 3
-        let mut zero_kept_3to6: Vec<KeepInitZeroSharePhase3to6> = Vec::with_capacity(parameters.share_count);
+        let mut complete_kept_3to6: Vec<KeepCompletePhase3to6> = Vec::with_capacity(parameters.share_count);
         let mut mul_kept_3to5: Vec<HashMap<usize,KeepInitMulPhase3to5>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = dkg_phase3(&parameters, &session_id, &zero_kept_2to3[i], &zero_received_1to3[i], &zero_received_2to3[i], &mul_kept_1to3[i], &mul_received_2to3[i]);
+            let result = dkg_phase3(&parameters, &session_id, &zero_kept_2to3[i], &zero_received_1to3[i], &zero_received_2to3[i], &mul_kept_1to3[i], &mul_received_2to3[i], &bip_transmit_1to3, &bip_transmit_2to3);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
                 },
                 Ok((out1, out2, out3)) => {
-                    zero_kept_3to6.push(out1);
+                    complete_kept_3to6.push(out1);
                     mul_kept_3to5.push(out2);
                     mul_transmit_3to4.push(out3);
                 },
@@ -790,7 +800,7 @@ mod tests {
         let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = dkg_phase6(&parameters, i+1, &session_id, &poly_points[i], &public_keys[i], &zero_kept_3to6[i], &mul_kept_4to6[i], &mul_kept_5to6[i], &mul_received_5to6[i]);
+            let result = dkg_phase6(&parameters, i+1, &session_id, &poly_points[i], &public_keys[i], &complete_kept_3to6[i], &mul_kept_4to6[i], &mul_kept_5to6[i], &mul_received_5to6[i]);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -799,6 +809,14 @@ mod tests {
                     parties.push(party);
                 },
             }
+        }
+
+        // We check if the public keys and chain codes are the same.
+        let expected_pk = parties[0].pk.clone();
+        let expected_chain_code = parties[0].derivation_data.chain_code;
+        for party in &parties {
+            assert_eq!(expected_pk, party.pk);
+            assert_eq!(expected_chain_code, party.derivation_data.chain_code);
         }
 
         // SIGNING (as in test_signing)

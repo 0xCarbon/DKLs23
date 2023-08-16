@@ -4,7 +4,9 @@ use curv::elliptic::curves::{Secp256k1, Scalar, Point};
 
 use crate::utilities::multiplication::{MulSender, MulReceiver};
 use crate::utilities::zero_sharings::ZeroShare;
+use crate::protocols::derivation::DerivationData;
 
+pub mod derivation;
 pub mod dkg;
 pub mod re_key;
 pub mod refresh;
@@ -30,6 +32,8 @@ pub struct Party {
 
     mul_senders: HashMap<usize, MulSender>,     // Initializations for two-party multiplication.
     mul_receivers: HashMap<usize,MulReceiver>,  // The key in the HashMap represents the other party.
+
+    derivation_data: DerivationData,    // Data for BIP-32 derivation.
 }
 
 #[derive(Debug,Clone)]

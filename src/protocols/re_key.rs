@@ -13,6 +13,7 @@ use curv::cryptographic_primitives::secret_sharing::Polynomial;
 use rand::Rng;
 
 use crate::protocols::{Parameters, Party};
+use crate::protocols::derivation::{ChainCode, DerivationData};
 
 use crate::utilities::hashes::*;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
@@ -23,7 +24,9 @@ use crate::utilities::zero_sharings::{self, ZeroShare};
 // We also include the session id here because the party that
 // is creating the wallet must verify the id was not used before,
 // and we cannot do this here.
-pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Secp256k1>) -> Vec<Party> {
+// We also include an option to put a chain code if the original
+// wallet followed BIP-32 for key derivation. 
+pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Secp256k1>, option_chain_code: Option<ChainCode>) -> Vec<Party> {
 
     // Public key.
     let pk = Point::<Secp256k1>::generator() * secret_key;
@@ -149,10 +152,27 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Se
         }
     }
 
+    // Key derivation - BIP-32.
+    // We use the chain code given or we sample a new one.
+    let chain_code = match option_chain_code {
+        Some(cc) => { cc },
+        None => { rand::thread_rng().gen::<ChainCode>() },
+    };
+
     // We create the parties.
     let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
     for index in 1..=parameters.share_count {
         let poly_point = polynomial.evaluate(&Scalar::<Secp256k1>::from(index as u16));
+
+        let derivation_data = DerivationData {
+            depth: 0,
+            child_number: 0,            // These three values are initialized as zero for the master node.
+            parent_fingerprint: [0;4],
+            poly_point: poly_point.clone(),
+            pk: pk.clone(),
+            chain_code: chain_code.clone(),
+        };
+
         parties.push(Party {
             parameters: parameters.clone(),
             party_index: index,
@@ -162,6 +182,7 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Se
             zero_share: zero_shares[index - 1].clone(),
             mul_senders: all_mul_senders[index - 1].clone(),
             mul_receivers: all_mul_receivers[index - 1].clone(),
+            derivation_data,
         });
     }
 

@@ -10,9 +10,12 @@ use std::collections::HashMap;
 
 use curv::elliptic::curves::{Secp256k1, Scalar, Point};
 use curv::cryptographic_primitives::secret_sharing::Polynomial;
+use rand::Rng;
 
 use crate::protocols::{Abort, Parameters, Party, PartiesMessage};
+use crate::protocols::derivation::{ChainCode, DerivationData};
 
+use crate::utilities::commits;
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::proofs::DLogProof;
 use crate::utilities::zero_sharings::{self, ZeroShare};
@@ -76,6 +79,22 @@ pub struct TransmitInitMulPhase5to6 {
     sender_hashes: Vec<ot_base::SenderHashData>,
 }
 
+// Initializing key derivation (via BIP-32).
+
+// These messages should be sent to all parties,
+// so we omit the variable "parties" (even the
+// receiver will not be used). 
+#[derive(Clone)]
+pub struct TransmitDerivationPhase1to3 {
+    cc_commitment: HashOutput,
+}
+
+#[derive(Clone)]
+pub struct TransmitDerivationPhase2to3 {
+    aux_chain_code: ChainCode,
+    cc_salt: Vec<u8>,
+}
+
 ////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
 
 // Initializing zero sharing protocol. 
@@ -88,11 +107,6 @@ pub struct KeepInitZeroSharePhase1to2 {
 #[derive(Clone)]
 pub struct KeepInitZeroSharePhase2to3 {
     seed: zero_sharings::Seed,
-}
-
-#[derive(Clone)]
-pub struct KeepInitZeroSharePhase3to6 {
-    zero_share: ZeroShare,
 }
 
 // Initializating two-party multiplication protocol.
@@ -128,6 +142,22 @@ pub struct KeepInitMulPhase4to6 {
 #[derive(Clone)]
 pub struct KeepInitMulPhase5to6 {
     mul_receiver: MulReceiver,
+}
+
+// Initializing key derivation (via BIP-32).
+#[derive(Clone)]
+pub struct KeepDerivationPhase1to2 {
+    aux_chain_code: ChainCode,
+    cc_salt: Vec<u8>,
+}
+
+// This struct saves the complete initialization
+// of zero sharing and key derivation.
+
+#[derive(Clone)]
+pub struct KeepCompletePhase3to6 {
+    zero_share: ZeroShare,
+    chain_code: ChainCode,
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -229,12 +259,15 @@ pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8],
 // The first one comes from the file zero_sharings.rs and needs two communication rounds.
 // The second one comes from the file multiplication.rs and needs five communication rounds.
 
+// For key derivation (following BIP-32: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki), parties must agree
+// on a common chain code for their shared master key. Using the commitment functionality, we need two communication rounds.
+
 // Phase 1 = Steps 1 and 2
 // Input (DKG): Parameters for the key generation.
 // Input (Init): Party index and session id.
 // Output (DKG): Evaluation of a random polynomial at every party index.
 // Output (Init): Some data to keep and to transmit.
-pub fn dkg_phase1(parameters: &Parameters, party_index: usize, session_id: &[u8]) -> (Vec<Scalar<Secp256k1>>, HashMap<usize,KeepInitZeroSharePhase1to2>, Vec<TransmitInitZeroSharePhase1to3>, HashMap<usize,KeepInitMulPhase1to3>, Vec<TransmitInitMulPhase1to2>) {
+pub fn dkg_phase1(parameters: &Parameters, party_index: usize, session_id: &[u8]) -> (Vec<Scalar<Secp256k1>>, HashMap<usize,KeepInitZeroSharePhase1to2>, Vec<TransmitInitZeroSharePhase1to3>, HashMap<usize,KeepInitMulPhase1to3>, Vec<TransmitInitMulPhase1to2>, KeepDerivationPhase1to2, TransmitDerivationPhase1to3) {
     
     // DKG
     let secret_polynomial = dkg_step1(parameters);
@@ -292,7 +325,21 @@ pub fn dkg_phase1(parameters: &Parameters, party_index: usize, session_id: &[u8]
         mul_transmit.push(transmit);
     }
 
-    (evaluations, zero_keep, zero_transmit, mul_keep, mul_transmit)
+    // Initialization - BIP-32.
+    // Each party samples a random auxiliary chain code.
+    let aux_chain_code = rand::thread_rng().gen::<ChainCode>();
+    let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
+
+    let bip_keep = KeepDerivationPhase1to2 {
+        aux_chain_code,
+        cc_salt,
+    };
+    // For simplicity, this message should be sent to us too.
+    let bip_transmit = TransmitDerivationPhase1to3 {
+        cc_commitment,
+    };
+
+    (evaluations, zero_keep, zero_transmit, mul_keep, mul_transmit, bip_keep, bip_transmit)
 }
 
 // Communication round 1
@@ -300,14 +347,14 @@ pub fn dkg_phase1(parameters: &Parameters, party_index: usize, session_id: &[u8]
 // At the end, Party i should have received all fragements indexed by i.
 // They should add up to p(i), where p is a polynomial not depending on i.
 //
-// Init: Each party transmits messages for zero sharing and multiplication protocols.
+// Init: Each party transmits messages for zero sharing and multiplication protocols, and key derivation.
 
 // Phase 2 = Step 3
 // Input (DKG): Fragments received from communication and session id.
 // Input (Init): Parameters, values kept and transmited in Phase 1.
 // Output (DKG): p(i) and a proof of discrete logarithm with commitment.
 // Output (Init): Some data to keep and to transmit.
-pub fn dkg_phase2(parameters: &Parameters, party_index: usize, session_id: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase1to2>, mul_received: &Vec<TransmitInitMulPhase1to2>) -> Result<(Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to3>, HashMap<usize,KeepInitMulPhase2to4>, Vec<TransmitInitMulPhase2to3>),Abort> {
+pub fn dkg_phase2(parameters: &Parameters, party_index: usize, session_id: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase1to2>, mul_received: &Vec<TransmitInitMulPhase1to2>, bip_kept: &KeepDerivationPhase1to2) -> Result<(Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to3>, HashMap<usize,KeepInitMulPhase2to4>, Vec<TransmitInitMulPhase2to3>, TransmitDerivationPhase2to3),Abort> {
     
     // DKG
     let (poly_point, proof_commitment) = dkg_step3(party_index, session_id, poly_fragments);
@@ -373,18 +420,30 @@ pub fn dkg_phase2(parameters: &Parameters, party_index: usize, session_id: &[u8]
         mul_transmit.push(transmit);
     }
 
-    Ok((poly_point, proof_commitment, zero_keep, zero_transmit, mul_keep, mul_transmit))
+    // Initialization - BIP-32.
+    // After having transmitted the commitment, we broadcast
+    // our auxiliary chain code and the corresponding salt.
+    // For simplicity, this message should be sent to us too.
+    let bip_transmit = TransmitDerivationPhase2to3 {
+        aux_chain_code: bip_kept.aux_chain_code,
+        cc_salt: bip_kept.cc_salt.clone(),
+    };
+
+    Ok((poly_point, proof_commitment, zero_keep, zero_transmit, mul_keep, mul_transmit, bip_transmit))
 }
 
 // Communication round 2
 // DKG: Party i broadcasts his commitment to the proof and receive the other commitments.
 //
-// Init: Each party transmits messages for zero sharing and multiplication protocols.
+// Init: Each party transmits messages for zero sharing and multiplication protocols, and key derivation.
 
 // Phase 3 = No steps in DKG (just initialization)
 // Input (Init): Parameters, session id, values kept and transmited in Phases 1 and 2.
-// Output (Init): Instance of ZeroShare initialized and some data to keep and to transmit for multiplication.
-pub fn dkg_phase3(parameters: &Parameters, session_id: &[u8], zero_kept: &HashMap<usize,KeepInitZeroSharePhase2to3>, zero_received_phase1: &Vec<TransmitInitZeroSharePhase1to3>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to3>, mul_kept: &HashMap<usize,KeepInitMulPhase1to3>, mul_received: &Vec<TransmitInitMulPhase2to3>) -> Result<(KeepInitZeroSharePhase3to6, HashMap<usize,KeepInitMulPhase3to5>, Vec<TransmitInitMulPhase3to4>), Abort> {
+// Output (Init): Instance of ZeroShare and key derivation initialized and some data to keep and to transmit for multiplication.
+pub fn dkg_phase3(parameters: &Parameters, session_id: &[u8], zero_kept: &HashMap<usize,KeepInitZeroSharePhase2to3>, zero_received_phase1: &Vec<TransmitInitZeroSharePhase1to3>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to3>, mul_kept: &HashMap<usize,KeepInitMulPhase1to3>, mul_received: &Vec<TransmitInitMulPhase2to3>, bip_received_phase1: &Vec<TransmitDerivationPhase1to3>, bip_received_phase2: &Vec<TransmitDerivationPhase2to3>) -> Result<(KeepCompletePhase3to6, HashMap<usize,KeepInitMulPhase3to5>, Vec<TransmitInitMulPhase3to4>), Abort> {
+
+    // We will use this later. PRECISA AJEITAAARR!!!!!
+    let mut party_index: usize = 1;
 
     // Initialization - Zero sharings.
     let mut seeds: Vec<zero_sharings::SeedPair> = Vec::with_capacity(parameters.share_count - 1);
@@ -394,6 +453,9 @@ pub fn dkg_phase3(parameters: &Parameters, session_id: &[u8], zero_kept: &HashMa
 
                 let my_index = message_received_1.parties.receiver;
                 let their_index = message_received_1.parties.sender;
+
+                // We save our index for later.
+                party_index = my_index;
 
                 // We first check if the messages relate to the same party.
                 if *target_party != their_index || message_received_2.parties.sender != their_index { continue; }
@@ -410,11 +472,8 @@ pub fn dkg_phase3(parameters: &Parameters, session_id: &[u8], zero_kept: &HashMa
         }
     }
 
-    // This finishes the initialization. We keep this data to the last phase.
+    // This finishes the initialization.
     let zero_share = ZeroShare::initialize(seeds);
-    let zero_keep = KeepInitZeroSharePhase3to6 {
-        zero_share,
-    };
 
     // Initialization - Two-party multiplication.
     // We now act as the receiver.
@@ -452,13 +511,38 @@ pub fn dkg_phase3(parameters: &Parameters, session_id: &[u8], zero_kept: &HashMa
         }
     }
 
-    Ok((zero_keep, mul_keep, mul_transmit))
+    // Initialization - BIP-32.
+    // We check the commitments and create the final chain code.
+    // It will be given by the XOR of the auxiliary chain codes.
+    let mut chain_code: ChainCode = [0;32];
+    for i in 0..parameters.share_count {
+
+        // We assume both messages are ordered by the parties' indexes.
+        let verification = commits::verify_commitment(&bip_received_phase2[i].aux_chain_code, &bip_received_phase1[i].cc_commitment, &bip_received_phase2[i].cc_salt);
+        if !verification {
+            return Err(Abort::new(party_index, &format!("Initialization for key derivation failed because Party {} cheated when sending the auxiliary chain code!", i+1)));
+        }
+        
+        // We XOR this auxiliary chain code to the final result.
+        for j in 0..32 {
+            chain_code[j] = chain_code[j] ^ bip_received_phase2[i].aux_chain_code[j];
+        }
+
+    }
+
+    // We save the complete initializations.
+    let complete_keep = KeepCompletePhase3to6 {
+        zero_share,
+        chain_code,
+    };
+
+    Ok((complete_keep, mul_keep, mul_transmit))
 }
 
 // Communication round 3
 // DKG: We execute Step 4 of the protocol: after having received all commitments, each party broadcasts his proof.
 //
-// Init: Each party transmits messages for the multiplication protocol (we finished initializing the other one).
+// Init: Each party transmits messages for the multiplication protocol (we finished initializing the other ones).
 
 // Phase 4 = Steps 5 and 6
 // Input (DKG): Proofs and commitments received from communication + parameters, party index, session id, poly_point.
@@ -567,7 +651,7 @@ pub fn dkg_phase5(parameters: &Parameters, mul_kept: &HashMap<usize,KeepInitMulP
 // Phase 6 = We finish everything and create a party ready to sign.
 // Input: Data needed to create an instance of Party and previous messages.
 // Output: Party.
-pub fn dkg_phase6(parameters: &Parameters, party_index: usize, session_id: &[u8], poly_point: &Scalar<Secp256k1>, pk: &Point<Secp256k1>, zero_kept: &KeepInitZeroSharePhase3to6, mul_kept_phase4: &HashMap<usize,KeepInitMulPhase4to6>, mul_kept_phase5: &HashMap<usize,KeepInitMulPhase5to6>, mul_received: &Vec<TransmitInitMulPhase5to6>) -> Result<Party,Abort>{
+pub fn dkg_phase6(parameters: &Parameters, party_index: usize, session_id: &[u8], poly_point: &Scalar<Secp256k1>, pk: &Point<Secp256k1>, complete_kept: &KeepCompletePhase3to6, mul_kept_phase4: &HashMap<usize,KeepInitMulPhase4to6>, mul_kept_phase5: &HashMap<usize,KeepInitMulPhase5to6>, mul_received: &Vec<TransmitInitMulPhase5to6>) -> Result<Party,Abort>{
 
     // Initialization - Two-party multiplication.
     // We now act as the sender.
@@ -601,6 +685,15 @@ pub fn dkg_phase6(parameters: &Parameters, party_index: usize, session_id: &[u8]
 
     // We can finally finish key generation!
 
+    let derivation_data = DerivationData {
+        depth: 0,       
+        child_number: 0,               // These three values are initialized as zero for the master node. 
+        parent_fingerprint: [0;4],
+        poly_point: poly_point.clone(),
+        pk: pk.clone(),
+        chain_code: complete_kept.chain_code,
+    };
+
     let party = Party {
         parameters: parameters.clone(),
         party_index,
@@ -609,10 +702,12 @@ pub fn dkg_phase6(parameters: &Parameters, party_index: usize, session_id: &[u8]
         poly_point: poly_point.clone(),
         pk: pk.clone(),
 
-        zero_share: zero_kept.zero_share.clone(),
+        zero_share: complete_kept.zero_share.clone(),
 
         mul_senders,
         mul_receivers,
+
+        derivation_data,
     };
 
     Ok(party)
@@ -868,14 +963,18 @@ mod tests {
         let mut zero_transmit_1to3: Vec<Vec<TransmitInitZeroSharePhase1to3>> = Vec::with_capacity(parameters.share_count);
         let mut mul_kept_1to3: Vec<HashMap<usize,KeepInitMulPhase1to3>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_1to2: Vec<Vec<TransmitInitMulPhase1to2>> = Vec::with_capacity(parameters.share_count);
+        let mut bip_kept_1to2: Vec<KeepDerivationPhase1to2> = Vec::with_capacity(parameters.share_count);
+        let mut bip_transmit_1to3: Vec<TransmitDerivationPhase1to3> = Vec::with_capacity(parameters.share_count);
         for i in 1..=parameters.share_count {
-            let (out1, out2, out3, out4, out5) = dkg_phase1(&parameters, i, &session_id);
+            let (out1, out2, out3, out4, out5, out6, out7) = dkg_phase1(&parameters, i, &session_id);
 
             dkg_1.push(out1);
             zero_kept_1to2.push(out2);
             zero_transmit_1to3.push(out3);
             mul_kept_1to3.push(out4);
             mul_transmit_1to2.push(out5);
+            bip_kept_1to2.push(out6);
+            bip_transmit_1to3.push(out7);
         }
 
         // Communication round 1
@@ -914,6 +1013,8 @@ mod tests {
 
         }
 
+        // bip_transmit_1to3 is already in the format we need.
+
         // Phase 2
         let mut poly_points: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
@@ -921,20 +1022,22 @@ mod tests {
         let mut zero_transmit_2to3: Vec<Vec<TransmitInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
         let mut mul_kept_2to4: Vec<HashMap<usize,KeepInitMulPhase2to4>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_2to3: Vec<Vec<TransmitInitMulPhase2to3>> = Vec::with_capacity(parameters.share_count);
+        let mut bip_transmit_2to3: Vec<TransmitDerivationPhase2to3> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = dkg_phase2(&parameters, i+1, &session_id, &poly_fragments[i], &zero_kept_1to2[i], &mul_received_1to2[i]);
+            let result = dkg_phase2(&parameters, i+1, &session_id, &poly_fragments[i], &zero_kept_1to2[i], &mul_received_1to2[i], &bip_kept_1to2[i]);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
                 },
-                Ok((out1, out2, out3, out4, out5, out6)) => {
+                Ok((out1, out2, out3, out4, out5, out6, out7)) => {
                     poly_points.push(out1);
                     proofs_commitments.push(out2);
                     zero_kept_2to3.push(out3);
                     zero_transmit_2to3.push(out4);
                     mul_kept_2to4.push(out5);
                     mul_transmit_2to3.push(out6);
+                    bip_transmit_2to3.push(out7);
                 },
             }
         }
@@ -971,19 +1074,21 @@ mod tests {
 
         }
 
+        // bip_transmit_2to3 is already in the format we need.
+
         // Phase 3
-        let mut zero_kept_3to6: Vec<KeepInitZeroSharePhase3to6> = Vec::with_capacity(parameters.share_count);
+        let mut complete_kept_3to6: Vec<KeepCompletePhase3to6> = Vec::with_capacity(parameters.share_count);
         let mut mul_kept_3to5: Vec<HashMap<usize,KeepInitMulPhase3to5>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = dkg_phase3(&parameters, &session_id, &zero_kept_2to3[i], &zero_received_1to3[i], &zero_received_2to3[i], &mul_kept_1to3[i], &mul_received_2to3[i]);
+            let result = dkg_phase3(&parameters, &session_id, &zero_kept_2to3[i], &zero_received_1to3[i], &zero_received_2to3[i], &mul_kept_1to3[i], &mul_received_2to3[i], &bip_transmit_1to3, &bip_transmit_2to3);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
                 },
                 Ok((out1, out2, out3)) => {
-                    zero_kept_3to6.push(out1);
+                    complete_kept_3to6.push(out1);
                     mul_kept_3to5.push(out2);
                     mul_transmit_3to4.push(out3);
                 },
@@ -1081,12 +1186,26 @@ mod tests {
         }
 
         // Phase 6
+        let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = dkg_phase6(&parameters, i+1, &session_id, &poly_points[i], &public_keys[i], &zero_kept_3to6[i], &mul_kept_4to6[i], &mul_kept_5to6[i], &mul_received_5to6[i]);
-            if let Err(abort) = result {
-                panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            let result = dkg_phase6(&parameters, i+1, &session_id, &poly_points[i], &public_keys[i], &complete_kept_3to6[i], &mul_kept_4to6[i], &mul_kept_5to6[i], &mul_received_5to6[i]);
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                },
+                Ok(party) => {
+                    parties.push(party);
+                },
             }
+        }
+
+        // We check if the public keys and chain codes are the same.
+        let expected_pk = parties[0].pk.clone();
+        let expected_chain_code = parties[0].derivation_data.chain_code;
+        for party in &parties {
+            assert_eq!(expected_pk, party.pk);
+            assert_eq!(expected_chain_code, party.derivation_data.chain_code);
         }
 
     }
