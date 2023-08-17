@@ -105,36 +105,66 @@ impl Party {
         let evaluations = dkg_step2(&self.parameters, secret_polynomial);
 
         // We won't use the derivation part, but we'll run it for simplicity in the code.
-        let (_, zero_keep, zero_transmit, mul_keep, mul_transmit, bip_keep, bip_transmit) = dkg_phase1(&self.parameters, self.party_index, refresh_sid);
+        let data = SessionData {
+            parameters: self.parameters.clone(),
+            party_index: self.party_index,
+            session_id: refresh_sid.to_vec(),
+        };
+        let (_, zero_keep, zero_transmit, mul_keep, mul_transmit, bip_keep, bip_transmit) = dkg_phase1(&data);
 
         (evaluations, zero_keep, zero_transmit, mul_keep, mul_transmit, bip_keep, bip_transmit)
     }
 
     pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase1to2>, mul_received: &Vec<TransmitInitMulPhase1to2>, bip_kept: &KeepDerivationPhase1to2) -> Result<(Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to3>, HashMap<usize,KeepInitMulPhase2to4>, Vec<TransmitInitMulPhase2to3>, TransmitDerivationPhase2to3),Abort> {
-        dkg_phase2(&self.parameters, self.party_index, refresh_sid, poly_fragments, zero_kept, mul_received, bip_kept)
+        let data = SessionData {
+            parameters: self.parameters.clone(),
+            party_index: self.party_index,
+            session_id: refresh_sid.to_vec(),
+        };
+        dkg_phase2(&data, poly_fragments, zero_kept, mul_received, bip_kept)
     }
 
     pub fn refresh_complete_phase3(&self, refresh_sid: &[u8], zero_kept: &HashMap<usize,KeepInitZeroSharePhase2to3>, zero_received_phase1: &Vec<TransmitInitZeroSharePhase1to3>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to3>, mul_kept: &HashMap<usize,KeepInitMulPhase1to3>, mul_received: &Vec<TransmitInitMulPhase2to3>, bip_received_phase1: &Vec<TransmitDerivationPhase1to3>, bip_received_phase2: &Vec<TransmitDerivationPhase2to3>) -> Result<(KeepCompletePhase3to6, HashMap<usize,KeepInitMulPhase3to5>, Vec<TransmitInitMulPhase3to4>), Abort> {
-        dkg_phase3(&self.parameters, refresh_sid, zero_kept, zero_received_phase1, zero_received_phase2, mul_kept, mul_received, bip_received_phase1, bip_received_phase2)
+        let data = SessionData {
+            parameters: self.parameters.clone(),
+            party_index: self.party_index,
+            session_id: refresh_sid.to_vec(),
+        };
+        dkg_phase3(&data, zero_kept, zero_received_phase1, zero_received_phase2, mul_kept, mul_received, bip_received_phase1, bip_received_phase2)
     }
 
     pub fn refresh_complete_phase4(&self, refresh_sid: &[u8], proofs_commitments: &Vec<ProofCommitment>, mul_kept: &HashMap<usize,KeepInitMulPhase2to4>, mul_received: &Vec<TransmitInitMulPhase3to4>) -> Result<(HashMap<usize,KeepInitMulPhase4to6>, Vec<TransmitInitMulPhase4to5>),Abort> {
-        let (verifying_pk, mul_keep, mul_transmit) = dkg_phase4(&self.parameters, self.party_index, refresh_sid, proofs_commitments, mul_kept, mul_received)?;
+        let data = SessionData {
+            parameters: self.parameters.clone(),
+            party_index: self.party_index,
+            session_id: refresh_sid.to_vec(),
+        };
+        let (verifying_pk, mul_keep, mul_transmit) = dkg_phase4(&data, proofs_commitments, mul_kept, mul_received)?;
 
         // The public key calculated above should be the zero point on the curve.
         if verifying_pk.is_zero() {
             Ok((mul_keep, mul_transmit))
         } else {
-            Err(Abort::new(self.party_index, &format!("The auxiliary public key is not the zero point!")))
+            Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"))
         }
     }
 
-    pub fn refresh_complete_phase5(&self, mul_kept: &HashMap<usize,KeepInitMulPhase3to5>, mul_received: &Vec<TransmitInitMulPhase4to5>) -> Result<(HashMap<usize,KeepInitMulPhase5to6>, Vec<TransmitInitMulPhase5to6>),Abort> {
-        dkg_phase5(&self.parameters, mul_kept, mul_received)
+    pub fn refresh_complete_phase5(&self, refresh_sid: &[u8], mul_kept: &HashMap<usize,KeepInitMulPhase3to5>, mul_received: &Vec<TransmitInitMulPhase4to5>) -> Result<(HashMap<usize,KeepInitMulPhase5to6>, Vec<TransmitInitMulPhase5to6>),Abort> {
+        let data = SessionData {
+            parameters: self.parameters.clone(),
+            party_index: self.party_index,
+            session_id: refresh_sid.to_vec(),
+        };
+        dkg_phase5(&data, mul_kept, mul_received)
     }
 
     pub fn refresh_complete_phase6(&self, refresh_sid: &[u8], correction_value: &Scalar<Secp256k1>, complete_kept: &KeepCompletePhase3to6, mul_kept_phase4: &HashMap<usize,KeepInitMulPhase4to6>, mul_kept_phase5: &HashMap<usize,KeepInitMulPhase5to6>, mul_received: &Vec<TransmitInitMulPhase5to6>) -> Result<Party,Abort> {
-        let correction_data = dkg_phase6(&self.parameters, self.party_index, refresh_sid, correction_value, &self.pk, complete_kept, mul_kept_phase4, mul_kept_phase5, mul_received)?;
+        let data = SessionData {
+            parameters: self.parameters.clone(),
+            party_index: self.party_index,
+            session_id: refresh_sid.to_vec(),
+        };
+        let correction_data = dkg_phase6(&data, correction_value, &self.pk, complete_kept, mul_kept_phase4, mul_kept_phase5, mul_received)?;
 
         // For key derivation, we just update poly_point.
         let derivation_data = DerivationData {
@@ -251,12 +281,17 @@ impl Party {
                     let my_index = message_received_1.parties.receiver;
                     let their_index = message_received_1.parties.sender;
 
+                    // Confirm that the message is for us.
+                    if my_index != self.party_index {
+                    return Err(Abort::new(self.party_index, "Received a message not meant for us!"));
+                    }
+
                     // We first check if the messages relate to the same party.
                     if *target_party != their_index || message_received_2.parties.sender != their_index { continue; }
 
                     let verification = ZeroShare::verify_seed(&message_received_2.seed, &message_received_1.commitment, &message_received_2.salt);
                     if !verification {
-                        return Err(Abort::new(my_index, &format!("Initialization for zero sharings protocol failed because Party {} cheated when sending the seed!", message_received_1.parties.sender)));
+                        return Err(Abort::new(self.party_index, &format!("Initialization for zero sharings protocol failed because Party {} cheated when sending the seed!", message_received_1.parties.sender)));
                     }
 
                     seeds.push(ZeroShare::generate_seed_pair(my_index, their_index, &message_kept.seed, &message_received_2.seed));
@@ -367,7 +402,7 @@ impl Party {
 
         // The public key calculated above should be the zero point on the curve.
         if !verifying_pk.is_zero() {
-            return Err(Abort::new(self.party_index, &format!("The auxiliary public key is not the zero point!")));
+            return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
 
         // For key derivation, we just update poly_point.
@@ -629,7 +664,7 @@ mod tests {
         let mut mul_transmit_5to6: Vec<Vec<TransmitInitMulPhase5to6>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = parties[i].refresh_complete_phase5(&mul_kept_3to5[i], &mul_received_4to5[i]);
+            let result = parties[i].refresh_complete_phase5(&refresh_sid, &mul_kept_3to5[i], &mul_received_4to5[i]);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -683,16 +718,26 @@ mod tests {
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<usize> = Vec::from_iter(1..=parameters.threshold);
 
-        // Phase 1
-        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
-        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
-        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        // Each party prepares their data for this signing session.
+        let mut all_data: HashMap<usize, SignData> = HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party_index);
 
-            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(&sign_id, &counterparties);
+            all_data.insert(party_index, SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties,
+                message_to_sign: message_to_sign.to_vec(),
+            });
+        }
+
+        // Phase 1
+        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
+        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        for party_index in executing_parties.clone() {
+            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(all_data.get(&party_index).unwrap());
         
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -721,11 +766,7 @@ mod tests {
         let mut kept_2to3: HashMap<usize,HashMap<usize,KeepPhase2to3>> = HashMap::with_capacity(parameters.threshold);
         let mut transmit_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            //Gather the counterparties
-            let mut counterparties = executing_parties.clone();
-            counterparties.retain(|index| *index != party_index);
-
-            let result = parties[party_index - 1].sign_phase2(&sign_id, &counterparties, unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase2(all_data.get(&party_index).unwrap(), unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -759,7 +800,7 @@ mod tests {
         let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            let result = parties[party_index - 1].sign_phase3(&sign_id, &message_to_sign, unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -772,7 +813,7 @@ mod tests {
         }
 
         // We verify all parties got the same x coordinate.
-        let x_coord = x_coords[0].clone();
+        let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
             assert_eq!(x_coord, x_coords[i]);
         }
@@ -782,7 +823,7 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[some_index - 1].sign_phase4(&message_to_sign, &x_coord, &broadcast_3to4);
+        let result = parties[some_index - 1].sign_phase4(all_data.get(&some_index).unwrap(), &x_coord, &broadcast_3to4);
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
@@ -922,16 +963,26 @@ mod tests {
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<usize> = Vec::from_iter(1..=parameters.threshold);
 
-        // Phase 1
-        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
-        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
-        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        // Each party prepares their data for this signing session.
+        let mut all_data: HashMap<usize, SignData> = HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party_index);
 
-            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(&sign_id, &counterparties);
+            all_data.insert(party_index, SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties,
+                message_to_sign: message_to_sign.to_vec(),
+            });
+        }
+
+        // Phase 1
+        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
+        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        for party_index in executing_parties.clone() {
+            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(all_data.get(&party_index).unwrap());
         
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -960,11 +1011,7 @@ mod tests {
         let mut kept_2to3: HashMap<usize,HashMap<usize,KeepPhase2to3>> = HashMap::with_capacity(parameters.threshold);
         let mut transmit_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            //Gather the counterparties
-            let mut counterparties = executing_parties.clone();
-            counterparties.retain(|index| *index != party_index);
-
-            let result = parties[party_index - 1].sign_phase2(&sign_id, &counterparties, unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase2(all_data.get(&party_index).unwrap(), unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -998,7 +1045,7 @@ mod tests {
         let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            let result = parties[party_index - 1].sign_phase3(&sign_id, &message_to_sign, unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -1011,7 +1058,7 @@ mod tests {
         }
 
         // We verify all parties got the same x coordinate.
-        let x_coord = x_coords[0].clone();
+        let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
             assert_eq!(x_coord, x_coords[i]);
         }
@@ -1021,7 +1068,7 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[some_index - 1].sign_phase4(&message_to_sign, &x_coord, &broadcast_3to4);
+        let result = parties[some_index - 1].sign_phase4(all_data.get(&some_index).unwrap(), &x_coord, &broadcast_3to4);
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }

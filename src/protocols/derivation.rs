@@ -296,16 +296,26 @@ mod tests {
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<usize> = Vec::from_iter(1..=parameters.threshold);
 
-        // Phase 1
-        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
-        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
-        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        // Each party prepares their data for this signing session.
+        let mut all_data: HashMap<usize, SignData> = HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party_index);
 
-            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(&sign_id, &counterparties);
+            all_data.insert(party_index, SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties,
+                message_to_sign: message_to_sign.to_vec(),
+            });
+        }
+
+        // Phase 1
+        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
+        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        for party_index in executing_parties.clone() {
+            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(all_data.get(&party_index).unwrap());
         
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -334,11 +344,7 @@ mod tests {
         let mut kept_2to3: HashMap<usize,HashMap<usize,KeepPhase2to3>> = HashMap::with_capacity(parameters.threshold);
         let mut transmit_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            //Gather the counterparties
-            let mut counterparties = executing_parties.clone();
-            counterparties.retain(|index| *index != party_index);
-
-            let result = parties[party_index - 1].sign_phase2(&sign_id, &counterparties, unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase2(all_data.get(&party_index).unwrap(), unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -372,7 +378,7 @@ mod tests {
         let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            let result = parties[party_index - 1].sign_phase3(&sign_id, &message_to_sign, unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -385,7 +391,7 @@ mod tests {
         }
 
         // We verify all parties got the same x coordinate.
-        let x_coord = x_coords[0].clone();
+        let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
             assert_eq!(x_coord, x_coords[i]);
         }
@@ -395,7 +401,7 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[some_index - 1].sign_phase4(&message_to_sign, &x_coord, &broadcast_3to4);
+        let result = parties[some_index - 1].sign_phase4(all_data.get(&some_index).unwrap(), &x_coord, &broadcast_3to4);
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
