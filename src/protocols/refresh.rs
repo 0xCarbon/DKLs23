@@ -40,14 +40,14 @@ use crate::protocols::dkg::*;
 #[derive(Clone)]
 pub struct TransmitRefreshPhase1to3 {
     pub parties: PartiesMessage,
-    commitment: HashOutput,
+    pub commitment: HashOutput,
 }
 
 #[derive(Clone)]
 pub struct TransmitRefreshPhase2to3 {
     pub parties: PartiesMessage,
-    seed: zero_sharings::Seed,
-    salt: Vec<u8>,
+    pub seed: zero_sharings::Seed,
+    pub salt: Vec<u8>,
 }
 
 ////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
@@ -57,21 +57,21 @@ pub struct TransmitRefreshPhase2to3 {
 
 #[derive(Clone)]
 pub struct KeepRefreshPhase1to2 {
-    seed: zero_sharings::Seed,
-    salt: Vec<u8>,
+    pub seed: zero_sharings::Seed,
+    pub salt: Vec<u8>,
 }
 
 #[derive(Clone)]
 pub struct KeepRefreshPhase2to3 {
-    seed: zero_sharings::Seed,
+    pub seed: zero_sharings::Seed,
 }
 
 // This one we just keep one instance (it's a "unique keep").
 #[derive(Clone)]
 pub struct KeepRefreshPhase3to4 {
-    zero_share: ZeroShare,
-    new_mul_senders: HashMap<usize,MulSender>,
-    new_mul_receivers: HashMap<usize,MulReceiver>,
+    pub zero_share: ZeroShare,
+    pub new_mul_senders: HashMap<usize,MulSender>,
+    pub new_mul_receivers: HashMap<usize,MulReceiver>,
 }
 
 //////////////////////////

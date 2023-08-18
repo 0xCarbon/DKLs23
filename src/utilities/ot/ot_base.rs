@@ -27,7 +27,7 @@ use crate::utilities::ot::ErrorOT;
 //Sender after initialization
 #[derive(Debug, Clone)]
 pub struct Sender {
-    sk: Scalar<Secp256k1>,
+    pub sk: Scalar<Secp256k1>,
     pub pk: Point<Secp256k1>,
 }
 
@@ -80,7 +80,7 @@ impl Sender {
 
     /// Step 1 - The sender produces a random scalar.
     /// This already generates an instance of Sender.
-    fn step1initialize() -> Sender {
+    pub fn step1initialize() -> Sender {
         let sk = Scalar::<Secp256k1>::random();
         let pk = Point::<Secp256k1>::generator() * &sk;
         
@@ -92,7 +92,7 @@ impl Sender {
 
     /// Step 2 - The sender should transmit his public key together with a proof that
     /// he has the secret key.
-    fn step2prove(&self, session_id: &[u8]) -> DLogProof {
+    pub fn step2prove(&self, session_id: &[u8]) -> DLogProof {
         DLogProof::prove(&self.sk, session_id)
     }
 
@@ -100,7 +100,7 @@ impl Sender {
 
     /// Step 4 - The sender computes the pads rho^0 and rho^1 from the paper.
     /// This is his output for this (random) oblivious transfer protocol.
-    fn step4computepads(&self, session_id: &[u8], encoded_choice_bit: &Point<Secp256k1>) -> SenderOutput {
+    pub fn step4computepads(&self, session_id: &[u8], encoded_choice_bit: &Point<Secp256k1>) -> SenderOutput {
         let point0 = encoded_choice_bit * &self.sk;
         let point1 = &point0 - (&self.pk * &self.sk);
 
@@ -120,7 +120,7 @@ impl Sender {
     /// Meanwhile, some hashes that will be used later are also computed.
     /// The sender hash data will be transmitted to the receiver, but we don't
     /// need to send the double hash, so we keep it in another place.
-    fn step5computechallenge(&self, session_id: &[u8], pads: &SenderOutput) -> (SenderHashData, HashOutput, HashOutput) {
+    pub fn step5computechallenge(&self, session_id: &[u8], pads: &SenderOutput) -> (SenderHashData, HashOutput, HashOutput) {
         let hash_pad0 = hash(&pads.pad0, session_id);
         let hash_pad1 = hash(&pads.pad1, session_id);
 
@@ -145,7 +145,7 @@ impl Sender {
     // Step 6 - No action for the sender.
 
     /// Step 7 - The sender verifies if the receiver's response makes sense.
-    fn step7openchallenge(&self, double_hash_pad0: &HashOutput, response: &HashOutput) -> Result<(),ErrorOT> {
+    pub fn step7openchallenge(&self, double_hash_pad0: &HashOutput, response: &HashOutput) -> Result<(),ErrorOT> {
         if double_hash_pad0 != response {
             return Err(ErrorOT::new("Receiver cheated in OT: Challenge verification failed!"));
         }
@@ -248,7 +248,7 @@ impl Receiver {
 
     /// Step 2 - The receiver verifies the sender's proof.
     /// This already generates an instance of Receiver.
-    fn step2initialize(session_id: &[u8], proof: &DLogProof) -> Result<Receiver,ErrorOT> {
+    pub fn step2initialize(session_id: &[u8], proof: &DLogProof) -> Result<Receiver,ErrorOT> {
         let verification = DLogProof::verify(proof, session_id);
         if !verification {
             return Err(ErrorOT::new("Sender cheated in OT: Proof of discrete logarithm failed!"));
@@ -264,7 +264,7 @@ impl Receiver {
 
     /// Step 3 - Given a choice bit, the receiver encodes it (the point A from the paper)
     /// and computes his pad, which will be his output for the protocol.
-    fn step3padtransfer(&self, session_id: &[u8], choice_bit: bool) -> (ReceiverOutput, Point<Secp256k1>) {
+    pub fn step3padtransfer(&self, session_id: &[u8], choice_bit: bool) -> (ReceiverOutput, Point<Secp256k1>) {
         let a = Scalar::<Secp256k1>::random();
         
         let choice0 = Point::<Secp256k1>::generator() * &a;
@@ -293,7 +293,7 @@ impl Receiver {
 
     /// Step 6 - The receiver computes his response for the sender's challenge.
     /// Meanwhile, some hashes that will be used later are also computed. 
-    fn step6respond(&self, session_id: &[u8], output: &ReceiverOutput, challenge: &HashOutput) -> (ReceiverHashData, HashOutput) {
+    pub fn step6respond(&self, session_id: &[u8], output: &ReceiverOutput, challenge: &HashOutput) -> (ReceiverHashData, HashOutput) {
         let hash_pad = hash(&output.pad, session_id);
 
         //For the second hash, the implementation from DKLs19 updates the id tag. PENSAR NISSO!
@@ -318,7 +318,7 @@ impl Receiver {
 
     /// Step 8 - The receiver verifies if the sender computed correctly the
     /// pads and the challenge.
-    fn step8verification(&self, session_id: &[u8], output: &ReceiverOutput, hashes: &ReceiverHashData, sender_hashes: &SenderHashData) -> Result<(),ErrorOT> {
+    pub fn step8verification(&self, session_id: &[u8], output: &ReceiverOutput, hashes: &ReceiverHashData, sender_hashes: &SenderHashData) -> Result<(),ErrorOT> {
         let expected_hash_pad: HashOutput;
         if output.choice_bit {
             expected_hash_pad = sender_hashes.hash_pad1.clone();
@@ -448,14 +448,14 @@ impl Receiver {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
     use rand::Rng;
 
     // This function initializes an OT setup (Phase 1 for sender and receiver)
     // It is "ideal" in the sense that it pretends to be both the sender and the receiver,
     // so it cannot be used for real applications.
-    pub fn ideal_initialization(session_id: &[u8]) -> Result<(Sender, Receiver),ErrorOT> {
+    fn ideal_initialization(session_id: &[u8]) -> Result<(Sender, Receiver),ErrorOT> {
         let (sender, proof) = Sender::phase1initialize(session_id);
         let try_receiver = Receiver::phase1initialize(session_id, &proof);
 
@@ -467,7 +467,7 @@ pub mod tests {
 
     // This function executes that main part of the protocol.
     // As before, this should not be used for real applications.
-    pub fn ideal_functionality(session_id: &[u8], sender: &Sender, receiver: &Receiver, choice_bit: bool) -> Result<(SenderOutput, ReceiverOutput),ErrorOT> {
+    fn ideal_functionality(session_id: &[u8], sender: &Sender, receiver: &Receiver, choice_bit: bool) -> Result<(SenderOutput, ReceiverOutput),ErrorOT> {
 
         //Phase 2 - Receiver
         let (receiver_output, encoded_choice_bit) = receiver.phase2padtransfer(session_id, choice_bit);
@@ -504,7 +504,7 @@ pub mod tests {
     }
 
     // Batch version for the previous function.
-    pub fn ideal_functionality_batch(session_id: &[u8], sender: &Sender, receiver: &Receiver, choice_bits: &Vec<bool>) -> Result<(Vec<SenderOutput>, Vec<ReceiverOutput>),ErrorOT> {
+    fn ideal_functionality_batch(session_id: &[u8], sender: &Sender, receiver: &Receiver, choice_bits: &Vec<bool>) -> Result<(Vec<SenderOutput>, Vec<ReceiverOutput>),ErrorOT> {
 
         let batch_size = choice_bits.len();
 

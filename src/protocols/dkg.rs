@@ -25,9 +25,9 @@ use crate::utilities::multiplication::{MulSender, MulReceiver};
 // This struct is used during key generation
 #[derive(Debug, Clone)]
 pub struct ProofCommitment {
-    index: usize,
-    proof: DLogProof,
-    commitment: HashOutput,
+    pub index: usize,
+    pub proof: DLogProof,
+    pub commitment: HashOutput,
 }
 
 // This struct contains the data needed to start
@@ -45,47 +45,47 @@ pub struct SessionData {
 #[derive(Clone)]
 pub struct TransmitInitZeroSharePhase1to3 {
     pub parties: PartiesMessage,
-    commitment: HashOutput,
+    pub commitment: HashOutput,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitZeroSharePhase2to3 {
     pub parties: PartiesMessage,
-    seed: zero_sharings::Seed,
-    salt: Vec<u8>,
+    pub seed: zero_sharings::Seed,
+    pub salt: Vec<u8>,
 }
 
 // Initializating two-party multiplication protocol.
 #[derive(Clone)]
 pub struct TransmitInitMulPhase1to2 {
     pub parties: PartiesMessage,
-    proof: DLogProof,
-    nonce: Scalar<Secp256k1>,
+    pub proof: DLogProof,
+    pub nonce: Scalar<Secp256k1>,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase2to3 {
     pub parties: PartiesMessage,
-    encoded: Vec<Point<Secp256k1>>,
+    pub encoded: Vec<Point<Secp256k1>>,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
-    challenge: Vec<HashOutput>,
+    pub challenge: Vec<HashOutput>,
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase4to5 {
     pub parties: PartiesMessage,
-    response: Vec<HashOutput>,
+    pub response: Vec<HashOutput>,
 
 }
 
 #[derive(Clone)]
 pub struct TransmitInitMulPhase5to6 {
     pub parties: PartiesMessage,
-    sender_hashes: Vec<ot_base::SenderHashData>,
+    pub sender_hashes: Vec<ot_base::SenderHashData>,
 }
 
 // Initializing key derivation (via BIP-32).
@@ -95,13 +95,13 @@ pub struct TransmitInitMulPhase5to6 {
 // receiver will not be used). 
 #[derive(Clone)]
 pub struct TransmitDerivationPhase1to3 {
-    cc_commitment: HashOutput,
+    pub cc_commitment: HashOutput,
 }
 
 #[derive(Clone)]
 pub struct TransmitDerivationPhase2to3 {
-    aux_chain_code: ChainCode,
-    cc_salt: Vec<u8>,
+    pub aux_chain_code: ChainCode,
+    pub cc_salt: Vec<u8>,
 }
 
 ////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
@@ -109,55 +109,55 @@ pub struct TransmitDerivationPhase2to3 {
 // Initializing zero sharing protocol. 
 #[derive(Clone)]
 pub struct KeepInitZeroSharePhase1to2 {
-    seed: zero_sharings::Seed,
-    salt: Vec<u8>,
+    pub seed: zero_sharings::Seed,
+    pub salt: Vec<u8>,
 }
 
 #[derive(Clone)]
 pub struct KeepInitZeroSharePhase2to3 {
-    seed: zero_sharings::Seed,
+    pub seed: zero_sharings::Seed,
 }
 
 // Initializating two-party multiplication protocol.
 #[derive(Clone)]
 pub struct KeepInitMulPhase1to3 {
-    base_sender: ot_base::Sender,
-    nonce: Scalar<Secp256k1>,
+    pub base_sender: ot_base::Sender,
+    pub nonce: Scalar<Secp256k1>,
 }
 
 #[derive(Clone)]
 pub struct KeepInitMulPhase2to4 {
-    base_receiver: ot_base::Receiver,
-    receiver_output: Vec<ot_base::ReceiverOutput>,
-    mul_sender: MulSender,
+    pub base_receiver: ot_base::Receiver,
+    pub receiver_output: Vec<ot_base::ReceiverOutput>,
+    pub mul_sender: MulSender,
 }
 
 #[derive(Clone)]
 pub struct KeepInitMulPhase3to5 {
-    base_sender: ot_base::Sender,
-    sender_hashes: Vec<ot_base::SenderHashData>,
-    double_hash: Vec<HashOutput>,
-    mul_receiver: MulReceiver,
+    pub base_sender: ot_base::Sender,
+    pub sender_hashes: Vec<ot_base::SenderHashData>,
+    pub double_hash: Vec<HashOutput>,
+    pub mul_receiver: MulReceiver,
 }
 
 #[derive(Clone)]
 pub struct KeepInitMulPhase4to6 {
-    base_receiver: ot_base::Receiver,
-    receiver_output: Vec<ot_base::ReceiverOutput>,
-    receiver_hashes: Vec<ot_base::ReceiverHashData>,
-    mul_sender: MulSender,
+    pub base_receiver: ot_base::Receiver,
+    pub receiver_output: Vec<ot_base::ReceiverOutput>,
+    pub receiver_hashes: Vec<ot_base::ReceiverHashData>,
+    pub mul_sender: MulSender,
 }
 
 #[derive(Clone)]
 pub struct KeepInitMulPhase5to6 {
-    mul_receiver: MulReceiver,
+    pub mul_receiver: MulReceiver,
 }
 
 // Initializing key derivation (via BIP-32).
 #[derive(Clone)]
 pub struct KeepDerivationPhase1to2 {
-    aux_chain_code: ChainCode,
-    cc_salt: Vec<u8>,
+    pub aux_chain_code: ChainCode,
+    pub cc_salt: Vec<u8>,
 }
 
 // This struct saves the complete initialization
@@ -165,8 +165,8 @@ pub struct KeepDerivationPhase1to2 {
 
 #[derive(Clone)]
 pub struct KeepCompletePhase3to6 {
-    zero_share: ZeroShare,
-    chain_code: ChainCode,
+    pub zero_share: ZeroShare,
+    pub chain_code: ChainCode,
 }
 
 ///////////////////////////////////////////////////////////////////////////////

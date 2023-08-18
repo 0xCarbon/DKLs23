@@ -30,20 +30,20 @@ pub struct SignData {
 #[derive(Clone)]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
-    commitment: HashOutput,
-    mul_transmit: OTEDataToSender,
+    pub commitment: HashOutput,
+    pub mul_transmit: OTEDataToSender,
 }
 
 #[derive(Clone)]
 pub struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
-    gamma_u: Point<Secp256k1>,
-    gamma_v: Point<Secp256k1>,
-    psi: Scalar<Secp256k1>,
-    public_share: Point<Secp256k1>,
-    instance_point: Point<Secp256k1>,
-    salt: Vec<u8>,
-    mul_transmit: MulDataToReceiver,
+    pub gamma_u: Point<Secp256k1>,
+    pub gamma_v: Point<Secp256k1>,
+    pub psi: Scalar<Secp256k1>,
+    pub public_share: Point<Secp256k1>,
+    pub instance_point: Point<Secp256k1>,
+    pub salt: Vec<u8>,
+    pub mul_transmit: MulDataToReceiver,
 }
 
 // "Broadcast" messages refer to all counterparties at once,
@@ -51,8 +51,8 @@ pub struct TransmitPhase2to3 {
 
 #[derive(Clone)]
 pub struct Broadcast3to4 {
-    u: Scalar<Secp256k1>,
-    w: Scalar<Secp256k1>,
+    pub u: Scalar<Secp256k1>,
+    pub w: Scalar<Secp256k1>,
 }
 
 ////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
@@ -62,18 +62,18 @@ pub struct Broadcast3to4 {
 
 #[derive(Clone)]
 pub struct KeepPhase1to2 {
-    salt: Vec<u8>,
-    chi: Scalar<Secp256k1>,
-    mul_keep: MulDataToKeepReceiver,
+    pub salt: Vec<u8>,
+    pub chi: Scalar<Secp256k1>,
+    pub mul_keep: MulDataToKeepReceiver,
 }
 
 #[derive(Clone)]
 pub struct KeepPhase2to3 {
-    c_u: Scalar<Secp256k1>,
-    c_v: Scalar<Secp256k1>,
-    commitment: HashOutput,
-    mul_keep: MulDataToKeepReceiver,
-    chi: Scalar<Secp256k1>,
+    pub c_u: Scalar<Secp256k1>,
+    pub c_v: Scalar<Secp256k1>,
+    pub commitment: HashOutput,
+    pub mul_keep: MulDataToKeepReceiver,
+    pub chi: Scalar<Secp256k1>,
 }
 
 // "Unique keep" messages refer to all counterparties at once,
@@ -81,19 +81,19 @@ pub struct KeepPhase2to3 {
 
 #[derive(Clone)]
 pub struct UniqueKeep1to2 {
-    instance_key: Scalar<Secp256k1>,
-    instance_point: Point<Secp256k1>,
-    inversion_mask: Scalar<Secp256k1>,
-    zeta: Scalar<Secp256k1>,
+    pub instance_key: Scalar<Secp256k1>,
+    pub instance_point: Point<Secp256k1>,
+    pub inversion_mask: Scalar<Secp256k1>,
+    pub zeta: Scalar<Secp256k1>,
 }
 
 #[derive(Clone)]
 pub struct UniqueKeep2to3 {
-    instance_key: Scalar<Secp256k1>,
-    instance_point: Point<Secp256k1>,
-    inversion_mask: Scalar<Secp256k1>,
-    key_share: Scalar<Secp256k1>,
-    public_share: Point<Secp256k1>,
+    pub instance_key: Scalar<Secp256k1>,
+    pub instance_point: Point<Secp256k1>,
+    pub inversion_mask: Scalar<Secp256k1>,
+    pub key_share: Scalar<Secp256k1>,
+    pub public_share: Point<Secp256k1>,
 }
 
 //////////////////////////

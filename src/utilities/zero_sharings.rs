@@ -25,7 +25,7 @@ pub struct SeedPair {
 
 #[derive(Debug, Clone)]
 pub struct ZeroShare {
-    seeds: Vec<SeedPair>,
+    pub seeds: Vec<SeedPair>,
 }
 
 impl ZeroShare {

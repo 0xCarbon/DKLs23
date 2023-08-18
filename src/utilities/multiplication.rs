@@ -15,7 +15,7 @@ use crate::utilities::ot::ot_base::*;
 use crate::utilities::ot::ot_extension::{OTESender, OTEReceiver, OTEDataToSender, BATCH_SIZE, PRGOutput};
 
 // Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
-const L: usize = 2;
+pub const L: usize = 2;
 
 #[derive(Clone)]
 pub struct MulSender {
@@ -497,7 +497,7 @@ mod tests {
     // It is "ideal" in the sense that it pretends to be both the sender and the receiver,
     // so it cannot be used for real applications.
     // It is an adaptation of ideal_initialization_ote.
-    pub fn ideal_initialization_mul(session_id: &[u8]) -> Result<(MulSender, MulReceiver), ErrorOT> {
+    fn ideal_initialization_mul(session_id: &[u8]) -> Result<(MulSender, MulReceiver), ErrorOT> {
         
         // Base OT
         let (base_sender, proof, nonce) = MulReceiver::init_phase1(session_id);
@@ -532,7 +532,7 @@ mod tests {
 
     // This function executes that main part of the protocol.
     // As before, this should not be used for real applications.
-    pub fn ideal_functionality_mul(session_id: &[u8], mul_sender: &MulSender, mul_receiver: &MulReceiver, sender_input: &Vec<Scalar<Secp256k1>>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>, Scalar<Secp256k1>), ErrorMul> {
+    fn ideal_functionality_mul(session_id: &[u8], mul_sender: &MulSender, mul_receiver: &MulReceiver, sender_input: &Vec<Scalar<Secp256k1>>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>, Scalar<Secp256k1>), ErrorMul> {
 
         let (b, data_to_keep, data_to_sender) = mul_receiver.run_phase1(session_id);
 

@@ -14,26 +14,26 @@ pub mod signing;
 
 #[derive(Clone)]
 pub struct Parameters {
-    threshold: usize,     //t
-    share_count: usize,   //n
+    pub threshold: usize,     //t
+    pub share_count: usize,   //n
 }
 
 // This struct represents a party after key generation ready to sign a message.
 #[derive(Clone)]
 pub struct Party {
-    parameters: Parameters,
-    party_index: usize,
-    session_id: Vec<u8>,
+    pub parameters: Parameters,
+    pub party_index: usize,
+    pub session_id: Vec<u8>,
 
-    poly_point: Scalar<Secp256k1>,  // It behaves as the secrect key share
-    pk: Point<Secp256k1>,           // Public key
+    pub poly_point: Scalar<Secp256k1>,  // It behaves as the secrect key share
+    pub pk: Point<Secp256k1>,           // Public key
 
-    zero_share: ZeroShare,          // Used for computing shares of zero during signing.
+    pub zero_share: ZeroShare,          // Used for computing shares of zero during signing.
 
-    mul_senders: HashMap<usize, MulSender>,     // Initializations for two-party multiplication.
-    mul_receivers: HashMap<usize,MulReceiver>,  // The key in the HashMap represents the other party.
+    pub mul_senders: HashMap<usize, MulSender>,     // Initializations for two-party multiplication.
+    pub mul_receivers: HashMap<usize,MulReceiver>,  // The key in the HashMap represents the other party.
 
-    derivation_data: DerivationData,    // Data for BIP-32 derivation.
+    pub derivation_data: DerivationData,    // Data for BIP-32 derivation.
 }
 
 #[derive(Debug,Clone)]
@@ -54,8 +54,8 @@ impl Abort {
 // This struct saves the sender and receiver of a message.
 #[derive(Clone)]
 pub struct PartiesMessage {
-    sender: usize,
-    receiver: usize,
+    pub sender: usize,
+    pub receiver: usize,
 }
 
 impl PartiesMessage {

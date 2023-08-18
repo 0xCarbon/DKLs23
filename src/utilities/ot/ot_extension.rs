@@ -26,9 +26,9 @@ use crate::utilities::ot::ot_base::*;
 // You should not change these numbers!
 // If you do, some parts of the code must be changed.
 pub const KAPPA: usize = RAW_SECURITY;
-const OT_SECURITY: usize = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
+pub const OT_SECURITY: usize = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
 pub const BATCH_SIZE: usize = RAW_SECURITY + 2*STAT_SECURITY;
-const EXTENDED_BATCH_SIZE: usize = BATCH_SIZE + OT_SECURITY;
+pub const EXTENDED_BATCH_SIZE: usize = BATCH_SIZE + OT_SECURITY;
 
 pub type PRGOutput = [u8; EXTENDED_BATCH_SIZE/8]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
 pub type FieldElement = [u8; OT_SECURITY/8];      //The same for OT_SECURITY
@@ -666,7 +666,7 @@ mod tests {
     // This function initializes an OTE setup.
     // It is "ideal" in the sense that it pretends to be both the sender and the receiver,
     // so it cannot be used for real applications.
-    pub fn ideal_initialization_ote(session_id: &[u8]) -> Result<(OTESender, OTEReceiver), ErrorOT> {
+    fn ideal_initialization_ote(session_id: &[u8]) -> Result<(OTESender, OTEReceiver), ErrorOT> {
 
         // Initializing base OT.
         let (base_sender, proof) = OTEReceiver::init_phase1(session_id);
@@ -703,7 +703,7 @@ mod tests {
 
     // This function executes that main part of the protocol.
     // As before, this should not be used for real applications.
-    pub fn ideal_functionality_ote(session_id: &[u8], ote_sender: &OTESender, ote_receiver: &OTEReceiver, sender_input_correlation: &Vec<Scalar<Secp256k1>>, receiver_choice_bits: &Vec<bool>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorOT> {
+    fn ideal_functionality_ote(session_id: &[u8], ote_sender: &OTESender, ote_receiver: &OTEReceiver, sender_input_correlation: &Vec<Scalar<Secp256k1>>, receiver_choice_bits: &Vec<bool>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorOT> {
 
         let (extended_seeds, data_to_sender) = ote_receiver.run_phase1(session_id, receiver_choice_bits);
 
