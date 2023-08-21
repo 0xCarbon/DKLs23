@@ -353,7 +353,7 @@ impl Party {
         let u = (&unique_kept.instance_key * &first_sum_u_v) + second_sum_u;
         let v = (&unique_kept.key_share * &first_sum_u_v) + second_sum_v;
 
-        let x_coord = total_instance_point.x_coord().unwrap();
+        let x_coord = total_instance_point.x_coord().unwrap().modulus(Scalar::<Secp256k1>::group_order());
         // There is no salt because the hash function here is always the same.
         let w = (hash_as_scalar(&data.message_to_sign, &[]) * &unique_kept.inversion_mask) + (v * Scalar::<Secp256k1>::from_bigint(&x_coord));
 
@@ -566,6 +566,174 @@ mod tests {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
+    }
+
+    #[test]
+    // This function compares the signature generated during
+    // the protocol with the usual signature someone would
+    // compute for ECDSA.
+    fn test_signing_against_ecdsa() {
+
+        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rand::thread_rng().gen_range(0..=5);
+
+        let parameters = Parameters { threshold, share_count: threshold + offset }; // You can fix the parameters if you prefer.
+
+        // We use the re_key function to quickly sample the parties.
+        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::<Secp256k1>::random();
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        // SIGNING (as in test_signing)
+
+        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let message_to_sign = "Message to sign!".as_bytes();
+
+        // For simplicity, we are testing only the first parties.
+        let executing_parties: Vec<usize> = Vec::from_iter(1..=parameters.threshold);
+
+        // Each party prepares their data for this signing session.
+        let mut all_data: HashMap<usize, SignData> = HashMap::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+            //Gather the counterparties
+            let mut counterparties = executing_parties.clone();
+            counterparties.retain(|index| *index != party_index);
+
+            all_data.insert(party_index, SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties,
+                message_to_sign: message_to_sign.to_vec(),
+            });
+        }
+
+        // Phase 1
+        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
+        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        for party_index in executing_parties.clone() {
+            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(all_data.get(&party_index).unwrap());
+        
+            unique_kept_1to2.insert(party_index, unique_keep);
+            kept_1to2.insert(party_index, keep);
+            transmit_1to2.insert(party_index, transmit);
+        }
+
+        // Communication round 1
+        let mut received_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+
+            let mut new_row: Vec<TransmitPhase1to2> = Vec::with_capacity(parameters.threshold - 1);
+            for (_, messages) in &transmit_1to2 {
+                for message in messages {
+                    // Check if this message should be sent to us.
+                    if message.parties.receiver == party_index {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            received_1to2.insert(party_index, new_row);
+
+        }
+
+        // Phase 2
+        let mut unique_kept_2to3: HashMap<usize,UniqueKeep2to3> = HashMap::with_capacity(parameters.threshold);
+        let mut kept_2to3: HashMap<usize,HashMap<usize,KeepPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        let mut transmit_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+            let result = parties[party_index - 1].sign_phase2(all_data.get(&party_index).unwrap(), unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                },
+                Ok((unique_keep, keep, transmit)) => {
+                    unique_kept_2to3.insert(party_index, unique_keep);
+                    kept_2to3.insert(party_index, keep);
+                    transmit_2to3.insert(party_index, transmit);
+                },
+            }
+        }
+
+        // Communication round 2
+        let mut received_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+
+            let mut new_row: Vec<TransmitPhase2to3> = Vec::with_capacity(parameters.threshold - 1);
+            for (_, messages) in &transmit_2to3 {
+                for message in messages {
+                    // Check if this message should be sent to us.
+                    if message.parties.receiver == party_index {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            received_2to3.insert(party_index, new_row);
+
+        }
+
+        // Phase 3
+        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
+        for party_index in executing_parties.clone() {
+            let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                },
+                Ok((x_coord, broadcast)) => {
+                    x_coords.push(x_coord);
+                    broadcast_3to4.push(broadcast);
+                },
+            }
+        }
+
+        // We verify all parties got the same x coordinate.
+        let x_coord = x_coords[0].clone(); // We take the first one as reference.
+        for i in 1..parameters.threshold {
+            assert_eq!(x_coord, x_coords[i]);
+        }
+
+        // Communication round 3
+        // This is a broadcast to all parties. The desired result is already broadcast_3to4.
+
+        // Phase 4
+        // It is essentially independent of the party, so we compute just once.
+        let some_index = executing_parties[0];
+        let result = parties[some_index - 1].sign_phase4(all_data.get(&some_index).unwrap(), &x_coord, &broadcast_3to4);
+        let signature: BigInt;
+        match result {
+            Err(abort) => {
+                panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            },
+            Ok(s) => {
+                signature = s;
+            },
+        }
+        // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
+
+        // ECDSA (computations that would be done if there were only one person)
+
+        // Let us retrieve the total instance/ephemeral key.
+        let mut total_instance_key = Scalar::<Secp256k1>::zero();
+        for (_,kept) in unique_kept_1to2 {
+            total_instance_key = total_instance_key + kept.instance_key;
+        }
+
+        // We compare the total "instance point" with the parties' calculations.
+        let total_instance_point = Point::<Secp256k1>::generator() * &total_instance_key;
+        let expected_x_coord = total_instance_point.x_coord().unwrap().modulus(Scalar::<Secp256k1>::group_order());
+        assert_eq!(x_coord, expected_x_coord);
+
+        // The hash of the message:
+        let hashed_message = hash_as_scalar(message_to_sign, &[]);
+        assert_eq!(hashed_message, Scalar::<Secp256k1>::from_bigint(&BigInt::from_hex("ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d").unwrap()));
+
+        // Now we can find the signature in the usual way.
+        let expected_signature_as_scalar = total_instance_key.invert().unwrap() * (hashed_message + (secret_key * Scalar::<Secp256k1>::from_bigint(&expected_x_coord)));
+        let expected_signature = expected_signature_as_scalar.to_bigint();
+
+        // We compare the results.
+        assert_eq!(signature, expected_signature);
+
     }
 
     #[test]
