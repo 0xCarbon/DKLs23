@@ -94,7 +94,7 @@ impl DerivationData {
         let new_pk = &self.pk + (Point::<Secp256k1>::generator() * &tweak);
 
         if new_pk.is_zero() {
-            panic!("Very improbable: Child index results in value not allowed by BIP-32!");
+            return Err(ErrorDerivation::new("Very improbable: Child index results in value not allowed by BIP-32!"));
         }
 
         Ok(DerivationData {
@@ -195,9 +195,13 @@ pub fn parse_path(path: &str) -> Result<Vec<u32>, ErrorDerivation> {
 
     let path_parsed: Vec<u32> = parts.map(|x| str::parse::<u32>(x).map_err(|_| ErrorDerivation::new("Invalid path format!"))).collect::<Result<_,_>>()?;
 
+    if path_parsed.len() > 255 {
+        return Err(ErrorDerivation::new("The path is too long!"));
+    }
+
     for index in &path_parsed {
         if *index >= 0x80000000 {
-            panic!("Child index should be between 0 and 2^31 - 1!");
+            return Err(ErrorDerivation::new("Child index should be between 0 and 2^31 - 1!"));
         }
     }
 
