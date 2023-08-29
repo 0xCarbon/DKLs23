@@ -13,12 +13,12 @@
 /// comes from Protocol 9 of the DKLs18 paper (https://eprint.iacr.org/2018/499.pdf).
 /// It is needed to transform the outputs to the desired form.
 
-use curv::elliptic::curves::{Scalar, Point, Secp256k1};
+use curv::elliptic::curves::{Scalar, Secp256k1};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
 use crate::utilities::hashes::*;
-use crate::utilities::proofs::DLogProof;
+use crate::utilities::proofs::{DLogProof, EncProof};
 
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::ot::ot_base::*;
@@ -63,40 +63,29 @@ impl OTESender {
     // Attention: The roles are reversed during this part!
     // Hence, a sender in the extension initializes as a receiver in the base OT. 
 
-    pub fn init_phase1(session_id: &[u8], proof: &DLogProof) -> Result<Receiver, ErrorOT> {
-        Receiver::phase1initialize(session_id, proof)
-    }
+    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar<Secp256k1>>, Vec<EncProof>) {
+        let ot_receiver = OTReceiver::init();
 
-    pub fn init_phase2(receiver: &Receiver, session_id: &[u8]) -> (OTESender, Vec<ReceiverOutput>, Vec<Point<Secp256k1>>) {
-        
         // The choice bits are sampled randomly.
         let mut correlation:Vec<bool> = Vec::with_capacity(KAPPA);
         for _ in 0..KAPPA {
             correlation.push(rand::random());
         }
 
-        let (output, encoded) = receiver.phase2batch(KAPPA, session_id, &correlation);
+        let (vec_r, enc_proofs) = ot_receiver.run_phase1_batch(session_id, &correlation);
 
+        (ot_receiver, correlation, vec_r, enc_proofs)
+    }
+
+    pub fn init_phase2(ot_receiver: &OTReceiver, session_id: &[u8], correlation: Vec<bool>, vec_r: &Vec<Scalar<Secp256k1>>, dlog_proof: &DLogProof) -> Result<OTESender, ErrorOT> {
+        
         // The outputs from the base OT become the sender's seeds.
-        let mut seeds: Vec<HashOutput> = Vec::with_capacity(KAPPA);
-        for i in 0..KAPPA {
-            seeds.push(output[i].pad);
-        }
+        let seeds = ot_receiver.run_phase2_batch(session_id, vec_r, dlog_proof)?;
 
-        let ote_sender = OTESender {
+        Ok(OTESender {
             correlation,
             seeds,
-        };
-
-        (ote_sender, output, encoded)
-    }
-
-    pub fn init_phase3(receiver: &Receiver, session_id: &[u8], output: &Vec<ReceiverOutput>, challenge: &Vec<HashOutput>) -> (Vec<ReceiverHashData>, Vec<HashOutput>) {
-        receiver.phase3batch(KAPPA, session_id, output, challenge)
-    }
-
-    pub fn init_phase4(receiver: &Receiver, session_id: &[u8], output: &Vec<ReceiverOutput>, hashes: &Vec<ReceiverHashData>, sender_hashes: &Vec<SenderHashData>) -> Result<(),ErrorOT> {
-        receiver.phase4batch(KAPPA, session_id, output, hashes, sender_hashes)
+        })
     }
 
     // PROTOCOL
@@ -286,31 +275,23 @@ impl OTEReceiver {
     // Attention: The roles are reversed during this part!
     // Hence, a receiver in the extension initializes as a sender in the base OT.
 
-    pub fn init_phase1(session_id: &[u8]) -> (Sender, DLogProof) {
-        Sender::phase1initialize(session_id)
+    pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof) {
+        let ot_sender = OTSender::init(session_id);
+
+        let dlog_proof = ot_sender.run_phase1();
+
+        (ot_sender, dlog_proof)
     }
 
-    pub fn init_phase2(sender: &Sender, session_id: &[u8], encoded: &Vec<Point<Secp256k1>>) -> (OTEReceiver, Vec<SenderHashData>, Vec<HashOutput>, Vec<HashOutput>) {
-        let (output, hashes, double, challenge) = sender.phase2batch(KAPPA, session_id, encoded);
-
+    pub fn init_phase2(ot_sender: &OTSender, session_id: &[u8], seed: &Seed, enc_proofs: &Vec<EncProof>) -> Result<OTEReceiver, ErrorOT> {
+        
         // The outputs from the base OT become the receiver's seeds.
-        let mut seeds0: Vec<HashOutput> = Vec::with_capacity(KAPPA);
-        let mut seeds1: Vec<HashOutput> = Vec::with_capacity(KAPPA);
-        for i in 0..KAPPA {
-            seeds0.push(output[i].pad0);
-            seeds1.push(output[i].pad1);
-        }
+        let (seeds0, seeds1) = ot_sender.run_phase2_batch(session_id, seed, enc_proofs)?;
 
-        let ote_receiver = OTEReceiver {
+        Ok(OTEReceiver {
             seeds0,
             seeds1,
-        };
-
-        (ote_receiver, hashes, double, challenge)
-    }
-
-    pub fn init_phase3(sender: &Sender, double: &Vec<HashOutput>, response: &Vec<HashOutput>) -> Result<(),ErrorOT> {
-        sender.phase3batch(KAPPA, double, response)
+        })
     }
 
     // PROTOCOL
@@ -663,80 +644,26 @@ mod tests {
         }
     }
 
-    // This function initializes an OTE setup.
-    // It is "ideal" in the sense that it pretends to be both the sender and the receiver,
-    // so it cannot be used for real applications.
-    fn ideal_initialization_ote(session_id: &[u8]) -> Result<(OTESender, OTEReceiver), ErrorOT> {
-
-        // Initializing base OT.
-        let (base_sender, proof) = OTEReceiver::init_phase1(session_id);
-        let try_receiver = OTESender::init_phase1(session_id, &proof);
-        let base_receiver: Receiver;
-        match try_receiver {
-            Ok(r) => { base_receiver = r; },
-            Err(error) => { return Err(error); },
-        }
-
-        // Running base OT.
-        // We adapt the test funcion "ideal_functionality_batch" in the tests module for ot_base.rs.
-        // See that function for a description of what is happening.
-        let (ote_sender, receiver_output, encoded) = OTESender::init_phase2(&base_receiver, session_id);
-
-        let (ote_receiver, sender_hashes, double_hash, challenge) = OTEReceiver::init_phase2(&base_sender, session_id, &encoded);
-
-        let (receiver_hashes, response) = OTESender::init_phase3(&base_receiver, session_id, &receiver_output, &challenge);
-
-        let sender_result = OTEReceiver::init_phase3(&base_sender, &double_hash, &response);
-
-        if let Err(error) = sender_result {
-            return Err(error);
-        }
-
-        let receiver_result = OTESender::init_phase4(&base_receiver, session_id, &receiver_output, &receiver_hashes, &sender_hashes);
-
-        if let Err(error) = receiver_result {
-            return Err(error);
-        }
-
-        Ok((ote_sender, ote_receiver))
-    }
-
-    // This function executes that main part of the protocol.
-    // As before, this should not be used for real applications.
-    fn ideal_functionality_ote(session_id: &[u8], ote_sender: &OTESender, ote_receiver: &OTEReceiver, sender_input_correlation: &Vec<Scalar<Secp256k1>>, receiver_choice_bits: &Vec<bool>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorOT> {
-
-        let (extended_seeds, data_to_sender) = ote_receiver.run_phase1(session_id, receiver_choice_bits);
-
-        // Receiver keeps exteded_seeds and transmits data_to_sender.
-
-        let sender_result = ote_sender.run(session_id, sender_input_correlation, &data_to_sender);
-
-        let sender_output: Vec<Scalar<Secp256k1>>;
-        let tau: Vec<Scalar<Secp256k1>>;
-        match sender_result {
-            Ok((v0, t)) => { (sender_output, tau) = (v0,t); },
-            Err(error) => { return Err(error); },
-        }
-
-        // Sender transmits tau.
-
-        let receiver_output = ote_receiver.run_phase2(session_id, receiver_choice_bits, &extended_seeds, &tau);
-
-        Ok((sender_output, receiver_output))
-    }
-
     #[test]
     fn test_ot_extension() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
-        //Initialize and verify if it worked.
-        let init_result = ideal_initialization_ote(&session_id);
+        // INITIALIZATION
 
-        let ote_sender: OTESender;
+        // Phase 1 - Receiver
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(&session_id);
+
+        // Phase 1 - Sender
+        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1(&session_id);
+
+        // Communication round (Exchange the proofs and the seed)
+        let seed = ot_receiver.seed;
+
+        // Phase 2 - Receiver
+        let result_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs);
         let ote_receiver: OTEReceiver;
-        match init_result {
-            Ok((s,r)) => {
-                ote_sender = s;
+        match result_receiver {
+            Ok(r) => {
                 ote_receiver = r;
             },
             Err(error) => {
@@ -744,7 +671,21 @@ mod tests {
             },
         }
 
-        //Execute the protocol and verify if it did what it should do.
+        // Phase 2 - Sender
+        let result_sender = OTESender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof);
+        let ote_sender: OTESender;
+        match result_sender {
+            Ok(s) => {
+                ote_sender = s;
+            },
+            Err(error) => {
+                panic!("OTE error: {:?}", error.description);
+            },
+        }
+
+        // PROTOCOL
+
+        // Sampling the choices.
         let mut sender_input_correlation: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE);
         for _ in 0..BATCH_SIZE {
@@ -752,23 +693,42 @@ mod tests {
             receiver_choice_bits.push(rand::random());
         }
 
-        let func_result = ideal_functionality_ote(&session_id, &ote_sender, &ote_receiver, &sender_input_correlation, &receiver_choice_bits);
-        match func_result {
-            Ok((sender_output, receiver_output)) => {
-                for i in 0..BATCH_SIZE {
-                    //Depending on the choice the receiver made, the sum of the outputs should
-                    //be equal to 0 or to the correlation the sender chose. 
-                    let sum = &sender_output[i] + &receiver_output[i];
-                    if receiver_choice_bits[i] {
-                        assert_eq!(sum, sender_input_correlation[i]);
-                    } else {
-                        assert_eq!(sum, Scalar::<Secp256k1>::zero());
-                    }
-                }
+        // Phase 1 - Receiver
+        let (extended_seeds, data_to_sender) = ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
+
+        // Communication round 1
+        // Receiver keeps exteded_seeds and transmits data_to_sender.
+
+        // Unique phase - Sender
+        let sender_result = ote_sender.run(&session_id, &sender_input_correlation, &data_to_sender);
+
+        let sender_output: Vec<Scalar<Secp256k1>>;
+        let tau: Vec<Scalar<Secp256k1>>;
+        match sender_result {
+            Ok((v0, t)) => {
+                (sender_output, tau) = (v0,t);
             },
-            Err(error) => {
+            Err(error) => { 
                 panic!("OTE error: {:?}", error.description);
             },
+        }
+
+        // Communication round 2
+        // Sender transmits tau.
+
+        // Phase 2 - Receiver
+        let receiver_output = ote_receiver.run_phase2(&session_id, &receiver_choice_bits, &extended_seeds, &tau);  
+
+        // Verification that the protocol did what it should do.
+        for i in 0..BATCH_SIZE {
+            //Depending on the choice the receiver made, the sum of the outputs should
+            //be equal to 0 or to the correlation the sender chose. 
+            let sum = &sender_output[i] + &receiver_output[i];
+            if receiver_choice_bits[i] {
+                assert_eq!(sum, sender_input_correlation[i]);
+            } else {
+                assert_eq!(sum, Scalar::<Secp256k1>::zero());
+            }
         }
     }
 }

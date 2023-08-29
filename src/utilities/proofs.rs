@@ -492,8 +492,9 @@ mod tests {
         assert!(verification);
     }
 
-    #[test]
+    // EncProof
 
+    #[test]
     fn test_enc_proof() {
 
         // We sample the initial values.

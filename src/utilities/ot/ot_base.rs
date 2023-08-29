@@ -1,448 +1,260 @@
 /// This file implements an oblivious transfer (OT) which will serve as a base
 /// for the OT extension protocol.
 /// 
-/// We chose to proceed as the authors did when they implemented their 2019 paper
-/// (see https://gitlab.com/neucrypt/mpecdsa). Hence, we are implementing the Protocol 7
-/// of the original version of DKLs18 (see https://eprint.iacr.org/2018/499.pdf), the
-/// so-called "Verified Simplest OT". As explained in the paper, we do the implementation
-/// as a Random OT protocol. 
-/// 
-/// Besides the aforedmentioned implementation, we also followed this code:
-/// https://github.com/coinbase/kryptology/blob/master/pkg/ot/base/simplest/ot.go
-/// 
-/// FOR THE FUTURE: In their corrected version of the DKLs18 paper (https://eprint.iacr.org/2018/499.pdf),
-/// the authors suggest some replacements for their VSOT protocol for better performance
-/// and better round counts. The DKLs23 paper (https://eprint.iacr.org/2023/765.pdf) especifically
-/// suggests the endemic OT protocol of Zhou et al.: https://eprint.iacr.org/2022/1525.pdf.
+/// As suggested in page 30 of DKLs23 (https://eprint.iacr.org/2023/765.pdf),
+/// we implement the endemic OT protocol of Zhou et al., which can be found on
+/// Section 3 of https://eprint.iacr.org/2022/1525.pdf.
 
 use curv::elliptic::curves::{Scalar, Point, Secp256k1};
+use rand::Rng;
 
 use crate::SECURITY;
 use crate::utilities::hashes::*;
-use crate::utilities::proofs::DLogProof;
+use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::ot::ErrorOT;
 
-//SENDER STRUCTS
+// SENDER DATA
 
-//Sender after initialization
+// Sender after initialization.
+
 #[derive(Debug, Clone)]
-pub struct Sender {
-    pub sk: Scalar<Secp256k1>,
-    pub pk: Point<Secp256k1>,
+pub struct OTSender {
+    pub s: Scalar<Secp256k1>,
+    pub proof: DLogProof,
 }
 
-//Output after running the protocol
+// RECEIVER DATA
+
+// Receiver after initialization.
+
+pub type Seed = [u8; SECURITY];
+
 #[derive(Debug, Clone)]
-pub struct SenderOutput {
-    pub pad0: HashOutput,
-    pub pad1: HashOutput,
+pub struct OTReceiver {
+    pub seed: Seed,
 }
 
-//Some hashes computed during the protocol which are used more than once.
-//Another hash could be here, but we prefered to gather only what the sender
-//would have to send to the receiver.
-#[derive(Debug, Clone)]
-pub struct SenderHashData {
-    pub hash_pad0: HashOutput,
-    pub hash_pad1: HashOutput,
-}
+// The following implements the protocol as in Section 3 of the paper.
+//
+// There are two phases for each party and one communication round between
+// them. Both Phase 1 and Phase 2 can be done concurrently for the sender
+// and the receiver.
+//
+// We also create an initalization function which should be executed during
+// Phase 1. It saves some values that can be reused if the protocol is applied
+// several times. As this will be our case for the OT extension, there are also
+// "batch" variants for each of the phases.
 
-//RECEIVER STRUCTS
+impl OTSender {
 
-//Receiver after initialization
-#[derive(Debug, Clone)]
-pub struct Receiver {
-    pub pk: Point<Secp256k1>,
-}
-
-//Output after running the protocol
-#[derive(Debug, Clone)]
-pub struct ReceiverOutput {
-    pub choice_bit: bool,
-    pub pad: HashOutput,
-}
-
-//Some hashes computed during the protocol which are used more than once.
-#[derive(Debug, Clone)]
-pub struct ReceiverHashData {
-    pub hash_pad: HashOutput,
-    pub challenge: HashOutput,
-}
-
-/// VERIFIED SIMPLEST OBLIVIOUS TRANSFER (VSOT)
-/// Implementation of Protocol 7 in the original DKLs18 paper (https://eprint.iacr.org/2018/499.pdf)
-/// 
-/// We implement each step of the protocol separately and then we gather them in phases.
-
-impl Sender {
-
-    // STEPS
-
-    /// Step 1 - The sender produces a random scalar.
-    /// This already generates an instance of Sender.
-    pub fn step1initialize() -> Sender {
-        let sk = Scalar::<Secp256k1>::random();
-        let pk = Point::<Secp256k1>::generator() * &sk;
+    // Initialization - According to first paragraph on page 18,
+    // the sender can reuse the secret s and the proof of discrete
+    // logarithm. Thus, we isolate this part from the rest for efficiency.
+    pub fn init(session_id: &[u8]) -> OTSender {
         
-        Sender {
-            sk,
-            pk,
+        let s = Scalar::<Secp256k1>::random();
+
+        // In the paper, different protocols use different random oracles.
+        // Thus, we will add a unique string to the session id here.
+        let current_sid = [session_id, "DLogProof".as_bytes()].concat();
+        let proof = DLogProof::prove(&s, &current_sid);
+
+        OTSender {
+            s,
+            proof,
         }
     }
 
-    /// Step 2 - The sender should transmit his public key together with a proof that
-    /// he has the secret key.
-    pub fn step2prove(&self, session_id: &[u8]) -> DLogProof {
-        DLogProof::prove(&self.sk, session_id)
+    // Phase 1 - The sender transmits z = s * generator and the proof
+    // of discrete logarithm. Note that z is contained in the proof.
+    pub fn run_phase1(&self) -> DLogProof {
+        self.proof.clone()
     }
 
-    // Step 3 - No action for the sender.
+    // Since the sender is recycling the proof, we don't need a batch version.
 
-    /// Step 4 - The sender computes the pads rho^0 and rho^1 from the paper.
-    /// This is his output for this (random) oblivious transfer protocol.
-    pub fn step4computepads(&self, session_id: &[u8], encoded_choice_bit: &Point<Secp256k1>) -> SenderOutput {
-        let point0 = encoded_choice_bit * &self.sk;
-        let point1 = &point0 - (&self.pk * &self.sk);
+    // Communication round
+    // The sender transmits the proof.
+    // He receives the receiver's seed and encryption proof (which contains u and v).
 
-        let point0_as_bytes = point_to_bytes(&point0);
-        let point1_as_bytes = point_to_bytes(&point1);
+    // Phase 2 - We verify the receiver's data and compute the output.
+    pub fn run_phase2(&self, session_id: &[u8], seed: &Seed, enc_proof: &EncProof) -> Result<(HashOutput, HashOutput), ErrorOT> {
 
-        let pad0 = hash(&point0_as_bytes, session_id);
-        let pad1 = hash(&point1_as_bytes, session_id);
+        // We reconstruct h from the seed (as in the paper).
+        // Instead of using a real identifier for the receiver,
+        // we just take the letter 'R' for simplicity.
+        // I guess we could omit it, but we leave it to "change the oracle".
+        let msg_for_h = ["R".as_bytes(), seed].concat();
+        let h = Point::<Secp256k1>::generator() * hash_as_scalar(&msg_for_h, session_id);
 
-        SenderOutput {
-            pad0,
-            pad1,
-        }
-    }
+        // We verify the proof.
+        let current_sid = [session_id, "EncProof".as_bytes()].concat();
+        let verification = enc_proof.verify(&current_sid);
 
-    /// Step 5 - The sender computes the challenge for the receiver.
-    /// Meanwhile, some hashes that will be used later are also computed.
-    /// The sender hash data will be transmitted to the receiver, but we don't
-    /// need to send the double hash, so we keep it in another place.
-    pub fn step5computechallenge(&self, session_id: &[u8], pads: &SenderOutput) -> (SenderHashData, HashOutput, HashOutput) {
-        let hash_pad0 = hash(&pads.pad0, session_id);
-        let hash_pad1 = hash(&pads.pad1, session_id);
-
-        //For the second hash, the implementation from DKLs19 updates the id tag. PENSAR NISSO!
-        let double_hash_pad0 = hash(&hash_pad0, session_id);
-        let double_hash_pad1 = hash(&hash_pad1, session_id);
-
-        //The challenge is the XOR between the two double hashes.
-        let mut challenge = [0u8; SECURITY];
-        for i in 0..SECURITY {
-            challenge[i] = double_hash_pad0[i] ^ double_hash_pad1[i];
+        // h is already in enc_proof, but we check if the values agree.
+        if !verification || (h != enc_proof.proof0.base_h) {
+            return Err(ErrorOT::new("Receiver cheated in OT: Encryption proof failed!"));
         }
 
-        let hashes = SenderHashData {
-            hash_pad0,
-            hash_pad1,
-        };
+        // We compute the messages.
+        // As before, instead of an identifier for the sender,
+        // we just take the letter 'S' for simplicity.
 
-        (hashes, double_hash_pad0, challenge)
+        let (_,v) = enc_proof.get_u_and_v();
+
+        let value_for_m0 = &self.s * &v;
+        let value_for_m1 = &self.s * (&v - &h);
+
+        let msg_for_m0 = ["S".as_bytes(), &point_to_bytes(&value_for_m0)].concat();
+        let msg_for_m1 = ["S".as_bytes(), &point_to_bytes(&value_for_m1)].concat();
+
+        let m0 = hash(&msg_for_m0, session_id);
+        let m1 = hash(&msg_for_m1, session_id);
+
+        Ok((m0, m1))
     }
 
-    // Step 6 - No action for the sender.
-
-    /// Step 7 - The sender verifies if the receiver's response makes sense.
-    pub fn step7openchallenge(&self, double_hash_pad0: &HashOutput, response: &HashOutput) -> Result<(),ErrorOT> {
-        if double_hash_pad0 != response {
-            return Err(ErrorOT::new("Receiver cheated in OT: Challenge verification failed!"));
-        }
-
-        Ok(())
-    }
-
-    // Step 8 - No action for the sender.
-
-    // PHASES
-    // We group the steps in phases. A phase consists of all steps that can be
-    // executed in order without the need of communication.
-    // Phases should be intercalated with communication rounds: broadcasts and/or
-    // private messages containg the session id.
-    // Remark: our phases are not the same as the phases from the paper.
-
-    // Except for the first phase, we provide a "batch" version that reproduce the
-    // protocol multiple times. It will be used for the OT extension.
-
-    /// Phase 1 = Steps 1 and 2 ("Public key" phase in the paper)
-    /// Input: Session id
-    /// Output: Sender ready to participate and a proof of knowledge
-    pub fn phase1initialize(session_id: &[u8]) -> (Sender, DLogProof) {
-        let sender = Self::step1initialize();
-        let proof = sender.step2prove(session_id);
-
-        (sender, proof)
-    }
-
-    // Communication round 1
-    // The sender transmits the proof to the receiver.
-    // The receiver verifies the proof and finishes the initialization.
-
-    // Communication round 2
-    // When ready, the receiver sends his encoded choice bit.
-
-    /// Phase 2 = Steps 4 and 5
-    /// Input: Sender, session id and encoded choice bit
-    /// Output: Protocol's output and hash data (containing the challenge)
-    pub fn phase2output(&self, session_id: &[u8], encoded_choice_bit: &Point<Secp256k1>) -> (SenderOutput, SenderHashData, HashOutput, HashOutput) {
-        let pads = self.step4computepads(session_id, encoded_choice_bit);
-        let (hashes, double_hash_pad0, challenge) = self.step5computechallenge(session_id, &pads);
-
-        (pads, hashes, double_hash_pad0, challenge)
-    }
-
-    pub fn phase2batch(&self, batch_size: usize, session_id: &[u8], vec_encoded_choice_bit: &Vec<Point<Secp256k1>>) -> (Vec<SenderOutput>, Vec<SenderHashData>, Vec<HashOutput>, Vec<HashOutput>) {
-        let mut vec_pads: Vec<SenderOutput> = Vec::with_capacity(batch_size);
-        let mut vec_hashes: Vec<SenderHashData> = Vec::with_capacity(batch_size);
-        let mut vec_double: Vec<HashOutput> = Vec::with_capacity(batch_size);
-        let mut vec_challenge: Vec<HashOutput> = Vec::with_capacity(batch_size);
+    // Phase 2 batch version: used for multiple executions (e.g. OT extension).
+    pub fn run_phase2_batch(&self, session_id: &[u8], seed: &Seed, enc_proofs: &Vec<EncProof>) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
+        
+        let batch_size = enc_proofs.len();
+        
+        let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size);
+        let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-            
+
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
-            let (pads, hashes, double, challenge) = self.phase2output(&current_sid, &vec_encoded_choice_bit[i]);
-            vec_pads.push(pads);
-            vec_hashes.push(hashes);
-            vec_double.push(double);
-            vec_challenge.push(challenge);
+            let (m0, m1) = self.run_phase2(&current_sid, seed, &enc_proofs[i])?;
+
+            vec_m0.push(m0);
+            vec_m1.push(m1);
         }
-        (vec_pads, vec_hashes, vec_double, vec_challenge)
+
+        Ok((vec_m0, vec_m1))
     }
-
-    // Communication round 3
-    // The sender transmits the challenge to the receiver.
-
-    // Communication round 4
-    // The receiver computes the response and sends it.
-
-    /// Phase 3 = Step 7
-    /// Input: Sender, hash data (just double hash) and receiver's response
-    /// Output: Abort message (if verification fails)
-    pub fn phase3verify(&self, double_hash_pad0: &HashOutput, response: &HashOutput) -> Result<(),ErrorOT> {
-        self.step7openchallenge(double_hash_pad0, response)
-    }
-
-    pub fn phase3batch(&self, batch_size: usize, vec_double_hash_pad0: &Vec<HashOutput>, vec_response: &Vec<HashOutput>) -> Result<(),ErrorOT> {
-        for i in 0..batch_size {
-            let result = self.phase3verify(&vec_double_hash_pad0[i], &vec_response[i]);
-            if let Err(error) = result {
-                return Err(ErrorOT::new(&format!("Batch, iteration {}: {:?}", i, error.description)));
-            }
-        }
-        Ok(())
-    }
-
-    // Communication round 5
-    // The sends transmits his hash data (the instance of SenderHashData).
-    // The receiver does the last verification and finishes the protocol.
-
+    
 }
 
-impl Receiver {
+impl OTReceiver {
 
-    // STEPS
+    // Initialization - According to first paragraph on page 18,
+    // the sender can reuse the seed. Thus, we isolate this part
+    // from the rest for efficiency.
+    pub fn init() -> OTReceiver {
 
-    // Step 1 - No action for the receiver.
+        let seed = rand::thread_rng().gen::<Seed>();
 
-    /// Step 2 - The receiver verifies the sender's proof.
-    /// This already generates an instance of Receiver.
-    pub fn step2initialize(session_id: &[u8], proof: &DLogProof) -> Result<Receiver,ErrorOT> {
-        let verification = DLogProof::verify(proof, session_id);
+        OTReceiver {
+            seed,
+        }
+    }
+
+    // Phase 1 - We sample the secret values and provide proof.
+    pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar<Secp256k1>, EncProof) {
+
+        // We sample the secret scalar r.
+        let r = Scalar::<Secp256k1>::random();
+
+        // We compute h as in the paper.
+        // Instead of using a real identifier for the receiver,
+        // we just take the letter 'R' for simplicity.
+        // I guess we could omit it, but we leave it to "change the oracle".
+        let msg_for_h = ["R".as_bytes(), &self.seed].concat();
+        let h = Point::<Secp256k1>::generator() * hash_as_scalar(&msg_for_h, session_id);
+
+        // We prove our data.
+        // In the paper, different protocols use different random oracles.
+        // Thus, we will add a unique string to the session id here.
+        let current_sid = [session_id, "EncProof".as_bytes()].concat();
+        let proof = EncProof::prove(&current_sid, &h, &r, bit);
+
+        // r should be kept and proof should be sent.
+        (r, proof)
+    }
+
+    // Phase 1 batch version: used for multiple executions (e.g. OT extension).
+    pub fn run_phase1_batch(&self, session_id: &[u8], bits: &Vec<bool>) -> (Vec<Scalar<Secp256k1>>, Vec<EncProof>) {
+        
+        let batch_size = bits.len();
+        
+        let mut vec_r: Vec<Scalar<Secp256k1>> = Vec::with_capacity(batch_size);
+        let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+
+            // We use different ids for different iterations.
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
+
+            let (r, proof) = self.run_phase1(&current_sid, bits[i]);
+
+            vec_r.push(r);
+            vec_proof.push(proof);
+        }
+
+        (vec_r, vec_proof)
+    }
+
+    // Communication round
+    // The receiver transmits his seed and the proof.
+    // He receives the sender's seed and proof of discrete logarithm (which contains z).
+
+    // Phase 2 - We verify the sender's data and compute the output.
+    // For the batch version, we split the phase into two steps: the
+    // first depends only on the initialization values and can be done
+    // once, while the second is different for each iteration.
+
+    pub fn run_phase2_step1(&self, session_id: &[u8], dlog_proof: &DLogProof) -> Result<Point<Secp256k1>, ErrorOT> {
+
+        // Verification of the proof.
+        let current_sid = [session_id, "DLogProof".as_bytes()].concat();
+        let verification = DLogProof::verify(dlog_proof, &current_sid);
+
         if !verification {
             return Err(ErrorOT::new("Sender cheated in OT: Proof of discrete logarithm failed!"));
         }
 
-        let pk = proof.point.clone();
-        let receiver = Receiver {
-            pk,
-        };
+        let z = dlog_proof.point.clone();
 
-        Ok(receiver)
+        Ok(z)
     }
 
-    /// Step 3 - Given a choice bit, the receiver encodes it (the point A from the paper)
-    /// and computes his pad, which will be his output for the protocol.
-    pub fn step3padtransfer(&self, session_id: &[u8], choice_bit: bool) -> (ReceiverOutput, Point<Secp256k1>) {
-        let a = Scalar::<Secp256k1>::random();
+    pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar<Secp256k1>, z: &Point<Secp256k1>) -> HashOutput {
+
+        // We compute the message.
+        // As before, instead of an identifier for the sender,
+        // we just take the letter 'S' for simplicity.
+
+        let value_for_mb = r * z;
+
+        let msg_for_mb = ["S".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
+        let mb = hash(&msg_for_mb, session_id);       
+
+        // We could return the bit as in the paper, but the receiver has this information.
+        mb
+    }
+
+    // Phase 2 batch version: used for multiple executions (e.g. OT extension).
+    pub fn run_phase2_batch(&self, session_id: &[u8], vec_r: &Vec<Scalar<Secp256k1>>, dlog_proof: &DLogProof) -> Result<Vec<HashOutput>, ErrorOT> {
         
-        let choice0 = Point::<Secp256k1>::generator() * &a;
-        let choice1 = &choice0 + &self.pk;
+        // Step 1
+        let z = self.run_phase2_step1(session_id, dlog_proof)?;
 
-        let encoded_choice_bit: Point<Secp256k1>;
-        if choice_bit {
-            encoded_choice_bit = choice1;
-        } else{
-            encoded_choice_bit = choice0;
-        }
-
-        let point_pad = &self.pk * &a;
-        let point_pad_as_bytes = point_to_bytes(&point_pad); 
-        let pad = hash(&point_pad_as_bytes, session_id);
-
-        let output = ReceiverOutput {
-            choice_bit,
-            pad,
-        };
-
-        (output, encoded_choice_bit)
-    }
-
-    // Steps 4 and 5 - No action for the receiver.
-
-    /// Step 6 - The receiver computes his response for the sender's challenge.
-    /// Meanwhile, some hashes that will be used later are also computed. 
-    pub fn step6respond(&self, session_id: &[u8], output: &ReceiverOutput, challenge: &HashOutput) -> (ReceiverHashData, HashOutput) {
-        let hash_pad = hash(&output.pad, session_id);
-
-        //For the second hash, the implementation from DKLs19 updates the id tag. PENSAR NISSO!
-        let double_hash_pad = hash(&hash_pad, session_id);
-
-        let mut response = double_hash_pad;
-        if output.choice_bit {
-            for i in 0..SECURITY {
-                response[i] = response[i] ^ challenge[i];
-            }
-        }
-
-        let hashes = ReceiverHashData {
-            hash_pad,
-            challenge: challenge.clone(),  //The receiver saves the challenge he received.
-        };
-
-        (hashes, response)
-    }
-
-    // Step 7 - No action for the receiver.
-
-    /// Step 8 - The receiver verifies if the sender computed correctly the
-    /// pads and the challenge.
-    pub fn step8verification(&self, session_id: &[u8], output: &ReceiverOutput, hashes: &ReceiverHashData, sender_hashes: &SenderHashData) -> Result<(),ErrorOT> {
-        let expected_hash_pad: HashOutput;
-        if output.choice_bit {
-            expected_hash_pad = sender_hashes.hash_pad1.clone();
-        } else {
-            expected_hash_pad = sender_hashes.hash_pad0.clone();
-        }
-
-        if hashes.hash_pad != expected_hash_pad {
-            return Err(ErrorOT::new("Sender cheated in OT: Pad verification failed!"));
-        }
-
-        let double_hash_pad0 = hash(&sender_hashes.hash_pad0, session_id);
-        let double_hash_pad1 = hash(&sender_hashes.hash_pad1, session_id);
-
-        let mut expected_challenge = [0u8; SECURITY];
-        for i in 0..SECURITY {
-            expected_challenge[i] = double_hash_pad0[i] ^ double_hash_pad1[i];
-        }
-
-        if hashes.challenge != expected_challenge {
-            return  Err(ErrorOT::new("Sender cheated in OT: Challenge reconstruction failed!"));
-        }
-
-        Ok(())
-    }
-
-    // PHASES
-    // We group the steps in phases. A phase consists of all steps that can be
-    // executed in order without the need of communication.
-    // Phases should be intercalated with communication rounds: broadcasts and/or
-    // private messages containg the session id.
-    // Remark: our phases are not the same as the phases from the paper.
-
-    // Except for the first phase, we provide a "batch" version that reproduce the
-    // protocol multiple times. It will be used for the OT extension.
-
-    // Communication round 1
-    // The receiver receives a proof from the sender.
-
-    /// Phase 1 = Step 2
-    /// Input: Session id and sender's proof
-    /// Output: Receiver ready to participate (if the proof is sound)
-    pub fn phase1initialize(session_id: &[u8], proof: &DLogProof) -> Result<Receiver,ErrorOT> {
-        Self::step2initialize(session_id, proof)
-    }
-
-    // This finishes the initialization.
-    // When ready, the receiver chooses to begin the actual protocol.
-
-    /// Phase 2 = Step 3
-    /// Input: Receiver, session id and choice bit
-    /// Output: Protocol's output and encoded choice bit
-    pub fn phase2padtransfer(&self, session_id: &[u8], choice_bit: bool) -> (ReceiverOutput, Point<Secp256k1>) {
-        self.step3padtransfer(session_id, choice_bit)
-    }
-
-    pub fn phase2batch(&self, batch_size: usize, session_id: &[u8], vec_choice_bit: &Vec<bool>) -> (Vec<ReceiverOutput>, Vec<Point<Secp256k1>>) {
-        let mut vec_output: Vec<ReceiverOutput> = Vec::with_capacity(batch_size);
-        let mut vec_encoded: Vec<Point<Secp256k1>> = Vec::with_capacity(batch_size);
+        // Step 2
+        let batch_size = vec_r.len();
+        
+        let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-            
+
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
-            let (output, encoded) = self.phase2padtransfer(&current_sid, vec_choice_bit[i]);
-            vec_output.push(output);
-            vec_encoded.push(encoded);
+            let mb = self.run_phase2_step2(&current_sid, &vec_r[i], &z);
+
+            vec_mb.push(mb);
         }
-        (vec_output, vec_encoded)
-    }
 
-    // Communication round 2
-    // The receiver sends his choice bit encoded.
-
-    // Communication round 3
-    // The sender computes the challenge and sends it.
-
-    /// Phase 3 = Step 6
-    /// Input: Receiver, session id, protocol's output and sender's challenge
-    /// Output: Hash data and a response
-    pub fn phase3respond(&self, session_id: &[u8], output: &ReceiverOutput, challenge: &HashOutput) -> (ReceiverHashData, HashOutput) {
-        self.step6respond(session_id, output, challenge)
-    }
-
-    pub fn phase3batch(&self, batch_size: usize, session_id: &[u8], vec_output: &Vec<ReceiverOutput>, vec_challenge: &Vec<HashOutput>) -> (Vec<ReceiverHashData>, Vec<HashOutput>) {
-        let mut vec_hashes: Vec<ReceiverHashData> = Vec::with_capacity(batch_size);
-        let mut vec_response: Vec<HashOutput> = Vec::with_capacity(batch_size);
-        for i in 0..batch_size {
-            
-            // We use different ids for different iterations.
-            let current_sid = [&i.to_be_bytes(), session_id].concat();
-            
-            let (hashes, response) = self.phase3respond(&current_sid, &vec_output[i], &vec_challenge[i]);
-            vec_hashes.push(hashes);
-            vec_response.push(response);
-        }
-        (vec_hashes, vec_response)
-    }
-
-    // Communication round 4
-    // The receiver sends his response to the challenge.
-
-    // Communication round 5
-    // The sender verifies the response and sends his hash data
-
-    /// Phase 4 = Step 8
-    /// Input: Receiver, session id, protocol's output and both hash datas
-    /// Output: Abort message (if verification fails)
-    pub fn phase4verification(&self, session_id: &[u8], output: &ReceiverOutput, hashes: &ReceiverHashData, sender_hashes: &SenderHashData) -> Result<(),ErrorOT> {
-        self.step8verification(session_id, output, hashes, sender_hashes)
-    }
-
-    pub fn phase4batch(&self, batch_size: usize, session_id: &[u8], vec_output: &Vec<ReceiverOutput>, vec_hashes: &Vec<ReceiverHashData>, vec_sender_hashes: &Vec<SenderHashData>) -> Result<(),ErrorOT> {
-        for i in 0..batch_size {
-            
-            // We use different ids for different iterations.
-            let current_sid = [&i.to_be_bytes(), session_id].concat();
-
-            let result = self.phase4verification(&current_sid, &vec_output[i], &vec_hashes[i], &vec_sender_hashes[i]);
-            if let Err(error) = result {
-                return Err(ErrorOT::new(&format!("Batch, iteration {}: {:?}", i, error.description)));
-            }
-        }
-        Ok(())
+        Ok(vec_mb)
     }
 
 }
@@ -450,132 +262,51 @@ impl Receiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
-
-    // This function initializes an OT setup (Phase 1 for sender and receiver)
-    // It is "ideal" in the sense that it pretends to be both the sender and the receiver,
-    // so it cannot be used for real applications.
-    fn ideal_initialization(session_id: &[u8]) -> Result<(Sender, Receiver),ErrorOT> {
-        let (sender, proof) = Sender::phase1initialize(session_id);
-        let try_receiver = Receiver::phase1initialize(session_id, &proof);
-
-        match try_receiver {
-            Ok(receiver) => { Ok((sender, receiver)) },
-            Err(error) => { Err(error) },
-        }
-    }
-
-    // This function executes that main part of the protocol.
-    // As before, this should not be used for real applications.
-    fn ideal_functionality(session_id: &[u8], sender: &Sender, receiver: &Receiver, choice_bit: bool) -> Result<(SenderOutput, ReceiverOutput),ErrorOT> {
-
-        //Phase 2 - Receiver
-        let (receiver_output, encoded_choice_bit) = receiver.phase2padtransfer(session_id, choice_bit);
-
-        //Receiver transmits encoded_choice_bit
-
-        //Phase 2 - Sender
-        let (sender_output, sender_hashes, sender_double_hash, challenge) = sender.phase2output(session_id, &encoded_choice_bit);
-
-        //Sender transmits challenge
-
-        //Phase 3 - Receiver
-        let (receiver_hashes, response) = receiver.phase3respond(session_id, &receiver_output, &challenge);
-
-        //Receiver transmits response
-
-        //Phase 3 - Sender
-        let sender_result = sender.phase3verify(&sender_double_hash, &response);
-
-        if let Err(error) = sender_result {
-            return Err(error);
-        }
-
-        //Sender transmits sender_hashes
-
-        //Phase 4 - Receiver
-        let receiver_result = receiver.phase4verification(session_id, &receiver_output, &receiver_hashes, &sender_hashes);
-
-        if let Err(error) = receiver_result {
-            return Err(error);
-        }
-
-        Ok((sender_output,receiver_output))
-    }
-
-    // Batch version for the previous function.
-    fn ideal_functionality_batch(session_id: &[u8], sender: &Sender, receiver: &Receiver, choice_bits: &Vec<bool>) -> Result<(Vec<SenderOutput>, Vec<ReceiverOutput>),ErrorOT> {
-
-        let batch_size = choice_bits.len();
-
-        //Phase 2 - Receiver
-        let (vec_receiver_output, vec_encoded_choice_bit) = receiver.phase2batch(batch_size, session_id, choice_bits);
-
-        //Receiver transmits encoded_choice_bit
-
-        //Phase 2 - Sender
-        let (vec_sender_output, vec_sender_hashes, vec_sender_double_hash, vec_challenge) = sender.phase2batch(batch_size, session_id, &vec_encoded_choice_bit);
-
-        //Sender transmits challenge
-
-        //Phase 3 - Receiver
-        let (vec_receiver_hashes, vec_response) = receiver.phase3batch(batch_size, session_id, &vec_receiver_output, &vec_challenge);
-
-        //Receiver transmits response
-
-        //Phase 3 - Sender
-        let sender_result = sender.phase3batch(batch_size, &vec_sender_double_hash, &vec_response);
-
-        if let Err(error) = sender_result {
-            return Err(error);
-        }
-
-        //Sender transmits sender_hashes
-
-        //Phase 4 - Receiver
-        let receiver_result = receiver.phase4batch(batch_size, session_id, &vec_receiver_output, &vec_receiver_hashes, &vec_sender_hashes);
-
-        if let Err(error) = receiver_result {
-            return Err(error);
-        }
-
-        Ok((vec_sender_output,vec_receiver_output))
-    }
 
     #[test]
     fn test_ot_base() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
-        //Initialize and verify if it worked
-        let init_result = ideal_initialization(&session_id);
+        // Initialization
+        let sender = OTSender::init(&session_id);
+        let receiver = OTReceiver::init();
 
-        let sender: Sender;
-        let receiver: Receiver;
-        match init_result {
-            Ok((s,r)) => {
-                sender = s;
-                receiver = r;
-            },
-            Err(error) => {
-                panic!("OT error: {:?}", error.description);
-            },
+        // Phase 1 - Sender
+        let dlog_proof = sender.run_phase1();
+
+        // Phase 1 - Receiver
+        let bit = rand::random();
+        let (r, enc_proof) = receiver.run_phase1(&session_id, bit);
+
+        // Communication round - The parties exchange the proofs.
+        // The receiver also sends his seed.
+        let seed = receiver.seed;
+
+        // Phase 2 - Sender
+        let result_sender = sender.run_phase2(&session_id, &seed, &enc_proof);
+
+        if let Err(error) = result_sender {
+            panic!("OT error: {:?}", error.description);
         }
 
-        //Execute the protocol and verify if it did what it should do.
-        let choice_bit = rand::random();
-        let func_result = ideal_functionality(&session_id, &sender, &receiver, choice_bit);
-        match func_result {
-            Ok((sender_output, receiver_output)) => {
-                //Depending on the choice the receiver made, he should receive one of the pads.
-                if receiver_output.choice_bit {
-                    assert_eq!(sender_output.pad1, receiver_output.pad);
-                } else {
-                    assert_eq!(sender_output.pad0, receiver_output.pad);
-                }
-            },
-            Err(error) => {
-                panic!("OT error: {:?}", error.description);
-            },
+        let (m0, m1) = result_sender.unwrap();
+
+        // Phase 2 - Receiver
+        let result_receiver = receiver.run_phase2_step1(&session_id, &dlog_proof);
+
+        if let Err(error) = result_receiver {
+            panic!("OT error: {:?}", error.description);
+        }
+
+        let z = result_receiver.unwrap();
+        let mb = receiver.run_phase2_step2(&session_id, &r, &z);
+
+        // Verification that the protocol did what it should do.
+        // Depending on the choice the receiver made, he should receive one of the pads.
+        if bit {
+            assert_eq!(m1, mb);
+        } else {
+            assert_eq!(m0, mb);
         }
     }
 
@@ -583,43 +314,53 @@ mod tests {
     fn test_ot_base_batch() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
-        //Initialize and verify if it worked
-        let init_result = ideal_initialization(&session_id);
+        // Initialization (unique)
+        let sender = OTSender::init(&session_id);
+        let receiver = OTReceiver::init();
 
-        let sender: Sender;
-        let receiver: Receiver;
-        match init_result {
-            Ok((s,r)) => {
-                sender = s;
-                receiver = r;
-            },
-            Err(error) => {
-                panic!("OT error: {:?}", error.description);
-            },
-        }
-
-        //Execute the protocol and verify if it did what it should do.
         let batch_size = 256;
-        let mut vec_choice_bit: Vec<bool> = Vec::with_capacity(batch_size);
+
+        // Phase 1 - Sender (unique)
+        let dlog_proof = sender.run_phase1();
+
+        // Phase 1 - Receiver
+        let mut bits: Vec<bool> = Vec::with_capacity(batch_size);
         for _ in 0..batch_size {
-            vec_choice_bit.push(rand::random());
+            bits.push(rand::random());
         }
 
-        let func_result = ideal_functionality_batch(&session_id, &sender, &receiver, &vec_choice_bit);
-        match func_result {
-            Ok((vec_sender_output, vec_receiver_output)) => {
-                for i in 0..batch_size {
-                    //Depending on the choice the receiver made, he should receive one of the pads.
-                    if vec_receiver_output[i].choice_bit {
-                        assert_eq!(vec_sender_output[i].pad1, vec_receiver_output[i].pad);
-                    } else {
-                        assert_eq!(vec_sender_output[i].pad0, vec_receiver_output[i].pad);
-                    }
-                }
-            },
-            Err(error) => {
-                panic!("OT error: {:?}", error.description);
-            },
+        let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits);
+
+        // Communication round - The parties exchange the proofs.
+        // The receiver also sends his seed.
+        let seed = receiver.seed;
+
+        // Phase 2 - Sender
+        let result_sender = sender.run_phase2_batch(&session_id, &seed, &enc_proofs);
+
+        if let Err(error) = result_sender {
+            panic!("OT error: {:?}", error.description);
+        }
+
+        let (vec_m0, vec_m1) = result_sender.unwrap();
+
+        // Phase 2 - Receiver
+        let result_receiver = receiver.run_phase2_batch(&session_id, &vec_r, &dlog_proof);
+
+        if let Err(error) = result_receiver {
+            panic!("OT error: {:?}", error.description);
+        }
+
+        let vec_mb = result_receiver.unwrap();
+
+        // Verification that the protocol did what it should do.
+        // Depending on the choice the receiver made, he should receive one of the pads.
+        for i in 0..batch_size {
+            if bits[i] {
+                assert_eq!(vec_m1[i], vec_mb[i]);
+            } else {
+                assert_eq!(vec_m0[i], vec_mb[i]);
+            }
         }
     }
 }
