@@ -123,11 +123,13 @@ impl DLogProof {
 // used in our main protocol.
 
 // We start with the Chaum-Pedersen protocol (interactive version).
+#[derive(Debug, Clone)]
 pub struct RandomCommitments {
     pub rc_g: Point<Secp256k1>,
     pub rc_h: Point<Secp256k1>,
 }
 
+#[derive(Debug, Clone)]
 pub struct CPProof {
     pub base_g: Point<Secp256k1>,   // Parameters for the proof.
     pub base_h: Point<Secp256k1>,   // In the encryption proof, base_g = generator.
@@ -226,6 +228,7 @@ impl CPProof {
 }
 
 // The actual proof for the OT protocol.
+#[derive(Debug, Clone)]
 pub struct EncProof {
     pub proof0: CPProof,    // EncProof is a proof that proof0 or proof1
     pub proof1: CPProof,    // really proves what it says.

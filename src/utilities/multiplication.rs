@@ -5,10 +5,10 @@
 /// The first paper also gives some orientations on how to implement the protocol
 /// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
 
-use curv::elliptic::curves::{Scalar, Point, Secp256k1};
+use curv::elliptic::curves::{Scalar, Secp256k1};
 
 use crate::utilities::hashes::*;
-use crate::utilities::proofs::DLogProof;
+use crate::utilities::proofs::{DLogProof, EncProof};
 
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::ot::ot_base::*;
@@ -71,13 +71,13 @@ impl MulSender {
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
 
-    pub fn init_phase1(session_id: &[u8], proof: &DLogProof) -> Result<Receiver, ErrorOT> {
-        OTESender::init_phase1(session_id, proof)
+    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar<Secp256k1>>, Vec<EncProof>) {
+        OTESender::init_phase1(session_id)
     }
 
     // The nonce will be sent by the receiver for the computation of the public gadget vector.
-    pub fn init_phase2(receiver: &Receiver, session_id: &[u8], nonce: &Scalar<Secp256k1>) -> (MulSender, Vec<ReceiverOutput>, Vec<Point<Secp256k1>>) {
-        let (ote_sender, output, encoded) = OTESender::init_phase2(receiver, session_id);
+    pub fn init_phase2(ot_receiver: &OTReceiver, session_id: &[u8], correlation: Vec<bool>, vec_r: &Vec<Scalar<Secp256k1>>, dlog_proof: &DLogProof, nonce: &Scalar<Secp256k1>) -> Result<MulSender, ErrorOT> {
+        let ote_sender = OTESender::init_phase2(ot_receiver, session_id, correlation, vec_r, dlog_proof)?;
 
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
@@ -93,15 +93,7 @@ impl MulSender {
             ote_sender,
         };
 
-        (mul_sender, output, encoded)
-    }
-
-    pub fn init_phase3(receiver: &Receiver, session_id: &[u8], output: &Vec<ReceiverOutput>, challenge: &Vec<HashOutput>) -> (Vec<ReceiverHashData>, Vec<HashOutput>) {
-        OTESender::init_phase3(receiver, session_id, output, challenge)
-    }
-
-    pub fn init_phase4(receiver: &Receiver, session_id: &[u8], output: &Vec<ReceiverOutput>, hashes: &Vec<ReceiverHashData>, sender_hashes: &Vec<SenderHashData>) -> Result<(),ErrorOT> {
-        OTESender::init_phase4(receiver, session_id, output, hashes, sender_hashes)
+        Ok(mul_sender)
     }
 
     // PROTOCOL
@@ -297,19 +289,19 @@ impl MulReceiver {
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
 
-    pub fn init_phase1(session_id: &[u8]) -> (Sender, DLogProof, Scalar<Secp256k1>) {
-        let (sender, proof) = OTEReceiver::init_phase1(session_id);
+    pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof, Scalar<Secp256k1>) {
+        let (ot_sender, proof) = OTEReceiver::init_phase1(session_id);
 
         // For the choice of the public gadget vector, we will use the same approach
         // as in https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         // We sample a nonce that will be used by both parties to compute a common vector.
         let nonce = Scalar::<Secp256k1>::random();
 
-        (sender, proof, nonce)
+        (ot_sender, proof, nonce)
     }
 
-    pub fn init_phase2(sender: &Sender, session_id: &[u8], encoded: &Vec<Point<Secp256k1>>, nonce: &Scalar<Secp256k1>) -> (MulReceiver, Vec<SenderHashData>, Vec<HashOutput>, Vec<HashOutput>) {
-        let (ote_receiver, hashes, double, challenge) = OTEReceiver::init_phase2(sender, session_id, encoded);
+    pub fn init_phase2(ot_sender: &OTSender, session_id: &[u8], seed: &Seed, enc_proofs: &Vec<EncProof>, nonce: &Scalar<Secp256k1>) -> Result<MulReceiver, ErrorOT> {
+        let ote_receiver = OTEReceiver::init_phase2(ot_sender, session_id, seed, enc_proofs)?;
 
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
@@ -325,11 +317,7 @@ impl MulReceiver {
             ote_receiver,
         };
 
-        (mul_receiver, hashes, double, challenge)
-    }
-
-    pub fn init_phase3(sender: &Sender, double: &Vec<HashOutput>, response: &Vec<HashOutput>) -> Result<(),ErrorOT> {
-        OTEReceiver::init_phase3(sender, double, response)
+        Ok(mul_receiver)
     }
 
     // PROTOCOL
@@ -493,50 +481,64 @@ mod tests {
     use super::*;
     use rand::Rng;
 
-    // This function initializes an OTE setup.
-    // It is "ideal" in the sense that it pretends to be both the sender and the receiver,
-    // so it cannot be used for real applications.
-    // It is an adaptation of ideal_initialization_ote.
-    fn ideal_initialization_mul(session_id: &[u8]) -> Result<(MulSender, MulReceiver), ErrorOT> {
+    #[test]
+    fn test_multiplication() {
+        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+
+        // INITIALIZATION
         
-        // Base OT
-        let (base_sender, proof, nonce) = MulReceiver::init_phase1(session_id);
-        let try_receiver = MulSender::init_phase1(session_id, &proof);
-        let base_receiver: Receiver;
-        match try_receiver {
-            Ok(r) => { base_receiver = r; },
-            Err(error) => { return Err(error); },
+        // Phase 1 - Receiver
+        let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&session_id);
+
+        // Phase 1 - Sender
+        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(&session_id);
+
+        // Communication round
+        // OT: Exchange the proofs and the seed.
+        // Mul: Exchange the nonce.
+        let seed = ot_receiver.seed;
+
+        // Phase 2 - Receiver
+        let result_receiver = MulReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs, &nonce);
+        let mul_receiver: MulReceiver;
+        match result_receiver {
+            Ok(r) => {
+                mul_receiver = r;
+            },
+            Err(error) => {
+                panic!("Two-party multiplication error: {:?}", error.description);
+            },
         }
 
-        // OT extension
-        let (mul_sender, receiver_output, encoded) = MulSender::init_phase2(&base_receiver, session_id, &nonce);
-
-        let (mul_receiver, sender_hashes, double_hash, challenge) = MulReceiver::init_phase2(&base_sender, session_id, &encoded, &nonce);
-
-        let (receiver_hashes, response) = MulSender::init_phase3(&base_receiver, session_id, &receiver_output, &challenge);
-
-        let sender_result = MulReceiver::init_phase3(&base_sender, &double_hash, &response);
-
-        if let Err(error) = sender_result {
-            return Err(error);
+        // Phase 2 - Sender
+        let result_sender = MulSender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof, &nonce);
+        let mul_sender: MulSender;
+        match result_sender {
+            Ok(s) => {
+                mul_sender = s;
+            },
+            Err(error) => {
+                panic!("Two-party multiplication error: {:?}", error.description);
+            },
         }
 
-        let receiver_result = MulSender::init_phase4(&base_receiver, session_id, &receiver_output, &receiver_hashes, &sender_hashes);
+        // PROTOCOL
 
-        if let Err(error) = receiver_result {
-            return Err(error);
+        // Sampling the choices.
+        let mut sender_input: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        for _ in 0..L {
+            sender_input.push(Scalar::<Secp256k1>::random());
         }
 
-        Ok((mul_sender, mul_receiver))
-    }
+        // Phase 1 - Receiver
+        let (receiver_random, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
 
-    // This function executes that main part of the protocol.
-    // As before, this should not be used for real applications.
-    fn ideal_functionality_mul(session_id: &[u8], mul_sender: &MulSender, mul_receiver: &MulReceiver, sender_input: &Vec<Scalar<Secp256k1>>) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>, Scalar<Secp256k1>), ErrorMul> {
+        // Communication round 1
+        // Receiver keeps receiver_random (part of the output)
+        // and data_to_keep, and transmits data_to_sender.
 
-        let (b, data_to_keep, data_to_sender) = mul_receiver.run_phase1(session_id);
-
-        let sender_result = mul_sender.run(session_id, sender_input, &data_to_sender);
+        // Unique phase - Sender
+        let sender_result = mul_sender.run(&session_id, &sender_input, &data_to_sender);
 
         let sender_output: Vec<Scalar<Secp256k1>>;
         let data_to_receiver: MulDataToReceiver;
@@ -546,11 +548,15 @@ mod tests {
                 data_to_receiver = data;
             },
             Err(error) => {
-                return Err(error);
+                panic!("Two-party multiplication error: {:?}", error.description);
             },
         }
 
-        let receiver_result = mul_receiver.run_phase2(session_id, &data_to_keep, &data_to_receiver);
+        // Communication round 2
+        // Sender transmits data_to_receiver.
+
+        // Phase 2 - Receiver
+        let receiver_result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
 
         let receiver_output: Vec<Scalar<Secp256k1>>;
         match receiver_result {
@@ -558,52 +564,16 @@ mod tests {
                 receiver_output = output;
             },
             Err(error) => {
-                return Err(error);
+                panic!("Two-party multiplication error: {:?}", error.description);
             }
         }
 
-        // We also return the random value the receiver got from the protocol.
-        Ok((sender_output, receiver_output, b))
+        // Verification that the protocol did what it should do.
+        for i in 0..L {
+            // The sum of the outputs should be equal to the product of the
+            // sender's chosen scalar and the receiver's random scalar. 
+            let sum = &sender_output[i] + &receiver_output[i];
+            assert_eq!(sum, &sender_input[i] * &receiver_random);
+        }
     }
-
-    #[test]
-    fn test_multiplication() {
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
-
-        //Initialize and verify if it worked.
-        let init_result = ideal_initialization_mul(&session_id);
-
-        let mul_sender: MulSender;
-        let mul_receiver: MulReceiver;
-        match init_result {
-            Ok((s,r)) => {
-                mul_sender = s;
-                mul_receiver = r;
-            },
-            Err(error) => {
-                panic!("Two-party multiplication error: {:?}", error.description);
-            },
-        }
-
-        //Execute the protocol and verify if it did what it should do.
-        let mut sender_input: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
-        for _ in 0..L {
-            sender_input.push(Scalar::<Secp256k1>::random());
-        }
-
-        let func_result = ideal_functionality_mul(&session_id, &mul_sender, &mul_receiver, &sender_input);
-        match func_result {
-            Ok((sender_output, receiver_output, receiver_random)) => {
-                for i in 0..L {
-                    // The sum of the outputs should be equal to the product of the
-                    // sender's chosen scalar and the receiver's random scalar. 
-                    let sum = &sender_output[i] + &receiver_output[i];
-                    assert_eq!(sum, &sender_input[i] * &receiver_random);
-                }
-            },
-            Err(error) => {
-                panic!("Two-party multiplication error: {:?}", error.description);
-            },
-        }
-    } 
 }

@@ -9,7 +9,7 @@ use crate::protocols::derivation::DerivationData;
 pub mod derivation;
 pub mod dkg;
 pub mod re_key;
-pub mod refresh;
+//pub mod refresh;
 pub mod signing;
 
 #[derive(Clone)]

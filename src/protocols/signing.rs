@@ -48,6 +48,7 @@ pub struct TransmitPhase2to3 {
 
 // "Broadcast" messages refer to all counterparties at once,
 // hence we only need to send a unique instance of it.
+// ATTENTION: we broadcast the message to ourselves as well.
 
 #[derive(Clone)]
 pub struct Broadcast3to4 {
@@ -763,25 +764,14 @@ mod tests {
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
-        let mut zero_kept_1to2: Vec<HashMap<usize,KeepInitZeroSharePhase1to2>> = Vec::with_capacity(parameters.share_count);
-        let mut zero_transmit_1to3: Vec<Vec<TransmitInitZeroSharePhase1to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_kept_1to3: Vec<HashMap<usize,KeepInitMulPhase1to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_1to2: Vec<Vec<TransmitInitMulPhase1to2>> = Vec::with_capacity(parameters.share_count);
-        let mut bip_kept_1to2: Vec<KeepDerivationPhase1to2> = Vec::with_capacity(parameters.share_count);
-        let mut bip_transmit_1to3: Vec<TransmitDerivationPhase1to3> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5, out6, out7) = dkg_phase1(&all_data[i]);
+            let out1 = dkg_phase1(&all_data[i]);
 
             dkg_1.push(out1);
-            zero_kept_1to2.push(out2);
-            zero_transmit_1to3.push(out3);
-            mul_kept_1to3.push(out4);
-            mul_transmit_1to2.push(out5);
-            bip_kept_1to2.push(out6);
-            bip_transmit_1to3.push(out7);
         }
 
-        // Communication round 1
+        // Communication round 1 - Each party receives a fragment from each counterparty.
+        // They also produce a fragment for themselves.
         let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
@@ -789,73 +779,33 @@ mod tests {
             }
         }
 
-        let mut zero_received_1to3: Vec<Vec<TransmitInitZeroSharePhase1to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_received_1to2: Vec<Vec<TransmitInitMulPhase1to2>> = Vec::with_capacity(parameters.share_count);
-        for i in 1..=parameters.share_count {
-
-            let mut new_row: Vec<TransmitInitZeroSharePhase1to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &zero_transmit_1to3 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            zero_received_1to3.push(new_row);
-
-            let mut new_row: Vec<TransmitInitMulPhase1to2> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_1to2 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_1to2.push(new_row);
-
-        }
-
-        // bip_transmit_1to3 is already in the format we need.
-
         // Phase 2
         let mut poly_points: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
         let mut zero_kept_2to3: Vec<HashMap<usize,KeepInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut zero_transmit_2to3: Vec<Vec<TransmitInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_kept_2to4: Vec<HashMap<usize,KeepInitMulPhase2to4>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_2to3: Vec<Vec<TransmitInitMulPhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut bip_transmit_2to3: Vec<TransmitDerivationPhase2to3> = Vec::with_capacity(parameters.share_count);
+        let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(parameters.share_count);
+        let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> = Vec::with_capacity(parameters.share_count);
+        let mut bip_broadcast_2to4: HashMap<usize,BroadcastDerivationPhase2to4> = HashMap::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-
-            let result = dkg_phase2(&all_data[i], &poly_fragments[i], &zero_kept_1to2[i], &mul_received_1to2[i], &bip_kept_1to2[i]);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2, out3, out4, out5, out6, out7)) => {
-                    poly_points.push(out1);
-                    proofs_commitments.push(out2);
-                    zero_kept_2to3.push(out3);
-                    zero_transmit_2to3.push(out4);
-                    mul_kept_2to4.push(out5);
-                    mul_transmit_2to3.push(out6);
-                    bip_transmit_2to3.push(out7);
-                },
-            }
+            let (out1, out2, out3, out4, out5, out6) = dkg_phase2(&all_data[i], &poly_fragments[i]);
+           
+            poly_points.push(out1);
+            proofs_commitments.push(out2);
+            zero_kept_2to3.push(out3);
+            zero_transmit_2to4.push(out4);
+            bip_kept_2to3.push(out5);
+            bip_broadcast_2to4.insert(i+1, out6);   // This variable should be grouped into a HashMap. 
         }
 
         // Communication round 2
-        let mut zero_received_2to3: Vec<Vec<TransmitInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_received_2to3: Vec<Vec<TransmitInitMulPhase2to3>> = Vec::with_capacity(parameters.share_count);
+        let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(parameters.share_count);
         for i in 1..=parameters.share_count {
 
             // We don't need to transmit the commitments because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
-            let mut new_row: Vec<TransmitInitZeroSharePhase2to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &zero_transmit_2to3 {
+            let mut new_row: Vec<TransmitInitZeroSharePhase2to4> = Vec::with_capacity(parameters.share_count - 1);
+            for party in &zero_transmit_2to4 {
                 for message in party {
                     // Check if this message should be sent to us.
                     if message.parties.receiver == i {
@@ -863,48 +813,47 @@ mod tests {
                     }
                 }
             }
-            zero_received_2to3.push(new_row);
-
-            let mut new_row: Vec<TransmitInitMulPhase2to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_2to3 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_2to3.push(new_row);
+            zero_received_2to4.push(new_row);
 
         }
 
-        // bip_transmit_2to3 is already in the format we need.
+        // bip_transmit_2to4 is already in the format we need.
+        // In practice, the messages received should be grouped into a HashMap.
 
         // Phase 3
-        let mut complete_kept_3to6: Vec<KeepCompletePhase3to6> = Vec::with_capacity(parameters.share_count);
-        let mut mul_kept_3to5: Vec<HashMap<usize,KeepInitMulPhase3to5>> = Vec::with_capacity(parameters.share_count);
+        let mut zero_kept_3to4: Vec<HashMap<usize,KeepInitZeroSharePhase3to4>> = Vec::with_capacity(parameters.share_count);
+        let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> = Vec::with_capacity(parameters.share_count);
+        let mut mul_kept_3to4: Vec<HashMap<usize,KeepInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
+        let mut bip_broadcast_3to4: HashMap<usize,BroadcastDerivationPhase3to4> = HashMap::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-
-            let result = dkg_phase3(&all_data[i], &zero_kept_2to3[i], &zero_received_1to3[i], &zero_received_2to3[i], &mul_kept_1to3[i], &mul_received_2to3[i], &bip_transmit_1to3, &bip_transmit_2to3);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2, out3)) => {
-                    complete_kept_3to6.push(out1);
-                    mul_kept_3to5.push(out2);
-                    mul_transmit_3to4.push(out3);
-                },
-            }
+            let (out1, out2, out3, out4, out5) = dkg_phase3(&all_data[i], &zero_kept_2to3[i], &bip_kept_2to3[i]);
+            
+            zero_kept_3to4.push(out1);
+            zero_transmit_3to4.push(out2);
+            mul_kept_3to4.push(out3);
+            mul_transmit_3to4.push(out4);
+            bip_broadcast_3to4.insert(i+1, out5);   // This variable should be grouped into a HashMap.
         }
 
         // Communication round 3
+        let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> = Vec::with_capacity(parameters.share_count);
         let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
         for i in 1..=parameters.share_count {
 
            // We don't need to transmit the proofs because proofs_commitments is already what we need.
            // In practice, this should be done here.
+
+           let mut new_row: Vec<TransmitInitZeroSharePhase3to4> = Vec::with_capacity(parameters.share_count - 1);
+           for party in &zero_transmit_3to4 {
+               for message in party {
+                   // Check if this message should be sent to us.
+                   if message.parties.receiver == i {
+                       new_row.push(message.clone());
+                   }
+               }
+           }
+           zero_received_3to4.push(new_row);
 
             let mut new_row: Vec<TransmitInitMulPhase3to4> = Vec::with_capacity(parameters.share_count - 1);
             for party in &mul_transmit_3to4 {
@@ -919,81 +868,14 @@ mod tests {
 
         }
 
+        // bip_transmit_3to4 is already in the format we need.
+        // In practice, the messages received should be grouped into a HashMap.
+        
         // Phase 4
-        let mut public_keys: Vec<Point<Secp256k1>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_kept_4to6: Vec<HashMap<usize,KeepInitMulPhase4to6>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_4to5: Vec<Vec<TransmitInitMulPhase4to5>> = Vec::with_capacity(parameters.share_count);
-        for i in 0..parameters.share_count {
-
-            let result = dkg_phase4(&all_data[i], &proofs_commitments, &mul_kept_2to4[i], &mul_received_3to4[i]);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2, out3)) => {
-                    public_keys.push(out1);
-                    mul_kept_4to6.push(out2);
-                    mul_transmit_4to5.push(out3);
-                },
-            }
-        }
-
-        // Communication round 4
-        let mut mul_received_4to5: Vec<Vec<TransmitInitMulPhase4to5>> = Vec::with_capacity(parameters.share_count);
-        for i in 1..=parameters.share_count {
-
-            let mut new_row: Vec<TransmitInitMulPhase4to5> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_4to5 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_4to5.push(new_row);
-
-        }
-
-        // Phase 5
-        let mut mul_kept_5to6: Vec<HashMap<usize,KeepInitMulPhase5to6>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_5to6: Vec<Vec<TransmitInitMulPhase5to6>> = Vec::with_capacity(parameters.share_count);
-        for i in 0..parameters.share_count {
-
-            let result = dkg_phase5(&all_data[i], &mul_kept_3to5[i], &mul_received_4to5[i]);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2)) => {
-                    mul_kept_5to6.push(out1);
-                    mul_transmit_5to6.push(out2);
-                },
-            }
-        }
-
-        // Communication round 5
-        let mut mul_received_5to6: Vec<Vec<TransmitInitMulPhase5to6>> = Vec::with_capacity(parameters.share_count);
-        for i in 1..=parameters.share_count {
-
-            let mut new_row: Vec<TransmitInitMulPhase5to6> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_5to6 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_5to6.push(new_row);
-
-        }
-
-        // Phase 6
         let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = dkg_phase6(&all_data[i], &poly_points[i], &public_keys[i], &complete_kept_3to6[i], &mul_kept_4to6[i], &mul_kept_5to6[i], &mul_received_5to6[i]);
+            let result = dkg_phase4(&all_data[i], &poly_points[i], &proofs_commitments, &zero_kept_3to4[i], &zero_received_2to4[i], &zero_received_3to4[i], &mul_kept_3to4[i], &mul_received_3to4[i], &bip_broadcast_2to4, &bip_broadcast_3to4);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
