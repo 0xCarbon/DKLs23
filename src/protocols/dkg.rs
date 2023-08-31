@@ -418,6 +418,12 @@ pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar<Secp256k1>, proofs_com
     // DKG
     let pk = dkg_step5(&data.parameters, data.party_index, &data.session_id, proofs_commitments)?;
 
+    // The public key cannot be the point at infinity.
+    // This is pratically impossible, but easy to check.
+    if pk.is_zero() {
+        return Err(Abort::new(data.party_index, "Initialization failed because the resulting public key was trivial! (Very improbable)"));
+    }
+
     // Initialization - Zero sharings.
     let mut seeds: Vec<zero_sharings::SeedPair> = Vec::with_capacity(data.parameters.share_count - 1);
     for (target_party, message_kept) in zero_kept {

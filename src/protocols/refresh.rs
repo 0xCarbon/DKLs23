@@ -38,13 +38,13 @@ use crate::protocols::dkg::*;
 // we must send a whole vector of them.
 
 #[derive(Clone)]
-pub struct TransmitRefreshPhase1to3 {
+pub struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
 
 #[derive(Clone)]
-pub struct TransmitRefreshPhase2to3 {
+pub struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_sharings::Seed,
     pub salt: Vec<u8>,
@@ -56,22 +56,14 @@ pub struct TransmitRefreshPhase2to3 {
 // we must keep a whole vector of them.
 
 #[derive(Clone)]
-pub struct KeepRefreshPhase1to2 {
+pub struct KeepRefreshPhase2to3 {
     pub seed: zero_sharings::Seed,
     pub salt: Vec<u8>,
 }
 
 #[derive(Clone)]
-pub struct KeepRefreshPhase2to3 {
-    pub seed: zero_sharings::Seed,
-}
-
-// This one we just keep one instance (it's a "unique keep").
-#[derive(Clone)]
 pub struct KeepRefreshPhase3to4 {
-    pub zero_share: ZeroShare,
-    pub new_mul_senders: HashMap<usize,MulSender>,
-    pub new_mul_receivers: HashMap<usize,MulReceiver>,
+    pub seed: zero_sharings::Seed,
 }
 
 //////////////////////////
@@ -87,9 +79,9 @@ impl Party {
 
     // To adapt the DKG protocol, we change Step 1: instead of sampling any random
     // polynomial, each party generates a polynomial whose constant term is zero.
-    // In this way, the key generation provides each party with point on a polyinomial
+    // In this way, the key generation provides each party with a point on a polyinomial
     // whose constant term (the "secret key") is zero. This new point is just a correction
-    // factor and must be added to the original poly_point variable. This refreshs each
+    // factor and must be added to the original poly_point variable. This refreshes each
     // key share while preserving the same public key.
 
     // Each party cannot trust that their adversaries really chose a polyinomial
@@ -98,74 +90,245 @@ impl Party {
     // it is equal to the zero point on the curve. This ensures that the correction
     // factors will not change the public key.
 
-    pub fn refresh_complete_phase1(&self, refresh_sid: &[u8]) -> (Vec<Scalar<Secp256k1>>, HashMap<usize,KeepInitZeroSharePhase1to2>, Vec<TransmitInitZeroSharePhase1to3>, HashMap<usize,KeepInitMulPhase1to3>, Vec<TransmitInitMulPhase1to2>, KeepDerivationPhase1to2, TransmitDerivationPhase1to3) {
+    pub fn refresh_complete_phase1(&self) -> Vec<Scalar<Secp256k1>> {
 
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
+
+        // DKG
         let secret_polynomial = Polynomial::<Secp256k1>::sample_exact_with_fixed_const_term((self.parameters.threshold - 1) as u16, Scalar::<Secp256k1>::zero());
         let evaluations = dkg_step2(&self.parameters, secret_polynomial);
 
-        // We won't use the derivation part, but we'll run it for simplicity in the code.
-        let data = SessionData {
-            parameters: self.parameters.clone(),
-            party_index: self.party_index,
-            session_id: refresh_sid.to_vec(),
-        };
-        let (_, zero_keep, zero_transmit, mul_keep, mul_transmit, bip_keep, bip_transmit) = dkg_phase1(&data);
-
-        (evaluations, zero_keep, zero_transmit, mul_keep, mul_transmit, bip_keep, bip_transmit)
+        evaluations
     }
 
-    pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase1to2>, mul_received: &Vec<TransmitInitMulPhase1to2>, bip_kept: &KeepDerivationPhase1to2) -> Result<(Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to3>, HashMap<usize,KeepInitMulPhase2to4>, Vec<TransmitInitMulPhase2to3>, TransmitDerivationPhase2to3),Abort> {
-        let data = SessionData {
-            parameters: self.parameters.clone(),
-            party_index: self.party_index,
-            session_id: refresh_sid.to_vec(),
-        };
-        dkg_phase2(&data, poly_fragments, zero_kept, mul_received, bip_kept)
+    pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>) -> (Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>) {
+        
+        // We run Phase 2 in DKG, but we omit the derivation part.
+        // Note that "poly_point" is now called "correction_value".
+        // It will be used to correct self.poly_point.
+
+        // DKG
+        let (correction_value, proof_commitment) = dkg_step3(self.party_index, refresh_sid, poly_fragments);
+
+        // Initialization - Zero sharings.
+
+        // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
+        let mut zero_keep: HashMap<usize,KeepInitZeroSharePhase2to3> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut zero_transmit: Vec<TransmitInitZeroSharePhase2to4> = Vec::with_capacity(self.parameters.share_count - 1);
+        for i in 1..=self.parameters.share_count {
+            if i == self.party_index { continue; }
+
+            // Generate initial seeds.
+            let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
+
+            // We first send the commitments. We keep the rest to send later.
+            let keep = KeepInitZeroSharePhase2to3 {
+                seed,
+                salt,
+            };
+            let transmit = TransmitInitZeroSharePhase2to4 {
+                parties: PartiesMessage { sender: self.party_index, receiver: i },
+                commitment,
+            };
+
+            zero_keep.insert(i, keep);
+            zero_transmit.push(transmit);
+        }
+
+        (correction_value, proof_commitment, zero_keep, zero_transmit)
     }
 
-    pub fn refresh_complete_phase3(&self, refresh_sid: &[u8], zero_kept: &HashMap<usize,KeepInitZeroSharePhase2to3>, zero_received_phase1: &Vec<TransmitInitZeroSharePhase1to3>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to3>, mul_kept: &HashMap<usize,KeepInitMulPhase1to3>, mul_received: &Vec<TransmitInitMulPhase2to3>, bip_received_phase1: &Vec<TransmitDerivationPhase1to3>, bip_received_phase2: &Vec<TransmitDerivationPhase2to3>) -> Result<(KeepCompletePhase3to6, HashMap<usize,KeepInitMulPhase3to5>, Vec<TransmitInitMulPhase3to4>), Abort> {
-        let data = SessionData {
-            parameters: self.parameters.clone(),
-            party_index: self.party_index,
-            session_id: refresh_sid.to_vec(),
-        };
-        dkg_phase3(&data, zero_kept, zero_received_phase1, zero_received_phase2, mul_kept, mul_received, bip_received_phase1, bip_received_phase2)
+    pub fn refresh_complete_phase3(&self, refresh_sid: &[u8], zero_kept: &HashMap<usize,KeepInitZeroSharePhase2to3>) -> (HashMap<usize,KeepInitZeroSharePhase3to4>, Vec<TransmitInitZeroSharePhase3to4>, HashMap<usize,KeepInitMulPhase3to4>, Vec<TransmitInitMulPhase3to4>) {
+        
+        // We run Phase 3 in DKG, but we omit the derivation part.
+
+        // Initialization - Zero sharings.
+        let mut zero_keep: HashMap<usize,KeepInitZeroSharePhase3to4> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut zero_transmit: Vec<TransmitInitZeroSharePhase3to4> = Vec::with_capacity(self.parameters.share_count - 1);
+        for (target_party, message_kept) in zero_kept {
+            
+            // The messages kept contain the seed and the salt.
+            // They have to be transmitted to the target party.
+            // We keep the seed with us for the next phase.
+            let keep = KeepInitZeroSharePhase3to4 {
+                seed: message_kept.seed,
+            };
+            let transmit = TransmitInitZeroSharePhase3to4 {
+                parties: PartiesMessage { sender: self.party_index, receiver: *target_party },
+                seed: message_kept.seed,
+                salt: message_kept.salt.clone(),
+            };
+
+            zero_keep.insert(*target_party, keep);
+            zero_transmit.push(transmit);
+        }
+
+        // Initialization - Two-party multiplication.
+        // Each party prepares initialization both as
+        // a receiver and as a sender.
+        let mut mul_keep: HashMap<usize,KeepInitMulPhase3to4> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut mul_transmit: Vec<TransmitInitMulPhase3to4> = Vec::with_capacity(self.parameters.share_count - 1);
+        for i in 1..=self.parameters.share_count {
+            if i == self.party_index { continue; }
+
+            // RECEIVER
+            // We are the receiver and i = sender.
+
+            // We first compute a new session id.
+            // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
+            let mul_sid_receiver = [&self.party_index.to_be_bytes(), &i.to_be_bytes(), refresh_sid].concat();
+
+            let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&mul_sid_receiver);
+
+            // SENDER
+            // We are the sender and i = receiver.
+
+            // New session id as above.
+            // Note that the indexes are now in the opposite order.
+            let mul_sid_sender = [&i.to_be_bytes(), &self.party_index.to_be_bytes(), refresh_sid].concat();
+
+            let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(&mul_sid_sender);
+
+            // We gather these values.
+
+            let transmit = TransmitInitMulPhase3to4 {
+                parties: PartiesMessage { sender: self.party_index, receiver: i },
+
+                // Us = Receiver
+                dlog_proof,
+                nonce: nonce.clone(),
+
+                // Us = Sender
+                enc_proofs,
+                seed: ot_receiver.seed,
+            };
+            let keep = KeepInitMulPhase3to4 {
+                // Us = Receiver
+                ot_sender,
+                nonce,
+
+                // Us = Sender
+                ot_receiver,
+                correlation,
+                vec_r,
+            };
+            
+
+            mul_keep.insert(i, keep);
+            mul_transmit.push(transmit);
+        }
+
+        (zero_keep, zero_transmit, mul_keep, mul_transmit)
     }
 
-    pub fn refresh_complete_phase4(&self, refresh_sid: &[u8], proofs_commitments: &Vec<ProofCommitment>, mul_kept: &HashMap<usize,KeepInitMulPhase2to4>, mul_received: &Vec<TransmitInitMulPhase3to4>) -> Result<(HashMap<usize,KeepInitMulPhase4to6>, Vec<TransmitInitMulPhase4to5>),Abort> {
-        let data = SessionData {
-            parameters: self.parameters.clone(),
-            party_index: self.party_index,
-            session_id: refresh_sid.to_vec(),
-        };
-        let (verifying_pk, mul_keep, mul_transmit) = dkg_phase4(&data, proofs_commitments, mul_kept, mul_received)?;
+    pub fn refresh_complete_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar<Secp256k1>, proofs_commitments: &Vec<ProofCommitment>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase3to4>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to4>, zero_received_phase3: &Vec<TransmitInitZeroSharePhase3to4>, mul_kept: &HashMap<usize,KeepInitMulPhase3to4>, mul_received: &Vec<TransmitInitMulPhase3to4>) -> Result<Party,Abort> {
+        
+        // We run Phase 4, but now we don't check if the resulting public key is zero.
+        // Actually, we have to do the opposite: it must be the zero point!
+        // After this, we use the values computed to update our values.
+        // Again, the derivation part is omitted.
+
+        // DKG
+        let verifying_pk = dkg_step5(&self.parameters, self.party_index, refresh_sid, proofs_commitments)?;
 
         // The public key calculated above should be the zero point on the curve.
-        if verifying_pk.is_zero() {
-            Ok((mul_keep, mul_transmit))
-        } else {
-            Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"))
+        if !verifying_pk.is_zero() {
+            return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
-    }
 
-    pub fn refresh_complete_phase5(&self, refresh_sid: &[u8], mul_kept: &HashMap<usize,KeepInitMulPhase3to5>, mul_received: &Vec<TransmitInitMulPhase4to5>) -> Result<(HashMap<usize,KeepInitMulPhase5to6>, Vec<TransmitInitMulPhase5to6>),Abort> {
-        let data = SessionData {
-            parameters: self.parameters.clone(),
-            party_index: self.party_index,
-            session_id: refresh_sid.to_vec(),
-        };
-        dkg_phase5(&data, mul_kept, mul_received)
-    }
+        // Initialization - Zero sharings.
+        let mut seeds: Vec<zero_sharings::SeedPair> = Vec::with_capacity(self.parameters.share_count - 1);
+        for (target_party, message_kept) in zero_kept {
+            for message_received_2 in zero_received_phase2 {
+                for message_received_3 in zero_received_phase3 {
 
-    pub fn refresh_complete_phase6(&self, refresh_sid: &[u8], correction_value: &Scalar<Secp256k1>, complete_kept: &KeepCompletePhase3to6, mul_kept_phase4: &HashMap<usize,KeepInitMulPhase4to6>, mul_kept_phase5: &HashMap<usize,KeepInitMulPhase5to6>, mul_received: &Vec<TransmitInitMulPhase5to6>) -> Result<Party,Abort> {
-        let data = SessionData {
-            parameters: self.parameters.clone(),
-            party_index: self.party_index,
-            session_id: refresh_sid.to_vec(),
-        };
-        let correction_data = dkg_phase6(&data, correction_value, &self.pk, complete_kept, mul_kept_phase4, mul_kept_phase5, mul_received)?;
+                    let my_index = message_received_2.parties.receiver;
+                    let their_index = message_received_2.parties.sender;
 
+                    // Confirm that the message is for us.
+                    if my_index != self.party_index {
+                        return Err(Abort::new(self.party_index, "Received a message not meant for me!"));
+                    }
+
+                    // We first check if the messages relate to the same party.
+                    if *target_party != their_index || message_received_3.parties.sender != their_index { continue; }
+
+                    // We verify the commitment.
+                    let verification = ZeroShare::verify_seed(&message_received_3.seed, &message_received_2.commitment, &message_received_3.salt);
+                    if !verification {
+                        return Err(Abort::new(self.party_index, &format!("Initialization for zero sharings protocol failed because Party {} cheated when sending the seed!", their_index)));
+                    }
+
+                    // We form the final seed pairs.
+                    seeds.push(ZeroShare::generate_seed_pair(my_index, their_index, &message_kept.seed, &message_received_3.seed));
+                }
+            }
+        }
+
+        // This finishes the initialization.
+        let zero_share = ZeroShare::initialize(seeds);
+
+        // Initialization - Two-party multiplication.
+        let mut mul_receivers: HashMap<usize,MulReceiver> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut mul_senders: HashMap<usize,MulSender> = HashMap::with_capacity(self.parameters.share_count - 1);
+        for (target_party, message_kept) in mul_kept {
+            for message_received in mul_received {
+
+                let my_index = message_received.parties.receiver;
+                let their_index = message_received.parties.sender;
+
+                // Confirm that the message is for us.
+                if my_index != self.party_index {
+                    return Err(Abort::new(self.party_index, "Received a message not meant for me!"));
+                }
+
+                // We first check if the messages relate to the same party.
+                if their_index != *target_party { continue; }
+
+                // RECEIVER
+                // We are the receiver and target_party = sender.
+
+                // We retrieve the id used for multiplication. Note that the first party
+                // is the receiver and the second, the sender.
+                let mul_sid_receiver = [&my_index.to_be_bytes(), &their_index.to_be_bytes(), refresh_sid].concat();
+
+                let receiver_result = MulReceiver::init_phase2(&message_kept.ot_sender, &mul_sid_receiver, &message_received.seed, &message_received.enc_proofs, &message_kept.nonce);
+                
+                let mul_receiver: MulReceiver;
+                match  receiver_result {
+                    Ok(r) => {
+                        mul_receiver = r;
+                    },
+                    Err(error) => {
+                        return Err(Abort::new(self.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
+                    },
+                }
+
+                // SENDER
+                // We are the sender and target_party = receiver.
+
+                // We retrieve the id used for multiplication. Note that the first party
+                // is the receiver and the second, the sender.
+                let mul_sid_sender = [&their_index.to_be_bytes(), &my_index.to_be_bytes(), refresh_sid].concat();
+
+                let sender_result = MulSender::init_phase2(&message_kept.ot_receiver, &mul_sid_sender, message_kept.correlation.clone(), &message_kept.vec_r, &message_received.dlog_proof, &message_received.nonce);
+                
+                let mul_sender: MulSender;
+                match  sender_result {
+                    Ok(s) => {
+                        mul_sender = s;
+                    },
+                    Err(error) => {
+                        return Err(Abort::new(self.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
+                    },
+                }
+
+                // We finish the initialization.
+                mul_receivers.insert(their_index, mul_receiver);
+                mul_senders.insert(their_index,mul_sender.clone());
+            }
+        }
+        
         // For key derivation, we just update poly_point.
         let derivation_data = DerivationData {
             depth: self.derivation_data.depth,
@@ -184,10 +347,10 @@ impl Party {
             poly_point: &self.poly_point + correction_value,  // We update poly_point.
             pk: self.pk.clone(),
     
-            zero_share: correction_data.zero_share.clone(),
+            zero_share,
     
-            mul_senders: correction_data.mul_senders.clone(),
-            mul_receivers: correction_data.mul_receivers.clone(),
+            mul_senders,
+            mul_receivers,
 
             derivation_data,
         };
@@ -211,98 +374,131 @@ impl Party {
     // Note that their suggestion of implementation for this functionality is
     // very similar to the way our zero sharing protocol computes its seeds.
 
-    // Hence, our new refresh protocol will work as follows: we run the first
-    // four phases of DKG ignoring any procedure related to the multiplication
-    // protocol (and we do the same modifications we did for the complete refresh).
-    // During the third phase, the initialization for the zero sharing protocol
+    // Hence, our new refresh protocol will work as follows: we run DKG
+    // ignoring any procedure related to the multiplication protocol (and we
+    // do the same modifications we did for the complete refresh). During
+    // the fourth phase, the initialization for the zero sharing protocol
     // generates its seeds. We reuse them to apply the Beaver trick (described
     // in the article) to refresh the OT instances used for multiplication.
 
-    pub fn refresh_phase1(&self) -> (Vec<Scalar<Secp256k1>>, HashMap<usize,KeepRefreshPhase1to2>, Vec<TransmitRefreshPhase1to3>) {
+    pub fn refresh_phase1(&self) -> Vec<Scalar<Secp256k1>> {
 
-        // DKG - Step 1 (modified) + Step 2.
+        // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
+
+        // DKG
         let secret_polynomial = Polynomial::<Secp256k1>::sample_exact_with_fixed_const_term((self.parameters.threshold - 1) as u16, Scalar::<Secp256k1>::zero());
         let evaluations = dkg_step2(&self.parameters, secret_polynomial);
 
+        evaluations
+    }
+
+    pub fn refresh_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>) -> (Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepRefreshPhase2to3>, Vec<TransmitRefreshPhase2to4>) {
+        
+        // We run Phase 2 in DKG, but we omit the derivation part.
+        // Note that "poly_point" is now called "correction_value".
+        // It will be used to correct self.poly_point.
+
+        // DKG
+        let (correction_value, proof_commitment) = dkg_step3(self.party_index, refresh_sid, poly_fragments);
+
         // Initialization - Zero sharings.
-        // We follow the code in dkg.rs.
-        let mut keep: HashMap<usize,KeepRefreshPhase1to2> = HashMap::with_capacity(self.parameters.share_count - 1);
-        let mut transmit: Vec<TransmitRefreshPhase1to3> = Vec::with_capacity(self.parameters.share_count - 1);
+
+        // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
+        let mut keep: HashMap<usize,KeepRefreshPhase2to3> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut transmit: Vec<TransmitRefreshPhase2to4> = Vec::with_capacity(self.parameters.share_count - 1);
         for i in 1..=self.parameters.share_count {
             if i == self.party_index { continue; }
 
+            // Generate initial seeds.
             let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
 
-            keep.insert(i, KeepRefreshPhase1to2 {
+            // We first send the commitments. We keep the rest to send later.
+            keep.insert(i, KeepRefreshPhase2to3 {
                 seed,
                 salt,
             });
-            transmit.push( TransmitRefreshPhase1to3 {
+            transmit.push( TransmitRefreshPhase2to4 {
                 parties: PartiesMessage { sender: self.party_index, receiver: i },
                 commitment,
-            });
-        }
-
-        (evaluations, keep, transmit)
-    }
-
-    pub fn refresh_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>, kept: &HashMap<usize,KeepRefreshPhase1to2>) -> (Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepRefreshPhase2to3>, Vec<TransmitRefreshPhase2to3>) {
-
-        // DKG - Step 3.
-        let (correction_value, proof_commitment) = dkg_step3(self.party_index, refresh_sid, poly_fragments);
-    
-        // Initialization - Zero sharings.
-        // We follow the code in dkg.rs.
-        let mut keep: HashMap<usize,KeepRefreshPhase2to3> = HashMap::with_capacity(self.parameters.share_count - 1);
-        let mut transmit: Vec<TransmitRefreshPhase2to3> = Vec::with_capacity(self.parameters.share_count - 1);
-        for (target_party, message_kept) in kept {
-            keep.insert(*target_party, KeepRefreshPhase2to3 {
-                seed: message_kept.seed,
-            });
-            transmit.push( TransmitRefreshPhase2to3 {
-                parties: PartiesMessage { sender: self.party_index, receiver: *target_party },
-                seed: message_kept.seed,
-                salt: message_kept.salt.clone(),
             });
         }
 
         (correction_value, proof_commitment, keep, transmit)
     }
 
-    pub fn refresh_phase3(&self, refresh_sid: &[u8], kept: &HashMap<usize,KeepRefreshPhase2to3>, received_phase1: &Vec<TransmitRefreshPhase1to3>, received_phase2: &Vec<TransmitRefreshPhase2to3>) -> Result<KeepRefreshPhase3to4, Abort> {
+    pub fn refresh_phase3(&self, kept: &HashMap<usize,KeepRefreshPhase2to3>) -> (HashMap<usize,KeepRefreshPhase3to4>, Vec<TransmitRefreshPhase3to4>) {
+        
+        // We run Phase 3 in DKG, but we omit the multiplication and the derivation parts.
 
         // Initialization - Zero sharings.
-        // We follow the code in dkg.rs.
+        let mut keep: HashMap<usize,KeepRefreshPhase3to4> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut transmit: Vec<TransmitRefreshPhase3to4> = Vec::with_capacity(self.parameters.share_count - 1);
+        for (target_party, message_kept) in kept {
+            
+            // The messages kept contain the seed and the salt.
+            // They have to be transmitted to the target party.
+            // We keep the seed with us for the next phase.
+            keep.insert(*target_party, KeepRefreshPhase3to4 {
+                seed: message_kept.seed,
+            });
+            transmit.push( TransmitRefreshPhase3to4 {
+                parties: PartiesMessage { sender: self.party_index, receiver: *target_party },
+                seed: message_kept.seed,
+                salt: message_kept.salt.clone(),
+            });
+        }
+
+        (keep, transmit)
+    }
+
+    pub fn refresh_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar<Secp256k1>, proofs_commitments: &Vec<ProofCommitment>, kept: &HashMap<usize,KeepRefreshPhase3to4>, received_phase2: &Vec<TransmitRefreshPhase2to4>, received_phase3: &Vec<TransmitRefreshPhase3to4>) -> Result<Party,Abort> {
+        
+        // We run Phase 4, but now we don't check if the resulting public key is zero.
+        // Actually, we have to do the opposite: it must be the zero point!
+        // After this, we use the values computed to update our values.
+        // Again, the derivation part is omitted.
+
+        // DKG
+        let verifying_pk = dkg_step5(&self.parameters, self.party_index, refresh_sid, proofs_commitments)?;
+
+        // The public key calculated above should be the zero point on the curve.
+        if !verifying_pk.is_zero() {
+            return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
+        }
+
+        // Initialization - Zero sharings.
         let mut seeds: Vec<zero_sharings::SeedPair> = Vec::with_capacity(self.parameters.share_count - 1);
         for (target_party, message_kept) in kept {
-            for message_received_1 in received_phase1 {
-                for message_received_2 in received_phase2 {
+            for message_received_2 in received_phase2 {
+                for message_received_3 in received_phase3 {
 
-                    let my_index = message_received_1.parties.receiver;
-                    let their_index = message_received_1.parties.sender;
+                    let my_index = message_received_2.parties.receiver;
+                    let their_index = message_received_2.parties.sender;
 
                     // Confirm that the message is for us.
                     if my_index != self.party_index {
-                    return Err(Abort::new(self.party_index, "Received a message not meant for us!"));
+                        return Err(Abort::new(self.party_index, "Received a message not meant for me!"));
                     }
 
                     // We first check if the messages relate to the same party.
-                    if *target_party != their_index || message_received_2.parties.sender != their_index { continue; }
+                    if *target_party != their_index || message_received_3.parties.sender != their_index { continue; }
 
-                    let verification = ZeroShare::verify_seed(&message_received_2.seed, &message_received_1.commitment, &message_received_2.salt);
+                    // We verify the commitment.
+                    let verification = ZeroShare::verify_seed(&message_received_3.seed, &message_received_2.commitment, &message_received_3.salt);
                     if !verification {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for zero sharings protocol failed because Party {} cheated when sending the seed!", message_received_1.parties.sender)));
+                        return Err(Abort::new(self.party_index, &format!("Initialization for zero sharings protocol failed because Party {} cheated when sending the seed!", their_index)));
                     }
 
-                    seeds.push(ZeroShare::generate_seed_pair(my_index, their_index, &message_kept.seed, &message_received_2.seed));
+                    // We form the final seed pairs.
+                    seeds.push(ZeroShare::generate_seed_pair(my_index, their_index, &message_kept.seed, &message_received_3.seed));
                 }
             }
         }
 
         // Having the seeds, we can update the data for multiplication.
 
-        let mut new_mul_senders: HashMap<usize,MulSender> = HashMap::with_capacity(self.parameters.share_count - 1);
-        let mut new_mul_receivers: HashMap<usize,MulReceiver> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut mul_senders: HashMap<usize,MulSender> = HashMap::with_capacity(self.parameters.share_count - 1);
+        let mut mul_receivers: HashMap<usize,MulReceiver> = HashMap::with_capacity(self.parameters.share_count - 1);
 
         for seed_pair in &seeds { // This is the same as running through the counterparties.
 
@@ -342,6 +538,7 @@ impl Party {
                     r_double_prime[j] = new_ote_sender.seeds[i][j] ^ r_prime_b_double_prime[j];
                 } 
 
+                // Updates new_ote_sender with the new values.
                 new_ote_sender.correlation[i] = b_double_prime;
                 new_ote_sender.seeds[i] = r_double_prime; 
 
@@ -364,17 +561,18 @@ impl Party {
                     r1_double_prime[j] = r_opposite_b_prime[j] ^ r1_prime[j];
                 }
 
+                // Updates new_ote_receiver with the new values.
                 new_ote_receiver.seeds0[i] = r0_double_prime;
                 new_ote_receiver.seeds1[i] = r1_double_prime;
 
             }
 
             // We will not change the public gadget vector (well, it is "public" afterall).
-            new_mul_senders.insert(their_index, MulSender { 
+            mul_senders.insert(their_index, MulSender { 
                 public_gadget: mul_sender.public_gadget.clone(),
                 ote_sender: new_ote_sender,
             });
-            new_mul_receivers.insert(their_index, MulReceiver {
+            mul_receivers.insert(their_index, MulReceiver {
                 public_gadget: mul_receiver.public_gadget.clone(),
                 ote_receiver: new_ote_receiver,
             });
@@ -383,27 +581,6 @@ impl Party {
 
         // This finishes the initialization for the zero sharing protocol.
         let zero_share = ZeroShare::initialize(seeds);
-
-        // We save all the data for the next phase.
-        let keep = KeepRefreshPhase3to4 {
-            zero_share,
-            new_mul_senders,
-            new_mul_receivers,
-        };
-
-        Ok(keep)
-    }
-
-    pub fn refresh_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar<Secp256k1>, proofs_commitments: &Vec<ProofCommitment>, kept: &KeepRefreshPhase3to4) -> Result<Party, Abort> {
-
-        // DKG - Step 5 (modified).
-
-        let verifying_pk = dkg_step5(&self.parameters, self.party_index, refresh_sid, proofs_commitments)?;
-
-        // The public key calculated above should be the zero point on the curve.
-        if !verifying_pk.is_zero() {
-            return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
-        }
 
         // For key derivation, we just update poly_point.
         let derivation_data = DerivationData {
@@ -424,10 +601,10 @@ impl Party {
             poly_point: &self.poly_point + correction_value,  // We update poly_point.
             pk: self.pk.clone(),
     
-            zero_share: kept.zero_share.clone(),
+            zero_share,
     
-            mul_senders: kept.new_mul_senders.clone(),
-            mul_receivers: kept.new_mul_receivers.clone(),
+            mul_senders,
+            mul_receivers,
 
             derivation_data,
         };
@@ -469,25 +646,14 @@ mod tests {
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
-        let mut zero_kept_1to2: Vec<HashMap<usize,KeepInitZeroSharePhase1to2>> = Vec::with_capacity(parameters.share_count);
-        let mut zero_transmit_1to3: Vec<Vec<TransmitInitZeroSharePhase1to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_kept_1to3: Vec<HashMap<usize,KeepInitMulPhase1to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_1to2: Vec<Vec<TransmitInitMulPhase1to2>> = Vec::with_capacity(parameters.share_count);
-        let mut bip_kept_1to2: Vec<KeepDerivationPhase1to2> = Vec::with_capacity(parameters.share_count);
-        let mut bip_transmit_1to3: Vec<TransmitDerivationPhase1to3> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5, out6, out7) = parties[i].refresh_complete_phase1(&refresh_sid);
+            let out1 = parties[i].refresh_complete_phase1();
 
             dkg_1.push(out1);
-            zero_kept_1to2.push(out2);
-            zero_transmit_1to3.push(out3);
-            mul_kept_1to3.push(out4);
-            mul_transmit_1to2.push(out5);
-            bip_kept_1to2.push(out6);
-            bip_transmit_1to3.push(out7);
         }
 
-        // Communication round 1
+        // Communication round 1 - Each party receives a fragment from each counterparty.
+        // They also produce a fragment for themselves.
         let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
@@ -495,73 +661,29 @@ mod tests {
             }
         }
 
-        let mut zero_received_1to3: Vec<Vec<TransmitInitZeroSharePhase1to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_received_1to2: Vec<Vec<TransmitInitMulPhase1to2>> = Vec::with_capacity(parameters.share_count);
-        for i in 1..=parameters.share_count {
-
-            let mut new_row: Vec<TransmitInitZeroSharePhase1to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &zero_transmit_1to3 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            zero_received_1to3.push(new_row);
-
-            let mut new_row: Vec<TransmitInitMulPhase1to2> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_1to2 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_1to2.push(new_row);
-
-        }
-
-        // bip_transmit_1to3 is already in the format we need.
-
         // Phase 2
         let mut correction_values: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
         let mut zero_kept_2to3: Vec<HashMap<usize,KeepInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut zero_transmit_2to3: Vec<Vec<TransmitInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_kept_2to4: Vec<HashMap<usize,KeepInitMulPhase2to4>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_2to3: Vec<Vec<TransmitInitMulPhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut bip_transmit_2to3: Vec<TransmitDerivationPhase2to3> = Vec::with_capacity(parameters.share_count);
+        let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-
-            let result = parties[i].refresh_complete_phase2(&refresh_sid, &poly_fragments[i], &zero_kept_1to2[i], &mul_received_1to2[i], &bip_kept_1to2[i]);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2, out3, out4, out5, out6, out7)) => {
-                    correction_values.push(out1);
-                    proofs_commitments.push(out2);
-                    zero_kept_2to3.push(out3);
-                    zero_transmit_2to3.push(out4);
-                    mul_kept_2to4.push(out5);
-                    mul_transmit_2to3.push(out6);
-                    bip_transmit_2to3.push(out7);
-                },
-            }
+            let (out1, out2, out3, out4) = parties[i].refresh_complete_phase2(&refresh_sid, &poly_fragments[i]);
+            
+            correction_values.push(out1);
+            proofs_commitments.push(out2);
+            zero_kept_2to3.push(out3);
+            zero_transmit_2to4.push(out4);
         }
 
         // Communication round 2
-        let mut zero_received_2to3: Vec<Vec<TransmitInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_received_2to3: Vec<Vec<TransmitInitMulPhase2to3>> = Vec::with_capacity(parameters.share_count);
+        let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(parameters.share_count);
         for i in 1..=parameters.share_count {
 
             // We don't need to transmit the commitments because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
-            let mut new_row: Vec<TransmitInitZeroSharePhase2to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &zero_transmit_2to3 {
+            let mut new_row: Vec<TransmitInitZeroSharePhase2to4> = Vec::with_capacity(parameters.share_count - 1);
+            for party in &zero_transmit_2to4 {
                 for message in party {
                     // Check if this message should be sent to us.
                     if message.parties.receiver == i {
@@ -569,48 +691,42 @@ mod tests {
                     }
                 }
             }
-            zero_received_2to3.push(new_row);
-
-            let mut new_row: Vec<TransmitInitMulPhase2to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_2to3 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_2to3.push(new_row);
+            zero_received_2to4.push(new_row);
 
         }
 
-        // bip_transmit_2to3 is already in the format we need.
-
         // Phase 3
-        let mut complete_kept_3to6: Vec<KeepCompletePhase3to6> = Vec::with_capacity(parameters.share_count);
-        let mut mul_kept_3to5: Vec<HashMap<usize,KeepInitMulPhase3to5>> = Vec::with_capacity(parameters.share_count);
+        let mut zero_kept_3to4: Vec<HashMap<usize,KeepInitZeroSharePhase3to4>> = Vec::with_capacity(parameters.share_count);
+        let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> = Vec::with_capacity(parameters.share_count);
+        let mut mul_kept_3to4: Vec<HashMap<usize,KeepInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-
-            let result = parties[i].refresh_complete_phase3(&refresh_sid, &zero_kept_2to3[i], &zero_received_1to3[i], &zero_received_2to3[i], &mul_kept_1to3[i], &mul_received_2to3[i], &bip_transmit_1to3, &bip_transmit_2to3);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2, out3)) => {
-                    complete_kept_3to6.push(out1);
-                    mul_kept_3to5.push(out2);
-                    mul_transmit_3to4.push(out3);
-                },
-            }
+            let (out1, out2, out3, out4) = parties[i].refresh_complete_phase3(&refresh_sid, &zero_kept_2to3[i]);
+            
+            zero_kept_3to4.push(out1);
+            zero_transmit_3to4.push(out2);
+            mul_kept_3to4.push(out3);
+            mul_transmit_3to4.push(out4);
         }
 
         // Communication round 3
+        let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> = Vec::with_capacity(parameters.share_count);
         let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(parameters.share_count);
         for i in 1..=parameters.share_count {
 
            // We don't need to transmit the proofs because proofs_commitments is already what we need.
            // In practice, this should be done here.
+
+           let mut new_row: Vec<TransmitInitZeroSharePhase3to4> = Vec::with_capacity(parameters.share_count - 1);
+           for party in &zero_transmit_3to4 {
+               for message in party {
+                   // Check if this message should be sent to us.
+                   if message.parties.receiver == i {
+                       new_row.push(message.clone());
+                   }
+               }
+           }
+           zero_received_3to4.push(new_row);
 
             let mut new_row: Vec<TransmitInitMulPhase3to4> = Vec::with_capacity(parameters.share_count - 1);
             for party in &mul_transmit_3to4 {
@@ -626,78 +742,10 @@ mod tests {
         }
 
         // Phase 4
-        let mut mul_kept_4to6: Vec<HashMap<usize,KeepInitMulPhase4to6>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_4to5: Vec<Vec<TransmitInitMulPhase4to5>> = Vec::with_capacity(parameters.share_count);
-        for i in 0..parameters.share_count {
-
-            let result = parties[i].refresh_complete_phase4(&refresh_sid, &proofs_commitments, &mul_kept_2to4[i], &mul_received_3to4[i]);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2)) => {
-                    mul_kept_4to6.push(out1);
-                    mul_transmit_4to5.push(out2);
-                },
-            }
-        }
-
-        // Communication round 4
-        let mut mul_received_4to5: Vec<Vec<TransmitInitMulPhase4to5>> = Vec::with_capacity(parameters.share_count);
-        for i in 1..=parameters.share_count {
-
-            let mut new_row: Vec<TransmitInitMulPhase4to5> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_4to5 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_4to5.push(new_row);
-
-        }
-
-        // Phase 5
-        let mut mul_kept_5to6: Vec<HashMap<usize,KeepInitMulPhase5to6>> = Vec::with_capacity(parameters.share_count);
-        let mut mul_transmit_5to6: Vec<Vec<TransmitInitMulPhase5to6>> = Vec::with_capacity(parameters.share_count);
-        for i in 0..parameters.share_count {
-
-            let result = parties[i].refresh_complete_phase5(&refresh_sid, &mul_kept_3to5[i], &mul_received_4to5[i]);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok((out1, out2)) => {
-                    mul_kept_5to6.push(out1);
-                    mul_transmit_5to6.push(out2);
-                },
-            }
-        }
-
-        // Communication round 5
-        let mut mul_received_5to6: Vec<Vec<TransmitInitMulPhase5to6>> = Vec::with_capacity(parameters.share_count);
-        for i in 1..=parameters.share_count {
-
-            let mut new_row: Vec<TransmitInitMulPhase5to6> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &mul_transmit_5to6 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_5to6.push(new_row);
-
-        }
-
-        // Phase 6
         let mut refreshed_parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = parties[i].refresh_complete_phase6(&refresh_sid, &correction_values[i], &complete_kept_3to6[i], &mul_kept_4to6[i], &mul_kept_5to6[i], &mul_received_5to6[i]);
+            let result = parties[i].refresh_complete_phase4(&refresh_sid, &correction_values[i], &proofs_commitments, &zero_kept_3to4[i], &zero_received_2to4[i], &zero_received_3to4[i], &mul_kept_3to4[i], &mul_received_3to4[i]);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -850,17 +898,14 @@ mod tests {
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
-        let mut kept_1to2: Vec<HashMap<usize,KeepRefreshPhase1to2>> = Vec::with_capacity(parameters.share_count);
-        let mut transmit_1to3: Vec<Vec<TransmitRefreshPhase1to3>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-            let (out1, out2, out3) = parties[i].refresh_phase1();
+            let out1 = parties[i].refresh_phase1();
 
             dkg_1.push(out1);
-            kept_1to2.push(out2);
-            transmit_1to3.push(out3);
         }
 
-        // Communication round 1
+        // Communication round 1 - Each party receives a fragment from each counterparty.
+        // They also produce a fragment for themselves.
         let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
@@ -868,46 +913,29 @@ mod tests {
             }
         }
 
-        let mut received_1to3: Vec<Vec<TransmitRefreshPhase1to3>> = Vec::with_capacity(parameters.share_count);
-        for i in 1..=parameters.share_count {
-
-            let mut new_row: Vec<TransmitRefreshPhase1to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &transmit_1to3 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            received_1to3.push(new_row);
-
-        }
-
         // Phase 2
         let mut correction_values: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
         let mut kept_2to3: Vec<HashMap<usize,KeepRefreshPhase2to3>> = Vec::with_capacity(parameters.share_count);
-        let mut transmit_2to3: Vec<Vec<TransmitRefreshPhase2to3>> = Vec::with_capacity(parameters.share_count);
+        let mut transmit_2to4: Vec<Vec<TransmitRefreshPhase2to4>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-
-            let (out1, out2, out3, out4) = parties[i].refresh_phase2(&refresh_sid, &poly_fragments[i], &kept_1to2[i]);
-
+            let (out1, out2, out3, out4) = parties[i].refresh_phase2(&refresh_sid, &poly_fragments[i]);
+            
             correction_values.push(out1);
             proofs_commitments.push(out2);
             kept_2to3.push(out3);
-            transmit_2to3.push(out4);
+            transmit_2to4.push(out4);
         }
 
         // Communication round 2
-        let mut received_2to3: Vec<Vec<TransmitRefreshPhase2to3>> = Vec::with_capacity(parameters.share_count);
+        let mut received_2to4: Vec<Vec<TransmitRefreshPhase2to4>> = Vec::with_capacity(parameters.share_count);
         for i in 1..=parameters.share_count {
 
             // We don't need to transmit the commitments because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
-            let mut new_row: Vec<TransmitRefreshPhase2to3> = Vec::with_capacity(parameters.share_count - 1);
-            for party in &transmit_2to3 {
+            let mut new_row: Vec<TransmitRefreshPhase2to4> = Vec::with_capacity(parameters.share_count - 1);
+            for party in &transmit_2to4 {
                 for message in party {
                     // Check if this message should be sent to us.
                     if message.parties.receiver == i {
@@ -915,34 +943,45 @@ mod tests {
                     }
                 }
             }
-            received_2to3.push(new_row);
+            received_2to4.push(new_row);
 
         }
 
         // Phase 3
-        let mut kept_3to4: Vec<KeepRefreshPhase3to4> = Vec::with_capacity(parameters.share_count);
+        let mut kept_3to4: Vec<HashMap<usize,KeepRefreshPhase3to4>> = Vec::with_capacity(parameters.share_count);
+        let mut transmit_3to4: Vec<Vec<TransmitRefreshPhase3to4>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-
-            let result = parties[i].refresh_phase3(&refresh_sid, &kept_2to3[i], &received_1to3[i], &received_2to3[i]);
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
-                Ok(out) => {
-                    kept_3to4.push(out);
-                },
-            }
+            let (out1, out2) = parties[i].refresh_phase3(&kept_2to3[i]);
+            
+            kept_3to4.push(out1);
+            transmit_3to4.push(out2);
         }
 
         // Communication round 3
-        // This is Step 4 of DKG: we now transmit the proofs from proofs_commitments.
-        // For this test, we don't need to do this here.
+        let mut received_3to4: Vec<Vec<TransmitRefreshPhase3to4>> = Vec::with_capacity(parameters.share_count);
+        for i in 1..=parameters.share_count {
+
+           // We don't need to transmit the proofs because proofs_commitments is already what we need.
+           // In practice, this should be done here.
+
+           let mut new_row: Vec<TransmitRefreshPhase3to4> = Vec::with_capacity(parameters.share_count - 1);
+           for party in &transmit_3to4 {
+               for message in party {
+                   // Check if this message should be sent to us.
+                   if message.parties.receiver == i {
+                       new_row.push(message.clone());
+                   }
+               }
+           }
+           received_3to4.push(new_row);
+
+        }
 
         // Phase 4
         let mut refreshed_parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
 
-            let result = parties[i].refresh_phase4(&refresh_sid, &correction_values[i], &proofs_commitments, &kept_3to4[i]);
+            let result = parties[i].refresh_phase4(&refresh_sid, &correction_values[i], &proofs_commitments, &kept_3to4[i], &received_2to4[i], &received_3to4[i]);
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -954,7 +993,7 @@ mod tests {
         }
 
         let parties = refreshed_parties;
-
+         
         // SIGNING (as in test_signing)
 
         let sign_id = rand::thread_rng().gen::<[u8; 32]>();
