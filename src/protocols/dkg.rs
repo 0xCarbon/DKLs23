@@ -601,7 +601,11 @@ pub fn compute_eth_address(pk: &Point<Secp256k1>) -> String {
 
     // We save the last 20 bytes represented in hexadecimal.
     let address_bytes = &hash[12..32];
-    let address = hex::encode(address_bytes);
+    let mut address = hex::encode(address_bytes);
+
+    // We insert 0x in the beginning.
+    address.insert(0, 'x');
+    address.insert(0, '0');
 
     address
 }
@@ -996,11 +1000,11 @@ mod tests {
     fn test_compute_eth_address() {
 
         // You should test different values using, for example, https://www.rfctools.com/ethereum-address-test-tool/.
-        let sk = Scalar::<Secp256k1>::from_bigint(&BigInt::from_hex("A29B5A2AC75545464BD1B1BD25796A7809E09BA936D821B21C40411240914A1C").unwrap());
+        let sk = Scalar::<Secp256k1>::from_bigint(&BigInt::from_hex("389564375891DD90EE42B02D332C203E866B73211A6CD1C0731EDD3B7765197B").unwrap());
         let pk = Point::<Secp256k1>::generator() * sk;
 
         let address = compute_eth_address(&pk);
-        assert_eq!(address, "28166b12f572638f72e2e36f3399e31fc9d595dd".to_string());
+        assert_eq!(address, "0x57b2a65b5fc8e38daa74d780d8c93e741b05c4c2".to_string());
     }
 
 }
