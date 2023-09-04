@@ -17,6 +17,8 @@ use curv::elliptic::curves::{Point, Secp256k1, Scalar};
 
 use crate::protocols::Party;
 
+use super::dkg::compute_eth_address;
+
 pub type Fingerprint = [u8;4];
 pub type ChainCode = [u8;32];
 
@@ -127,7 +129,9 @@ impl Party {
         let new_derivation_data = self.derivation_data.derive_child(child_number)?;
 
         // We don't change information relating other parties,
-        // we only update our key share and our public key.
+        // we only update our key share, our public key and the address.
+        let new_address = compute_eth_address(&new_derivation_data.pk);
+
         Ok(Party {
             parameters: self.parameters.clone(),
             party_index: self.party_index,
@@ -142,6 +146,8 @@ impl Party {
             mul_receivers: self.mul_receivers.clone(),
 
             derivation_data: new_derivation_data,
+
+            eth_address: new_address,  
         })
     }
 
@@ -149,7 +155,9 @@ impl Party {
         let new_derivation_data = self.derivation_data.derive_from_path(path)?;
 
         // We don't change information relating other parties,
-        // we only update our key share and our public key.
+        // we only update our key share, our public key and the address.
+        let new_address = compute_eth_address(&new_derivation_data.pk);
+
         Ok(Party {
             parameters: self.parameters.clone(),
             party_index: self.party_index,
@@ -164,6 +172,8 @@ impl Party {
             mul_receivers: self.mul_receivers.clone(),
 
             derivation_data: new_derivation_data,
+
+            eth_address: new_address,
         })
     }
 }

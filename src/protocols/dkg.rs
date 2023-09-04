@@ -8,8 +8,11 @@
 
 use std::collections::HashMap;
 
+use curv::arithmetic::*;
 use curv::elliptic::curves::{Secp256k1, Scalar, Point};
 use curv::cryptographic_primitives::secret_sharing::Polynomial;
+use hex;
+use keccak_hash::keccak256;
 use rand::Rng;
 
 use crate::protocols::{Abort, Parameters, Party, PartiesMessage};
@@ -548,6 +551,8 @@ pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar<Secp256k1>, proofs_com
         chain_code,
     };
 
+    let eth_address = compute_eth_address(&pk); // We compute the Ethereum address.
+
     let party = Party {
         parameters: data.parameters.clone(),
         party_index: data.party_index,
@@ -562,9 +567,43 @@ pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar<Secp256k1>, proofs_com
         mul_receivers,
 
         derivation_data,
+
+        eth_address,
     };
 
     Ok(party)
+}
+
+// For convenience, we are going to include the Ethereum address.
+pub fn compute_eth_address(pk: &Point<Secp256k1>) -> String {
+    
+    // We first write the point into uncompressed form (without the prefix 04).
+    let coords = pk.coords().unwrap();
+    let (x, y) = (coords.x, coords.y);
+
+    let mut x_as_bytes = x.to_bytes();
+    let mut y_as_bytes = y.to_bytes();
+
+    // If these values are too small, we append zeros in the beginning.
+    while x_as_bytes.len() < 32 {
+        x_as_bytes.insert(0, 0);
+    }
+
+    while y_as_bytes.len() < 32 {
+        y_as_bytes.insert(0, 0);
+    }
+
+    let uncompressed_pk = [x_as_bytes, y_as_bytes].concat();
+
+    // We compute the keccak256 of the point.
+    let mut hash = uncompressed_pk.clone();
+    keccak256(&mut hash);
+
+    // We save the last 20 bytes represented in hexadecimal.
+    let address_bytes = &hash[12..32];
+    let address = hex::encode(address_bytes);
+
+    address
 }
 
 #[cfg(test)]
@@ -952,4 +991,16 @@ mod tests {
         }
 
     }
+
+    #[test]
+    fn test_compute_eth_address() {
+
+        // You should test different values using, for example, https://www.rfctools.com/ethereum-address-test-tool/.
+        let sk = Scalar::<Secp256k1>::from_bigint(&BigInt::from_hex("A29B5A2AC75545464BD1B1BD25796A7809E09BA936D821B21C40411240914A1C").unwrap());
+        let pk = Point::<Secp256k1>::generator() * sk;
+
+        let address = compute_eth_address(&pk);
+        assert_eq!(address, "28166b12f572638f72e2e36f3399e31fc9d595dd".to_string());
+    }
+
 }

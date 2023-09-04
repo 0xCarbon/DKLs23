@@ -353,6 +353,8 @@ impl Party {
             mul_receivers,
 
             derivation_data,
+
+            eth_address: self.eth_address.clone(),
         };
     
         Ok(party)
@@ -607,6 +609,8 @@ impl Party {
             mul_receivers,
 
             derivation_data,
+
+            eth_address: self.eth_address.clone(),
         };
 
         Ok(party)

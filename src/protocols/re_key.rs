@@ -13,6 +13,7 @@ use curv::cryptographic_primitives::secret_sharing::Polynomial;
 use rand::Rng;
 
 use crate::protocols::{Parameters, Party};
+use crate::protocols::dkg::compute_eth_address;
 use crate::protocols::derivation::{ChainCode, DerivationData};
 
 use crate::utilities::hashes::*;
@@ -183,6 +184,7 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Se
             mul_senders: all_mul_senders[index - 1].clone(),
             mul_receivers: all_mul_receivers[index - 1].clone(),
             derivation_data,
+            eth_address: compute_eth_address(&pk),
         });
     }
 

@@ -34,6 +34,30 @@ pub struct Party {
     pub mul_receivers: HashMap<usize,MulReceiver>,  // The key in the HashMap represents the other party.
 
     pub derivation_data: DerivationData,    // Data for BIP-32 derivation.
+
+    pub eth_address: String,    // Ethereum address calculated from the public key.
+}
+
+impl Party {
+    pub fn new(parameters: Parameters, party_index: usize, session_id: Vec<u8>, poly_point: Scalar<Secp256k1>, pk: Point<Secp256k1>, zero_share: ZeroShare, mul_senders: HashMap<usize, MulSender>, mul_receivers: HashMap<usize,MulReceiver>, derivation_data: DerivationData, eth_address: String) -> Party {
+        Party {
+            parameters,
+            party_index,
+            session_id,
+
+            poly_point,
+            pk,
+
+            zero_share,
+
+            mul_senders,
+            mul_receivers,
+
+            derivation_data,
+
+            eth_address,
+        }
+    }
 }
 
 #[derive(Debug,Clone)]
