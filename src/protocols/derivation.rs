@@ -12,8 +12,8 @@
 
 use bitcoin_hashes::{Hash, HashEngine, Hmac, HmacEngine, sha512, hash160};
 
-use curv::arithmetic::*;
-use curv::elliptic::curves::{Point, Secp256k1, Scalar};
+use k256::{Secp256k1, Scalar, ProjectivePoint, U256};
+use k256::elliptic_curve::{Curve, ops::Reduce, point::AffineCoordinates};
 
 use crate::protocols::Party;
 
@@ -48,8 +48,8 @@ pub struct DerivationData {
     pub depth: u8,
     pub child_number: u32,
     pub parent_fingerprint: Fingerprint,
-    pub poly_point: Scalar<Secp256k1>,
-    pub pk: Point<Secp256k1>,
+    pub poly_point: Scalar,
+    pub pk: ProjectivePoint,
     pub chain_code: ChainCode,
 }
 
@@ -57,7 +57,7 @@ impl DerivationData {
 
     // Adaptation of function ckd_pub_tweak from the repository:
     // https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs.
-    pub fn child_tweak(&self, child_number: u32) -> Result<(Scalar<Secp256k1>, ChainCode, Fingerprint), ErrorDerivation> {
+    pub fn child_tweak(&self, child_number: u32) -> Result<(Scalar, ChainCode, Fingerprint), ErrorDerivation> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
 
         let pk_as_bytes = serialize_point_compressed(&self.pk); 
@@ -66,12 +66,12 @@ impl DerivationData {
 
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
-        let number_for_tweak = BigInt::from_bytes(&hmac_result[..32]);
-        if number_for_tweak.ge(Scalar::<Secp256k1>::group_order()) {
+        let number_for_tweak = U256::from_be_slice(&hmac_result[..32]);
+        if number_for_tweak.ge(&Secp256k1::ORDER) {
             return Err(ErrorDerivation::new("Very improbable: Child index results in value not allowed by BIP-32!"));
         }
 
-        let tweak = Scalar::<Secp256k1>::from_bigint(&number_for_tweak);
+        let tweak = Scalar::reduce(number_for_tweak);
         let chain_code: ChainCode = hmac_result[32..].try_into().expect("Half of hmac is guaranteed to be 32 bytes!");
 
         // We also calculate the fingerprint here for convenience.
@@ -93,9 +93,9 @@ impl DerivationData {
         // the resulting secret key also shifts by the same amount.
         // Note that the tweak depends only on public data.
         let new_poly_point = &self.poly_point + &tweak;
-        let new_pk = &self.pk + (Point::<Secp256k1>::generator() * &tweak);
+        let new_pk = &self.pk + &(ProjectivePoint::GENERATOR * &tweak);
 
-        if new_pk.is_zero() {
+        if new_pk == ProjectivePoint::IDENTITY {
             return Err(ErrorDerivation::new("Very improbable: Child index results in value not allowed by BIP-32!"));
         }
 
@@ -179,17 +179,11 @@ impl Party {
 }
 
 // This function serializes an affine point on the elliptic curve into compressed form.
-pub fn serialize_point_compressed(point: &Point<Secp256k1>) -> Vec<u8> {
-    let coords = point.coords().unwrap();
-    let (x, y) = (coords.x, coords.y);
+pub fn serialize_point_compressed(point: &ProjectivePoint) -> Vec<u8> {
+    let affine = point.to_affine();
 
-    let prefix: Vec<u8> = if y.is_even() { vec![2] } else { vec![3] };
-    let mut x_as_bytes = x.to_bytes();
-
-    // If this value is too small, we append zeros in the beginning.
-    while x_as_bytes.len() < 32 {
-        x_as_bytes.insert(0, 0);
-    }
+    let x_as_bytes = affine.x().as_slice().to_vec();
+    let prefix = if affine.y_is_odd().into() { vec![3] } else { vec![2] };
 
     [prefix, x_as_bytes].concat()
 }
@@ -227,7 +221,10 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
 
+    use crate::utilities::hashes::*;
+
     use std::collections::HashMap;
+    use k256::elliptic_curve::Field;
     use rand::Rng;
     use hex;
 
@@ -236,9 +233,9 @@ mod tests {
 
         // The following values were calculated at random with: https://bitaps.com/bip32.
         // You should test other values as well.
-        let sk = Scalar::<Secp256k1>::from_bigint(&BigInt::from_hex("ab285fc366e2ab0fac630d30dfe02b62e8825d1ac30a378021b06b093b91e689").unwrap());
-        let pk = Point::<Secp256k1>::generator() * &sk;
-        let chain_code: ChainCode = hex::decode("a73d02b9c538356be24b36347f9cbd9076b68ad96ec222c53adb7589be10a396").unwrap().try_into().unwrap();
+        let sk = Scalar::reduce(U256::from_be_hex("7119a4064db44307dbb97dcc1a34fac7cf152cc35ad65dbc97649e3e250a22d3"));
+        let pk = ProjectivePoint::GENERATOR * &sk;
+        let chain_code: ChainCode = hex::decode("5190725e347a7ef19bb857525bfbc491f80ec355864b95661129dc1e5970002f").unwrap().try_into().unwrap();
 
         let data = DerivationData {
             depth: 0,
@@ -259,10 +256,10 @@ mod tests {
             Ok(child) => {
                 assert_eq!(child.depth, 4);
                 assert_eq!(child.child_number, 3);
-                assert_eq!(hex::encode(child.parent_fingerprint), "69223aed");
-                assert_eq!(hex::encode(child.poly_point.to_bigint().to_bytes()), "71dccb58d0bb10f81e3eb6e8807a9389208320f94f170db4950ddf982718489b");
-                assert_eq!(hex::encode(serialize_point_compressed(&child.pk)), "02e96c330d7411b3128b61d2d4388d440ca47b4359f1e3be3d09401b178375d169");
-                assert_eq!(hex::encode(child.chain_code), "c0b99ff250a12a740d4df470216cee24420467169dd53a3f98476a1704e8d919");
+                assert_eq!(hex::encode(child.parent_fingerprint), "7586c333");
+                assert_eq!(hex::encode(scalar_to_bytes(&child.poly_point)), "c4e854f80cac8d8c8d1fc4830c76761a6bea70568c773ddf6b73da911f940fb1");
+                assert_eq!(hex::encode(serialize_point_compressed(&child.pk)), "0221120b5ae5375ddc16605a2a265c61b59a04911ab699fcecf7568f8c19b15fc2");
+                assert_eq!(hex::encode(child.chain_code), "5901a52851d8e2864ef676308f0c9449fb0ec050151af259582ef2faf75f046d");
             },
         }
 
@@ -279,7 +276,7 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::<Secp256k1>::random();
+        let secret_key = Scalar::random(rand::thread_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // DERIVATION
@@ -389,7 +386,7 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());

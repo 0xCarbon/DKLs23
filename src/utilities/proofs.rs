@@ -9,8 +9,8 @@
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
 
-use curv::arithmetic::*;
-use curv::elliptic::curves::{Secp256k1, Scalar, Point};
+use k256::{Scalar, ProjectivePoint, U256};
+use k256::elliptic_curve::{Field, ops::Reduce};
 use rand::Rng;
 
 use crate::utilities::hashes::*;
@@ -35,29 +35,33 @@ pub const T: usize = 32;
 #[derive(Debug, Clone)]
 pub struct InteractiveDLogProof {
     pub challenge: Vec<u8>,
-    pub challenge_response: Scalar<Secp256k1>,
+    pub challenge_response: Scalar,
 }
 
 impl InteractiveDLogProof {
 
     // Step 1 - Sample the random commitments.
-    pub fn prove_step1() -> (Scalar<Secp256k1>, Point<Secp256k1>) {
-        let scalar_rand_commitment = Scalar::<Secp256k1>::random();
-        let point_rand_commitment = Point::<Secp256k1>::generator() * &scalar_rand_commitment;
+    pub fn prove_step1() -> (Scalar, ProjectivePoint) {
+        let scalar_rand_commitment = Scalar::random(rand::thread_rng());
+        let point_rand_commitment = ProjectivePoint::GENERATOR * &scalar_rand_commitment;
 
         (scalar_rand_commitment, point_rand_commitment)
     }
 
     // Step 2 - Compute the response for a given challenge.
     // Here, scalar is the witness for the proof.
-    pub fn prove_step2(scalar: &Scalar<Secp256k1>, scalar_rand_commitment: &Scalar<Secp256k1>, challenge: &[u8]) -> InteractiveDLogProof {
+    pub fn prove_step2(scalar: &Scalar, scalar_rand_commitment: &Scalar, challenge: &[u8]) -> InteractiveDLogProof {
 
         // For convenience, we are using a challenge in bytes.
         // We convert it back to a scalar.
-        let challenge_scalar = Scalar::<Secp256k1>::from_bigint(&BigInt::from_bytes(challenge));
+        // The challenge will have T bits, so we first extend it to 256 bits.
+        let mut extended = vec![0u8; 32 - T/8];
+        extended.extend_from_slice(challenge);
+
+        let challenge_scalar = Scalar::reduce(U256::from_be_slice(&extended));
 
         // We compute the response.
-        let challenge_response = scalar_rand_commitment - (challenge_scalar * scalar);
+        let challenge_response = scalar_rand_commitment - &(challenge_scalar * scalar);
 
         InteractiveDLogProof {
             challenge: challenge.to_vec(),   // We save the challenge for the next protocol.
@@ -72,14 +76,18 @@ impl InteractiveDLogProof {
     // Attention: the challenge should enter as a parameter here, but in the
     // next protocol, it will come from the prover, so we decided to save it
     // inside the struct.
-    pub fn verify(&self, point: &Point<Secp256k1>, point_rand_commitment: &Point<Secp256k1>) -> bool {
+    pub fn verify(&self, point: &ProjectivePoint, point_rand_commitment: &ProjectivePoint) -> bool {
 
         // For convenience, we are using a challenge in bytes.
         // We convert it back to a scalar.
-        let challenge_scalar = Scalar::<Secp256k1>::from_bigint(&BigInt::from_bytes(&self.challenge));
+        // The challenge will have T bits, so we first extend it to 256 bits.
+        let mut extended = vec![0u8; 32 - T/8];
+        extended.extend_from_slice(&self.challenge);
+
+        let challenge_scalar = Scalar::reduce(U256::from_be_slice(&extended));
 
         // We compare the values that should agree.
-        let point_verify = (Point::<Secp256k1>::generator() * &self.challenge_response) + (point * challenge_scalar);
+        let point_verify = (ProjectivePoint::GENERATOR * &self.challenge_response) + (point * &challenge_scalar);
 
         point_verify == *point_rand_commitment
     }
@@ -89,8 +97,8 @@ impl InteractiveDLogProof {
 // Schnorr's protocol (non-interactive via randomized Fischlin transform).
 #[derive(Debug, Clone)]
 pub struct DLogProof {
-    pub point: Point<Secp256k1>,
-    pub rand_commitments: Vec<Point<Secp256k1>>,
+    pub point: ProjectivePoint,
+    pub rand_commitments: Vec<ProjectivePoint>,
     pub proofs: Vec<InteractiveDLogProof>,
 }
 
@@ -112,11 +120,11 @@ impl DLogProof {
     //
     // With lamdba = 256, we chose r = 64 and l = 4 (higher values of l were too slow).
     // In this case, the constant t from the paper is equal to 32.
-    pub fn prove(scalar: &Scalar<Secp256k1>, session_id: &[u8]) -> DLogProof {
+    pub fn prove(scalar: &Scalar, session_id: &[u8]) -> DLogProof {
         
         // We execute Step 1 r times.
-        let mut rand_commitments: Vec<Point<Secp256k1>> = Vec::with_capacity(R);
-        let mut states: Vec<Scalar<Secp256k1>> = Vec::with_capacity(R);
+        let mut rand_commitments: Vec<ProjectivePoint> = Vec::with_capacity(R);
+        let mut states: Vec<Scalar> = Vec::with_capacity(R);
         for _ in 0..R {
             let (state, rand_commitment) = InteractiveDLogProof::prove_step1();
 
@@ -208,7 +216,7 @@ impl DLogProof {
         let proofs = [first_proofs, last_proofs].concat();
 
         // We save the point.
-        let point = Point::<Secp256k1>::generator() * scalar;
+        let point = ProjectivePoint::GENERATOR * scalar;
 
         DLogProof {
             point,
@@ -257,7 +265,7 @@ impl DLogProof {
     }
 
     //Proof with commitment (which is a hash)
-    pub fn prove_commit(scalar: &Scalar<Secp256k1>, session_id: &[u8]) -> (DLogProof, HashOutput) {
+    pub fn prove_commit(scalar: &Scalar, session_id: &[u8]) -> (DLogProof, HashOutput) {
         let proof = Self::prove(scalar, session_id);
 
         //Computes the commitment (it's the hash of DLogProof in bytes).
@@ -305,18 +313,18 @@ impl DLogProof {
 // We start with the Chaum-Pedersen protocol (interactive version).
 #[derive(Debug, Clone)]
 pub struct RandomCommitments {
-    pub rc_g: Point<Secp256k1>,
-    pub rc_h: Point<Secp256k1>,
+    pub rc_g: ProjectivePoint,
+    pub rc_h: ProjectivePoint,
 }
 
 #[derive(Debug, Clone)]
 pub struct CPProof {
-    pub base_g: Point<Secp256k1>,   // Parameters for the proof.
-    pub base_h: Point<Secp256k1>,   // In the encryption proof, base_g = generator.
-    pub point_u: Point<Secp256k1>,
-    pub point_v: Point<Secp256k1>,
+    pub base_g: ProjectivePoint,   // Parameters for the proof.
+    pub base_h: ProjectivePoint,   // In the encryption proof, base_g = generator.
+    pub point_u: ProjectivePoint,
+    pub point_v: ProjectivePoint,
 
-    pub challenge_response: Scalar<Secp256k1>,
+    pub challenge_response: Scalar,
 }
 
 impl CPProof {
@@ -328,8 +336,8 @@ impl CPProof {
     // calculated via Fiat-Shamir.
 
     // Step 1 - Sample the random commitments.
-    pub fn prove_step1(base_g: &Point<Secp256k1>, base_h: &Point<Secp256k1>) -> (Scalar<Secp256k1>, RandomCommitments) {
-        let scalar_rand_commitment = Scalar::<Secp256k1>::random();
+    pub fn prove_step1(base_g: &ProjectivePoint, base_h: &ProjectivePoint) -> (Scalar, RandomCommitments) {
+        let scalar_rand_commitment = Scalar::random(rand::thread_rng());
 
         let point_rand_commitment_g = base_g * &scalar_rand_commitment;
         let point_rand_commitment_h = base_h * &scalar_rand_commitment;
@@ -344,14 +352,14 @@ impl CPProof {
 
     // Step 2 - Compute the response for a given challenge.
     // Here, scalar is the witness for the proof.
-    pub fn prove_step2(base_g: &Point<Secp256k1>, base_h: &Point<Secp256k1>, scalar: &Scalar<Secp256k1>, scalar_rand_commitment: &Scalar<Secp256k1>, challenge: &Scalar<Secp256k1>) -> CPProof {
+    pub fn prove_step2(base_g: &ProjectivePoint, base_h: &ProjectivePoint, scalar: &Scalar, scalar_rand_commitment: &Scalar, challenge: &Scalar) -> CPProof {
 
         // We get u and v.
         let point_u = base_g * scalar;
         let point_v = base_h * scalar;
 
         // We compute the response.
-        let challenge_response = scalar_rand_commitment - (challenge * scalar);
+        let challenge_response = scalar_rand_commitment - &(challenge * scalar);
 
         CPProof {
             base_g: base_g.clone(),
@@ -365,7 +373,7 @@ impl CPProof {
 
     // Verification of a proof. Note that the data to be verified is in the variable proof.
     // The verifier must know the challenge (in the interactive version, he chooses it).
-    pub fn verify(&self, rand_commitments: &RandomCommitments, challenge: &Scalar<Secp256k1>) -> bool {
+    pub fn verify(&self, rand_commitments: &RandomCommitments, challenge: &Scalar) -> bool {
 
         // We compare the values that should agree.
         let point_verify_g = (&self.base_g * &self.challenge_response) + (&self.point_u * challenge);
@@ -378,11 +386,11 @@ impl CPProof {
     // a witness. The only way to do this is to sample the challenge ourselves and use it
     // to compute the other values. We then return the challenge used, the commitments
     // and the corresponding proof.
-    pub fn simulate(base_g: &Point<Secp256k1>, base_h: &Point<Secp256k1>, point_u: &Point<Secp256k1>, point_v: &Point<Secp256k1>) -> (RandomCommitments, Scalar<Secp256k1>, CPProof){
+    pub fn simulate(base_g: &ProjectivePoint, base_h: &ProjectivePoint, point_u: &ProjectivePoint, point_v: &ProjectivePoint) -> (RandomCommitments, Scalar, CPProof){
 
         // We sample the challenge and the response first.
-        let challenge = Scalar::<Secp256k1>::random();
-        let challenge_response = Scalar::<Secp256k1>::random();
+        let challenge = Scalar::random(rand::thread_rng());
+        let challenge_response = Scalar::random(rand::thread_rng());
 
         // Now we compute the "random" commitments that work for this challenge.
         let point_rand_commitment_g = (base_g * &challenge_response) + (point_u * &challenge);
@@ -416,18 +424,18 @@ pub struct EncProof {
     pub commitments0: RandomCommitments,
     pub commitments1: RandomCommitments,
 
-    pub challenge0: Scalar<Secp256k1>,
-    pub challenge1: Scalar<Secp256k1>,
+    pub challenge0: Scalar,
+    pub challenge1: Scalar,
 }
 
 impl EncProof {
 
-    pub fn prove(session_id: &[u8], base_h: &Point<Secp256k1>, scalar: &Scalar<Secp256k1>, bit: bool) -> EncProof {
+    pub fn prove(session_id: &[u8], base_h: &ProjectivePoint, scalar: &Scalar, bit: bool) -> EncProof {
         
         // PRELIMINARIES
 
         // g is the generator in this case.
-        let base_g = Point::<Secp256k1>::generator();
+        let base_g = ProjectivePoint::GENERATOR;
 
         // We compute u and v from Section 3 in the paper.
         // Be careful: these are not point_u and point_v from CPProof.
@@ -535,7 +543,7 @@ impl EncProof {
     pub fn verify(&self, session_id: &[u8]) -> bool {
 
         // We check if the proofs are compatible.
-        if (self.proof0.base_g != Point::<Secp256k1>::generator())
+        if (self.proof0.base_g != ProjectivePoint::GENERATOR)
         || (self.proof0.base_g != self.proof1.base_g)
         || (self.proof0.base_h != self.proof1.base_h)
         || (self.proof0.point_v != self.proof1.point_v) // This is u from Section 3 in the paper.
@@ -571,7 +579,7 @@ impl EncProof {
     }
 
     // For convenience and to avoid confusion with the change of order.
-    pub fn get_u_and_v(&self) -> (Point<Secp256k1>, Point<Secp256k1>) {
+    pub fn get_u_and_v(&self) -> (ProjectivePoint, ProjectivePoint) {
         (self.proof0.point_v.clone(), self.proof0.point_u.clone())
     }
 
@@ -585,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_dlog_proof() {
-        let scalar = Scalar::random();
+        let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let proof = DLogProof::prove(&scalar, &session_id);
         assert!(DLogProof::verify(&proof, &session_id));
@@ -593,16 +601,16 @@ mod tests {
 
     #[test]
     fn test_dlog_proof_fail_proof() {
-        let scalar = Scalar::random();
+        let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let mut proof = DLogProof::prove(&scalar, &session_id);
-        proof.proofs[0].challenge_response = &proof.proofs[0].challenge_response * Scalar::from(2); //Changing the proof
+        proof.proofs[0].challenge_response = &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::verify(&proof, &session_id)));
     }
 
     #[test]
     fn test_dlog_proof_commit() {
-        let scalar = Scalar::random();
+        let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let (proof, commitment) = DLogProof::prove_commit(&scalar, &session_id);
         assert!(DLogProof::decommit_verify(&proof, &commitment, &session_id));
@@ -610,16 +618,16 @@ mod tests {
 
     #[test]
     fn test_dlog_proof_commit_fail_proof() {
-        let scalar = Scalar::random();
+        let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let (mut proof, commitment) = DLogProof::prove_commit(&scalar, &session_id);
-        proof.proofs[0].challenge_response = &proof.proofs[0].challenge_response * Scalar::from(2); //Changing the proof
+        proof.proofs[0].challenge_response = &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::decommit_verify(&proof, &commitment, &session_id)));
     }
 
     #[test]
     fn test_dlog_proof_commit_fail_commitment() {
-        let scalar = Scalar::random();
+        let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let (proof, mut commitment) = DLogProof::prove_commit(&scalar, &session_id);
         if commitment[0] == 0 { commitment[0] = 1; } else { commitment[0] -= 1; } //Changing the commitment
@@ -630,11 +638,11 @@ mod tests {
 
     #[test]
     fn test_cp_proof() {
-        let log_base_g = Scalar::<Secp256k1>::random();
-        let log_base_h = Scalar::<Secp256k1>::random();
-        let scalar = Scalar::<Secp256k1>::random();
+        let log_base_g = Scalar::random(rand::thread_rng());
+        let log_base_h = Scalar::random(rand::thread_rng());
+        let scalar = Scalar::random(rand::thread_rng());
 
-        let generator = Point::<Secp256k1>::generator();
+        let generator = ProjectivePoint::GENERATOR;
         let base_g = generator * log_base_g;
         let base_h = generator * log_base_h;
 
@@ -642,7 +650,7 @@ mod tests {
         let (scalar_rand_commitment, rand_commitments) = CPProof::prove_step1(&base_g, &base_h);
 
         // Verifier - Gather the commitments and choose the challenge.
-        let challenge = Scalar::<Secp256k1>::random();
+        let challenge = Scalar::random(rand::thread_rng());
 
         // Prover - Step 2.
         let proof = CPProof::prove_step2(&base_g, &base_h, &scalar, &scalar_rand_commitment, &challenge);
@@ -655,12 +663,12 @@ mod tests {
 
     #[test]
     fn test_cp_proof_simulate() {
-        let log_base_g = Scalar::<Secp256k1>::random();
-        let log_base_h = Scalar::<Secp256k1>::random();
-        let log_point_u = Scalar::<Secp256k1>::random();
-        let log_point_v = Scalar::<Secp256k1>::random();
+        let log_base_g = Scalar::random(rand::thread_rng());
+        let log_base_h = Scalar::random(rand::thread_rng());
+        let log_point_u = Scalar::random(rand::thread_rng());
+        let log_point_v = Scalar::random(rand::thread_rng());
 
-        let generator = Point::<Secp256k1>::generator();
+        let generator = ProjectivePoint::GENERATOR;
         let base_g = generator * log_base_g;
         let base_h = generator * log_base_h;
         let point_u = generator * log_point_u;
@@ -682,10 +690,10 @@ mod tests {
         // We sample the initial values.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
-        let log_base_h = Scalar::<Secp256k1>::random();
-        let base_h = Point::<Secp256k1>::generator() * log_base_h;
+        let log_base_h = Scalar::random(rand::thread_rng());
+        let base_h = ProjectivePoint::GENERATOR * log_base_h;
 
-        let scalar = Scalar::<Secp256k1>::random();
+        let scalar = Scalar::random(rand::thread_rng());
 
         let bit: bool = rand::random();
 

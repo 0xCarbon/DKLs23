@@ -8,12 +8,11 @@
 
 use std::collections::HashMap;
 
-use curv::arithmetic::*;
-use curv::elliptic::curves::{Secp256k1, Scalar, Point};
-use curv::cryptographic_primitives::secret_sharing::Polynomial;
+use k256::{Scalar, ProjectivePoint};
+use k256::elliptic_curve::{Field, point::AffineCoordinates};
 use hex;
-use keccak_hash::keccak256;
 use rand::Rng;
+use sha3::{Digest, Keccak256};
 
 use crate::protocols::{Abort, Parameters, Party, PartiesMessage};
 use crate::protocols::derivation::{ChainCode, DerivationData};
@@ -93,7 +92,7 @@ pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
 
     pub dlog_proof: DLogProof,
-    pub nonce: Scalar<Secp256k1>,
+    pub nonce: Scalar,
 
     pub enc_proofs: Vec<EncProof>,
     pub seed: ot_base::Seed,
@@ -103,11 +102,11 @@ pub struct TransmitInitMulPhase3to4 {
 #[derive(Clone)]
 pub struct KeepInitMulPhase3to4 {
     pub ot_sender: ot_base::OTSender,
-    pub nonce: Scalar<Secp256k1>,
+    pub nonce: Scalar,
 
     pub ot_receiver: ot_base::OTReceiver,
     pub correlation: Vec<bool>,
-    pub vec_r: Vec<Scalar<Secp256k1>>,
+    pub vec_r: Vec<Scalar>,
 }
 
 ////////// INITIALIZING KEY DERIVATION (VIA BIP-32).
@@ -141,16 +140,32 @@ pub struct UniqueKeepDerivationPhase2to3 {
 // We implement each step of the protocol.
 
 // Step 1 - Generate random polynomial of degree t-1.
-pub fn dkg_step1(parameters: &Parameters) -> Polynomial<Secp256k1> {
-    Polynomial::sample_exact((parameters.threshold - 1) as u16)
+pub fn dkg_step1(parameters: &Parameters) -> Vec<Scalar> {
+    
+    // We represent the polynomial by its coefficients.
+    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold);
+    for _ in 0..parameters.threshold {
+        polynomial.push(Scalar::random(rand::thread_rng()));
+    }
+    
+    polynomial
 }
 
 // Step 2 - Evaluate the polynomial from the previous step at every point.
-pub fn dkg_step2(parameters: &Parameters, polynomial: Polynomial<Secp256k1>) -> Vec<Scalar<Secp256k1>> {
-    let mut points: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
+pub fn dkg_step2(parameters: &Parameters, polynomial: Vec<Scalar>) -> Vec<Scalar> {
+    let mut points: Vec<Scalar> = Vec::with_capacity(parameters.share_count);
 
     for j in 1..=parameters.share_count {
-        points.push(polynomial.evaluate(&Scalar::<Secp256k1>::from(j as u16)));
+
+        // We compute the polynomial evaluated at j.  
+        let mut evaluation_at_j = Scalar::ZERO;
+        let mut power_of_j = Scalar::ONE;
+        for i in 0..parameters.threshold {
+            evaluation_at_j += polynomial[i] * power_of_j;
+            power_of_j *= Scalar::from(j as u64);
+        }
+
+        points.push(evaluation_at_j);
     }
         
     points
@@ -159,8 +174,8 @@ pub fn dkg_step2(parameters: &Parameters, polynomial: Polynomial<Secp256k1>) -> 
 // Step 3 - Compute poly_point (p(i) in the paper) and the corresponding "public key" (P(i) in the paper).
 // It also commits to a zero-knowledge proof that p(i) is the discrete logarithm of P(i).
 // The session id is used for the proof.
-pub fn dkg_step3(party_index: usize, session_id: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>) -> (Scalar<Secp256k1>, ProofCommitment) {
-    let poly_point: Scalar<Secp256k1> = poly_fragments.iter().sum();
+pub fn dkg_step3(party_index: usize, session_id: &[u8], poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment) {
+    let poly_point: Scalar = poly_fragments.iter().sum();
 
     let (proof, commitment) = DLogProof::prove_commit(&poly_point, session_id);
     let proof_commitment = ProofCommitment { index: party_index, proof, commitment };
@@ -172,9 +187,9 @@ pub fn dkg_step3(party_index: usize, session_id: &[u8], poly_fragments: &Vec<Sca
 
 // Step 5 - Each party validates the other proofs. They also recover the "public keys fragements" from the other parties.
 // Finally, a consistency check is done. In the process, the publick key is computed (Step 6).
-pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8], proofs_commitments: &Vec<ProofCommitment>) -> Result<Point<Secp256k1>,Abort> {
+pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8], proofs_commitments: &Vec<ProofCommitment>) -> Result<ProjectivePoint,Abort> {
         
-    let mut commited_points: Vec<Point<Secp256k1>> = Vec::with_capacity(parameters.share_count); //The "public key fragments"
+    let mut commited_points: Vec<ProjectivePoint> = Vec::with_capacity(parameters.share_count); //The "public key fragments"
 
     // Verify the proofs and gather the commited points.        
     for party_j in proofs_commitments {
@@ -188,28 +203,28 @@ pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8],
     }
 
     // Initializes what will be the public key.
-    let mut pk = Point::<Secp256k1>::zero();
+    let mut pk = ProjectivePoint::IDENTITY;
 
     // Verify that all points come from the same polyonimal. To do so, for each contiguous set of parties,
     // perform Shamir reconstruction in the exponent and check if the results agree.
     // The common value calculated is the public key.
     for i in 1..=(parameters.share_count - parameters.threshold + 1) {
-        let mut current_pk = Point::<Secp256k1>::zero();
+        let mut current_pk = ProjectivePoint::IDENTITY;
         for j in i..=(i + parameters.threshold - 1) {
 
             // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
             // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polyonimal from Step 3.
-            let mut lj_numerator = Scalar::<Secp256k1>::from(1);
-            let mut lj_denominator = Scalar::<Secp256k1>::from(1);
+            let mut lj_numerator = Scalar::ONE;
+            let mut lj_denominator = Scalar::ONE;
             for k in i..=(i + parameters.threshold - 1) {
                 if k != j {
-                    lj_numerator = lj_numerator * Scalar::<Secp256k1>::from(k as u16);
-                    lj_denominator = lj_denominator * (Scalar::<Secp256k1>::from(k as u16) - Scalar::<Secp256k1>::from(j as u16));
+                    lj_numerator = lj_numerator * Scalar::from(k as u64);
+                    lj_denominator = lj_denominator * (Scalar::from(k as u64) - Scalar::from(j as u64));
                 }
             }
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
                 
-            let lj_times_point = lj * &commited_points[j-1]; // j-1 because index starts at 0
+            let lj_times_point = &commited_points[j-1] * &lj; // j-1 because index starts at 0
             current_pk = current_pk + lj_times_point;
         }
         // The first value is taken as the public key. It should coincide with the next values.
@@ -239,7 +254,7 @@ pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8],
 // Phase 1 = Steps 1 and 2
 // Input (DKG): Parameters for the key generation.
 // Output (DKG): Evaluation of a random polynomial at every party index.
-pub fn dkg_phase1(data: &SessionData) -> Vec<Scalar<Secp256k1>> {
+pub fn dkg_phase1(data: &SessionData) -> Vec<Scalar> {
     
     // DKG
     let secret_polynomial = dkg_step1(&data.parameters);
@@ -258,7 +273,7 @@ pub fn dkg_phase1(data: &SessionData) -> Vec<Scalar<Secp256k1>> {
 // Input (Init): Session data.
 // Output (DKG): p(i) and a proof of discrete logarithm with commitment.
 // Output (Init): Some data to keep and to transmit.
-pub fn dkg_phase2(data: &SessionData, poly_fragments: &Vec<Scalar<Secp256k1>>) -> (Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>, UniqueKeepDerivationPhase2to3, BroadcastDerivationPhase2to4) {
+pub fn dkg_phase2(data: &SessionData, poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>, UniqueKeepDerivationPhase2to3, BroadcastDerivationPhase2to4) {
     
     // DKG
     let (poly_point, proof_commitment) = dkg_step3(data.party_index, &data.session_id, poly_fragments);
@@ -416,14 +431,14 @@ pub fn dkg_phase3(data: &SessionData, zero_kept: &HashMap<usize,KeepInitZeroShar
 // Input (DKG): Proofs and commitments received from communication + parameters, party index, session id, poly_point.
 // Input (Init): Parameters, values kept and transmited in previous phases.
 // Output: Instance of Party ready to sign.
-pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar<Secp256k1>, proofs_commitments: &Vec<ProofCommitment>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase3to4>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to4>, zero_received_phase3: &Vec<TransmitInitZeroSharePhase3to4>, mul_kept: &HashMap<usize,KeepInitMulPhase3to4>, mul_received: &Vec<TransmitInitMulPhase3to4>,  bip_received_phase2: &HashMap<usize,BroadcastDerivationPhase2to4>, bip_received_phase3: &HashMap<usize,BroadcastDerivationPhase3to4>) -> Result<Party,Abort> {
+pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar, proofs_commitments: &Vec<ProofCommitment>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase3to4>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to4>, zero_received_phase3: &Vec<TransmitInitZeroSharePhase3to4>, mul_kept: &HashMap<usize,KeepInitMulPhase3to4>, mul_received: &Vec<TransmitInitMulPhase3to4>,  bip_received_phase2: &HashMap<usize,BroadcastDerivationPhase2to4>, bip_received_phase3: &HashMap<usize,BroadcastDerivationPhase3to4>) -> Result<Party,Abort> {
     
     // DKG
     let pk = dkg_step5(&data.parameters, data.party_index, &data.session_id, proofs_commitments)?;
 
     // The public key cannot be the point at infinity.
     // This is pratically impossible, but easy to check.
-    if pk.is_zero() {
+    if pk == ProjectivePoint::IDENTITY {
         return Err(Abort::new(data.party_index, "Initialization failed because the resulting public key was trivial! (Very improbable)"));
     }
 
@@ -575,32 +590,23 @@ pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar<Secp256k1>, proofs_com
 }
 
 // For convenience, we are going to include the Ethereum address.
-pub fn compute_eth_address(pk: &Point<Secp256k1>) -> String {
+pub fn compute_eth_address(pk: &ProjectivePoint) -> String {
     
-    // We first write the point into uncompressed form (without the prefix 04).
-    let coords = pk.coords().unwrap();
-    let (x, y) = (coords.x, coords.y);
+    // Here, we will compute the address using the compressed form of pk.
 
-    let mut x_as_bytes = x.to_bytes();
-    let mut y_as_bytes = y.to_bytes();
+    let affine = pk.to_affine();
 
-    // If these values are too small, we append zeros in the beginning.
-    while x_as_bytes.len() < 32 {
-        x_as_bytes.insert(0, 0);
-    }
+    let x_as_bytes = affine.x().as_slice().to_vec();
+    let prefix = if affine.y_is_odd().into() { vec![3] } else { vec![2] };
 
-    while y_as_bytes.len() < 32 {
-        y_as_bytes.insert(0, 0);
-    }
-
-    let uncompressed_pk = [x_as_bytes, y_as_bytes].concat();
+    let compressed_pk = [prefix, x_as_bytes].concat();
 
     // We compute the keccak256 of the point.
-    let mut hash = uncompressed_pk.clone();
-    keccak256(&mut hash);
+    let mut hasher = Keccak256::new();
+    hasher.update(compressed_pk);
 
     // We save the last 20 bytes represented in hexadecimal.
-    let address_bytes = &hash[12..32];
+    let address_bytes = &hasher.finalize()[12..];
     let mut address = hex::encode(address_bytes);
 
     // We insert 0x in the beginning.
@@ -614,6 +620,8 @@ pub fn compute_eth_address(pk: &Point<Secp256k1>) -> String {
 mod tests {
 
     use super::*;
+    use k256::U256;
+    use k256::elliptic_curve::ops::Reduce;
     use rand::Rng;
 
     // DISTRIBUTED KEY GENERATION (without initializations)
@@ -670,7 +678,7 @@ mod tests {
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
-        let mut phase1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
+        let mut phase1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count);
         for _ in 0..parameters.share_count {
             let party_phase1 = dkg_step2(&parameters, dkg_step1(&parameters));
             assert_eq!(party_phase1.len(), parameters.share_count);
@@ -679,7 +687,7 @@ mod tests {
     
         // Communication round 1
         // We transpose the matrix
-        let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
+        let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in phase1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j].push(row_i[j].clone());
@@ -695,7 +703,7 @@ mod tests {
         }
 
         // Phase 4 (Step 5)
-        let mut result_parties: Vec<Result<Point<Secp256k1>,Abort>> = Vec::with_capacity(parameters.share_count);
+        let mut result_parties: Vec<Result<ProjectivePoint,Abort>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             result_parties.push(dkg_step5(&parameters, i+1, &session_id, &proofs_commitments));
         }
@@ -712,8 +720,8 @@ mod tests {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
         // We will define the fragments directly
-        let p1_poly_fragments = vec![Scalar::<Secp256k1>::from(1), Scalar::<Secp256k1>::from(3)];
-        let p2_poly_fragments = vec![Scalar::<Secp256k1>::from(2), Scalar::<Secp256k1>::from(4)];
+        let p1_poly_fragments = vec![Scalar::from(1u32), Scalar::from(3u32)];
+        let p2_poly_fragments = vec![Scalar::from(2u32), Scalar::from(4u32)];
 
         // In this case, the secret polynomial p is of degree 1 and satisfies p(1) = 1+3 = 4 and p(2) = 2+4 = 6
         // In particular, we must have p(0) = 2, which is the "hypothetical" secret key.
@@ -741,7 +749,7 @@ mod tests {
         let p2_pk = p2_result.unwrap();
         
         // Verifying the public key
-        let expected_pk = Point::<Secp256k1>::generator() * Scalar::<Secp256k1>::from(2); 
+        let expected_pk = ProjectivePoint::GENERATOR * Scalar::from(2u32); 
         assert_eq!(p1_pk, expected_pk);
         assert_eq!(p2_pk, expected_pk);
     }
@@ -752,12 +760,12 @@ mod tests {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
         // We will define the fragments directly
-        let p1_poly_fragments = vec![Scalar::<Secp256k1>::from(12), Scalar::<Secp256k1>::from(-2)];
-        let p2_poly_fragments = vec![Scalar::<Secp256k1>::from(2), Scalar::<Secp256k1>::from(3)];
+        let p1_poly_fragments = vec![Scalar::from(12u32), Scalar::from(2u32)];
+        let p2_poly_fragments = vec![Scalar::from(2u32), Scalar::from(3u32)];
 
-        // In this case, the secret polynomial p is of degree 1 and satisfies p(1) = 12+(-2) = 10 and p(2) = 2+3 = 5
-        // In particular, we must have p(0) = 15, which is the "hypothetical" secret key.
-        // For this reason, we should expect the public key to be 15 * generator.
+        // In this case, the secret polynomial p is of degree 1 and satisfies p(1) = 12+2 = 14 and p(2) = 2+3 = 5
+        // In particular, we must have p(0) = 23, which is the "hypothetical" secret key.
+        // For this reason, we should expect the public key to be 23 * generator.
 
         // Phase 2 (Step 3)
         let p1_phase2 = dkg_step3(1, &session_id, &p1_poly_fragments);
@@ -781,7 +789,7 @@ mod tests {
         let p2_pk = p2_result.unwrap();
         
         // Verifying the public key
-        let expected_pk = Point::<Secp256k1>::generator() * Scalar::<Secp256k1>::from(15); 
+        let expected_pk = ProjectivePoint::GENERATOR * Scalar::from(23u32); 
         assert_eq!(p1_pk, expected_pk);
         assert_eq!(p2_pk, expected_pk);
     }
@@ -792,11 +800,11 @@ mod tests {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
         // We will define the fragments directly
-        let poly_fragments = vec![vec![Scalar::from(5),Scalar::from(1),Scalar::from(-5),Scalar::from(-2),Scalar::from(-3)],
-                                                               vec![Scalar::from(9),Scalar::from(3),Scalar::from(-4),Scalar::from(-5),Scalar::from(-7)], 
-                                                               vec![Scalar::from(15),Scalar::from(7),Scalar::from(-1),Scalar::from(-10),Scalar::from(-13)], 
-                                                               vec![Scalar::from(23),Scalar::from(13),Scalar::from(4),Scalar::from(-17),Scalar::from(-21)], 
-                                                               vec![Scalar::from(33),Scalar::from(21),Scalar::from(11),Scalar::from(-26),Scalar::from(-31)], 
+        let poly_fragments = vec![vec![Scalar::from(5u32),Scalar::from(1u32),Scalar::from(5u32).negate(),Scalar::from(2u32).negate(),Scalar::from(3u32).negate()],
+                                                               vec![Scalar::from(9u32),Scalar::from(3u32),Scalar::from(4u32).negate(),Scalar::from(5u32).negate(),Scalar::from(7u32).negate()], 
+                                                               vec![Scalar::from(15u32),Scalar::from(7u32),Scalar::from(1u32).negate(),Scalar::from(10u32).negate(),Scalar::from(13u32).negate()], 
+                                                               vec![Scalar::from(23u32),Scalar::from(13u32),Scalar::from(4u32),Scalar::from(17u32).negate(),Scalar::from(21u32).negate()], 
+                                                               vec![Scalar::from(33u32),Scalar::from(21u32),Scalar::from(11u32),Scalar::from(26u32).negate(),Scalar::from(31u32).negate()], 
                                                             ];
 
         // In this case, the secret polynomial p is of degree 2 and satisfies: 
@@ -814,12 +822,12 @@ mod tests {
         }
 
         // Phase 4 (Step 5)
-        let mut results: Vec<Result<Point<Secp256k1>,Abort>> = Vec::with_capacity(parameters.share_count);
+        let mut results: Vec<Result<ProjectivePoint,Abort>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             results.push(dkg_step5(&parameters, i+1, &session_id, &proofs_commitments));
         }
 
-        let mut public_keys: Vec<Point<Secp256k1>> = Vec::with_capacity(parameters.share_count);
+        let mut public_keys: Vec<ProjectivePoint> = Vec::with_capacity(parameters.share_count);
         for result in results {
             match result {
                 Ok(pk) => { public_keys.push(pk); },
@@ -828,7 +836,7 @@ mod tests {
         }
         
         // Verifying the public key
-        let expected_pk = Point::<Secp256k1>::generator() * Scalar::<Secp256k1>::from(-2);
+        let expected_pk = ProjectivePoint::GENERATOR * Scalar::from(2u32).negate();
         for pk in public_keys {
             assert_eq!(pk, expected_pk);
         }
@@ -863,7 +871,7 @@ mod tests {
         }
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             let out1 = dkg_phase1(&all_data[i]);
 
@@ -872,7 +880,7 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
+        let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j].push(row_i[j].clone());
@@ -880,7 +888,7 @@ mod tests {
         }
 
         // Phase 2
-        let mut poly_points: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
+        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
         let mut zero_kept_2to3: Vec<HashMap<usize,KeepInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(parameters.share_count);
@@ -999,12 +1007,13 @@ mod tests {
     #[test]
     fn test_compute_eth_address() {
 
-        // You should test different values using, for example, https://www.rfctools.com/ethereum-address-test-tool/.
-        let sk = Scalar::<Secp256k1>::from_bigint(&BigInt::from_hex("389564375891DD90EE42B02D332C203E866B73211A6CD1C0731EDD3B7765197B").unwrap());
-        let pk = Point::<Secp256k1>::generator() * sk;
+        // You should test different values using, for example,
+        // https://paulmillr.com/noble/ and https://emn178.github.io/online-tools/keccak_256.html.
+        let sk = Scalar::reduce(U256::from_be_hex("cc545f6edbac6c62def9205033629e553acb1fceb95c171cf389c636ce4613a2"));
+        let pk = ProjectivePoint::GENERATOR * sk;
 
         let address = compute_eth_address(&pk);
-        assert_eq!(address, "0x57b2a65b5fc8e38daa74d780d8c93e741b05c4c2".to_string());
+        assert_eq!(address, "0x8be92babaa139ecf60145f822520b68cebb44711".to_string());
     }
 
 }

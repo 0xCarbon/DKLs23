@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use curv::elliptic::curves::{Secp256k1, Scalar, Point};
+use k256::{Scalar, ProjectivePoint};
 
 use crate::utilities::multiplication::{MulSender, MulReceiver};
 use crate::utilities::zero_sharings::ZeroShare;
@@ -25,8 +25,8 @@ pub struct Party {
     pub party_index: usize,
     pub session_id: Vec<u8>,
 
-    pub poly_point: Scalar<Secp256k1>,  // It behaves as the secrect key share
-    pub pk: Point<Secp256k1>,           // Public key
+    pub poly_point: Scalar,  // It behaves as the secrect key share
+    pub pk: ProjectivePoint,           // Public key
 
     pub zero_share: ZeroShare,          // Used for computing shares of zero during signing.
 
@@ -39,7 +39,7 @@ pub struct Party {
 }
 
 impl Party {
-    pub fn new(parameters: Parameters, party_index: usize, session_id: Vec<u8>, poly_point: Scalar<Secp256k1>, pk: Point<Secp256k1>, zero_share: ZeroShare, mul_senders: HashMap<usize, MulSender>, mul_receivers: HashMap<usize,MulReceiver>, derivation_data: DerivationData, eth_address: String) -> Party {
+    pub fn new(parameters: Parameters, party_index: usize, session_id: Vec<u8>, poly_point: Scalar, pk: ProjectivePoint, zero_share: ZeroShare, mul_senders: HashMap<usize, MulSender>, mul_receivers: HashMap<usize,MulReceiver>, derivation_data: DerivationData, eth_address: String) -> Party {
         Party {
             parameters,
             party_index,

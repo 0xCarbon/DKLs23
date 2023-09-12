@@ -14,39 +14,39 @@
 /// and maybe implementing something similar.
 
 use bitcoin_hashes::{Hash, sha256};
-use curv::elliptic::curves::{Secp256k1, Scalar, Point};
-use curv::arithmetic::*;
+use k256::{Scalar, ProjectivePoint, U256};
+use k256::elliptic_curve::{bigint::Encoding, group::GroupEncoding, ops::Reduce};
 
 use crate::SECURITY;
 
-//We are using SHA-256, so the hash values have 256 bits
+// We are using SHA-256, so the hash values have 256 bits
 pub type HashOutput = [u8;SECURITY];
 
-//From bytes to bytes
+// From bytes to bytes
 pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
     let concatenation = [salt,msg].concat();
     sha256::Hash::hash(&concatenation).to_byte_array()
 }
 
-//From bytes to BigInt
-pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> BigInt {
+// From bytes to U256
+pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> U256 {
     let as_bytes = hash(msg, salt);
-    BigInt::from_bytes(&as_bytes)
+    U256::from_be_bytes(as_bytes)
 }
 
-//From bytes to a scalar (it takes the integer and reduces it modulo the order of the curve)
-pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar<Secp256k1> {
+// From bytes to a scalar (it takes the integer and reduces it modulo the order of the curve)
+pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
     let as_int = hash_as_int(msg, salt);
-    Scalar::<Secp256k1>::from_bigint(&as_int)
+    Scalar::reduce(as_int)
 }
 
-//Curv does not convert Scalar and Point directly to bytes. We add this for convenience.
-pub fn scalar_to_bytes(scalar: &Scalar<Secp256k1>) -> Vec<u8> {
-    scalar.to_bytes().as_ref().to_vec()
+// k256 does not convert Scalar and ProjectivePoint directly to bytes. We add this for convenience.
+pub fn scalar_to_bytes(scalar: &Scalar) -> Vec<u8> {
+    scalar.to_bytes().as_slice().to_vec()
 }
 
-pub fn point_to_bytes(point: &Point<Secp256k1>) -> Vec<u8> {
-    point.to_bytes(true).as_ref().to_vec()
+pub fn point_to_bytes(point: &ProjectivePoint) -> Vec<u8> {
+    point.to_bytes().as_slice().to_vec()
 }
 
 #[cfg(test)]
@@ -74,7 +74,14 @@ mod tests {
         let msg = msg_string.as_bytes();
         let salt = salt_string.as_bytes();
 
-        assert_eq!(hash_as_int(msg, salt), BigInt::from_hex("847bf2f0d27a519b25e519efebc9d509316539b89ee8f6f09ef6d2abc08113ba").unwrap());
+        assert_eq!(hash_as_int(msg, salt), U256::from_be_hex("847bf2f0d27a519b25e519efebc9d509316539b89ee8f6f09ef6d2abc08113ba"));
+    }
+
+    #[test]
+    fn test_scalar_to_bytes() {
+        let scalar = Scalar::from(123456789u32);
+
+        assert_eq!(scalar_to_bytes(&scalar), vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 91, 205, 21]);
     }
 
 }

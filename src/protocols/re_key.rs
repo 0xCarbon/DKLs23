@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use curv::elliptic::curves::{Scalar, Point, Secp256k1};
-use curv::cryptographic_primitives::secret_sharing::Polynomial;
+use k256::{Scalar, ProjectivePoint};
+use k256::elliptic_curve::Field;
 
 use rand::Rng;
 
@@ -27,14 +27,18 @@ use crate::utilities::zero_sharings::{self, ZeroShare};
 // and we cannot do this here.
 // We also include an option to put a chain code if the original
 // wallet followed BIP-32 for key derivation. 
-pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Secp256k1>, option_chain_code: Option<ChainCode>) -> Vec<Party> {
+pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, option_chain_code: Option<ChainCode>) -> Vec<Party> {
 
     // Public key.
-    let pk = Point::<Secp256k1>::generator() * secret_key;
+    let pk = ProjectivePoint::GENERATOR * secret_key;
 
     // We will compute "poly_point" for each party with this polynomial
     // via Shamir's secret sharing.
-    let polynomial = Polynomial::<Secp256k1>::sample_exact_with_fixed_const_term((parameters.threshold - 1) as u16, secret_key.clone());
+    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold);
+    polynomial.push(secret_key.clone());
+    for _ in 1..parameters.threshold {
+        polynomial.push(Scalar::random(rand::thread_rng()));
+    }
 
     // Zero-sharing.
 
@@ -131,9 +135,9 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Se
             };
 
             // We sample the public gadget vector.
-            let mut public_gadget: Vec<Scalar<Secp256k1>> = Vec::with_capacity(ot_extension::BATCH_SIZE);
+            let mut public_gadget: Vec<Scalar> = Vec::with_capacity(ot_extension::BATCH_SIZE);
             for _ in 0..ot_extension::BATCH_SIZE {
-                public_gadget.push(Scalar::<Secp256k1>::random());
+                public_gadget.push(Scalar::random(rand::thread_rng()));
             }
 
             // We finish the initialization.
@@ -163,7 +167,14 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar<Se
     // We create the parties.
     let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
     for index in 1..=parameters.share_count {
-        let poly_point = polynomial.evaluate(&Scalar::<Secp256k1>::from(index as u16));
+
+        // poly_point is polynomial evaluated at index.
+        let mut poly_point = Scalar::ZERO;
+        let mut power_of_index = Scalar::ONE;
+        for i in 0..parameters.threshold {
+            poly_point += polynomial[i] * power_of_index;
+            power_of_index *= Scalar::from(index as u64);
+        }
 
         let derivation_data = DerivationData {
             depth: 0,

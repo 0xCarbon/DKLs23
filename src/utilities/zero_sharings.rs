@@ -6,7 +6,7 @@
 use crate::utilities::hashes::*;
 use crate::utilities::commits;
 
-use curv::elliptic::curves::{Scalar, Secp256k1};
+use k256::Scalar;
 use rand::Rng;
 
 //Computational security parameter lambda_c from DKLs23 (divided by 8)
@@ -82,8 +82,8 @@ impl ZeroShare {
     /// for the "random number generator". This is achieved by using the current session id.
     /// Moreover, not all parties need to participate in this step, so we need to provide a
     /// list of counterparties.
-    pub fn compute(&self, counterparties: &Vec<usize>, session_id: &[u8]) -> Scalar<Secp256k1> {
-        let mut share = Scalar::<Secp256k1>::zero();
+    pub fn compute(&self, counterparties: &Vec<usize>, session_id: &[u8]) -> Scalar {
+        let mut share = Scalar::ZERO;
         let seeds = self.seeds.clone();
         for seed_pair in seeds {
 
@@ -150,7 +150,7 @@ mod tests {
         //We can finally execute the functionality.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let executing_parties: Vec<usize> = vec![1,3,5,7,8]; //These are the parties running the protocol.
-        let mut shares: Vec<Scalar<Secp256k1>> = Vec::with_capacity(executing_parties.len()); 
+        let mut shares: Vec<Scalar> = Vec::with_capacity(executing_parties.len()); 
         for party in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -161,7 +161,7 @@ mod tests {
         }
 
         //Final check
-        let sum: Scalar<Secp256k1> = shares.iter().sum();
-        assert_eq!(sum, Scalar::<Secp256k1>::zero());
+        let sum: Scalar = shares.iter().sum();
+        assert_eq!(sum, Scalar::ZERO);
     }
 }

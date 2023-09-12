@@ -20,8 +20,8 @@
 
 use std::collections::HashMap;
 
-use curv::elliptic::curves::{Secp256k1, Scalar};
-use curv::cryptographic_primitives::secret_sharing::Polynomial;
+use k256::{Scalar, ProjectivePoint};
+use k256::elliptic_curve::Field;
 
 use crate::utilities::hashes::*;
 use crate::utilities::multiplication::{MulSender, MulReceiver};
@@ -90,18 +90,22 @@ impl Party {
     // it is equal to the zero point on the curve. This ensures that the correction
     // factors will not change the public key.
 
-    pub fn refresh_complete_phase1(&self) -> Vec<Scalar<Secp256k1>> {
+    pub fn refresh_complete_phase1(&self) -> Vec<Scalar> {
 
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let secret_polynomial = Polynomial::<Secp256k1>::sample_exact_with_fixed_const_term((self.parameters.threshold - 1) as u16, Scalar::<Secp256k1>::zero());
+        let mut secret_polynomial: Vec<Scalar> = Vec::with_capacity(self.parameters.threshold);
+        secret_polynomial.push(Scalar::ZERO);
+        for _ in 1..self.parameters.threshold {
+            secret_polynomial.push(Scalar::random(rand::thread_rng()));
+        }
         let evaluations = dkg_step2(&self.parameters, secret_polynomial);
 
         evaluations
     }
 
-    pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>) -> (Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>) {
+    pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>) {
         
         // We run Phase 2 in DKG, but we omit the derivation part.
         // Note that "poly_point" is now called "correction_value".
@@ -221,7 +225,7 @@ impl Party {
         (zero_keep, zero_transmit, mul_keep, mul_transmit)
     }
 
-    pub fn refresh_complete_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar<Secp256k1>, proofs_commitments: &Vec<ProofCommitment>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase3to4>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to4>, zero_received_phase3: &Vec<TransmitInitZeroSharePhase3to4>, mul_kept: &HashMap<usize,KeepInitMulPhase3to4>, mul_received: &Vec<TransmitInitMulPhase3to4>) -> Result<Party,Abort> {
+    pub fn refresh_complete_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar, proofs_commitments: &Vec<ProofCommitment>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase3to4>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to4>, zero_received_phase3: &Vec<TransmitInitZeroSharePhase3to4>, mul_kept: &HashMap<usize,KeepInitMulPhase3to4>, mul_received: &Vec<TransmitInitMulPhase3to4>) -> Result<Party,Abort> {
         
         // We run Phase 4, but now we don't check if the resulting public key is zero.
         // Actually, we have to do the opposite: it must be the zero point!
@@ -232,7 +236,7 @@ impl Party {
         let verifying_pk = dkg_step5(&self.parameters, self.party_index, refresh_sid, proofs_commitments)?;
 
         // The public key calculated above should be the zero point on the curve.
-        if !verifying_pk.is_zero() {
+        if verifying_pk != ProjectivePoint::IDENTITY {
             return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
 
@@ -383,18 +387,22 @@ impl Party {
     // generates its seeds. We reuse them to apply the Beaver trick (described
     // in the article) to refresh the OT instances used for multiplication.
 
-    pub fn refresh_phase1(&self) -> Vec<Scalar<Secp256k1>> {
+    pub fn refresh_phase1(&self) -> Vec<Scalar> {
 
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let secret_polynomial = Polynomial::<Secp256k1>::sample_exact_with_fixed_const_term((self.parameters.threshold - 1) as u16, Scalar::<Secp256k1>::zero());
+        let mut secret_polynomial: Vec<Scalar> = Vec::with_capacity(self.parameters.threshold);
+        secret_polynomial.push(Scalar::ZERO);
+        for _ in 1..self.parameters.threshold {
+            secret_polynomial.push(Scalar::random(rand::thread_rng()));
+        }
         let evaluations = dkg_step2(&self.parameters, secret_polynomial);
 
         evaluations
     }
 
-    pub fn refresh_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar<Secp256k1>>) -> (Scalar<Secp256k1>, ProofCommitment, HashMap<usize,KeepRefreshPhase2to3>, Vec<TransmitRefreshPhase2to4>) {
+    pub fn refresh_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment, HashMap<usize,KeepRefreshPhase2to3>, Vec<TransmitRefreshPhase2to4>) {
         
         // We run Phase 2 in DKG, but we omit the derivation part.
         // Note that "poly_point" is now called "correction_value".
@@ -453,7 +461,7 @@ impl Party {
         (keep, transmit)
     }
 
-    pub fn refresh_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar<Secp256k1>, proofs_commitments: &Vec<ProofCommitment>, kept: &HashMap<usize,KeepRefreshPhase3to4>, received_phase2: &Vec<TransmitRefreshPhase2to4>, received_phase3: &Vec<TransmitRefreshPhase3to4>) -> Result<Party,Abort> {
+    pub fn refresh_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar, proofs_commitments: &Vec<ProofCommitment>, kept: &HashMap<usize,KeepRefreshPhase3to4>, received_phase2: &Vec<TransmitRefreshPhase2to4>, received_phase3: &Vec<TransmitRefreshPhase3to4>) -> Result<Party,Abort> {
         
         // We run Phase 4, but now we don't check if the resulting public key is zero.
         // Actually, we have to do the opposite: it must be the zero point!
@@ -464,7 +472,7 @@ impl Party {
         let verifying_pk = dkg_step5(&self.parameters, self.party_index, refresh_sid, proofs_commitments)?;
 
         // The public key calculated above should be the zero point on the curve.
-        if !verifying_pk.is_zero() {
+        if verifying_pk != ProjectivePoint::IDENTITY {
             return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
 
@@ -627,7 +635,6 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
 
-    use curv::arithmetic::*;
     use rand::Rng;
 
     #[test]
@@ -641,7 +648,7 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::<Secp256k1>::random();
+        let secret_key = Scalar::random(rand::thread_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
@@ -649,7 +656,7 @@ mod tests {
         let refresh_sid = rand::thread_rng().gen::<[u8; 32]>();
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             let out1 = parties[i].refresh_complete_phase1();
 
@@ -658,7 +665,7 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
+        let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j].push(row_i[j].clone());
@@ -666,7 +673,7 @@ mod tests {
         }
 
         // Phase 2
-        let mut correction_values: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
+        let mut correction_values: Vec<Scalar> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
         let mut zero_kept_2to3: Vec<HashMap<usize,KeepInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(parameters.share_count);
@@ -849,7 +856,7 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
@@ -893,7 +900,7 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::<Secp256k1>::random();
+        let secret_key = Scalar::random(rand::thread_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
@@ -901,7 +908,7 @@ mod tests {
         let refresh_sid = rand::thread_rng().gen::<[u8; 32]>();
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             let out1 = parties[i].refresh_phase1();
 
@@ -910,7 +917,7 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
+        let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j].push(row_i[j].clone());
@@ -918,7 +925,7 @@ mod tests {
         }
 
         // Phase 2
-        let mut correction_values: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
+        let mut correction_values: Vec<Scalar> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
         let mut kept_2to3: Vec<HashMap<usize,KeepRefreshPhase2to3>> = Vec::with_capacity(parameters.share_count);
         let mut transmit_2to4: Vec<Vec<TransmitRefreshPhase2to4>> = Vec::with_capacity(parameters.share_count);
@@ -1085,7 +1092,7 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());

@@ -3,8 +3,10 @@
 
 use std::collections::HashMap;
 
-use curv::elliptic::curves::{Scalar,Point,Secp256k1};
-use curv::arithmetic::*;
+use k256::{Secp256k1, Scalar, ProjectivePoint, U256};
+use k256::elliptic_curve::{Curve, Field, point::AffineCoordinates, ops::Reduce};
+
+use hex;
 
 use crate::protocols::{Party, Abort, PartiesMessage};
 
@@ -37,11 +39,11 @@ pub struct TransmitPhase1to2 {
 #[derive(Clone)]
 pub struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
-    pub gamma_u: Point<Secp256k1>,
-    pub gamma_v: Point<Secp256k1>,
-    pub psi: Scalar<Secp256k1>,
-    pub public_share: Point<Secp256k1>,
-    pub instance_point: Point<Secp256k1>,
+    pub gamma_u: ProjectivePoint,
+    pub gamma_v: ProjectivePoint,
+    pub psi: Scalar,
+    pub public_share: ProjectivePoint,
+    pub instance_point: ProjectivePoint,
     pub salt: Vec<u8>,
     pub mul_transmit: MulDataToReceiver,
 }
@@ -52,8 +54,8 @@ pub struct TransmitPhase2to3 {
 
 #[derive(Clone)]
 pub struct Broadcast3to4 {
-    pub u: Scalar<Secp256k1>,
-    pub w: Scalar<Secp256k1>,
+    pub u: Scalar,
+    pub w: Scalar,
 }
 
 ////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
@@ -64,17 +66,17 @@ pub struct Broadcast3to4 {
 #[derive(Clone)]
 pub struct KeepPhase1to2 {
     pub salt: Vec<u8>,
-    pub chi: Scalar<Secp256k1>,
+    pub chi: Scalar,
     pub mul_keep: MulDataToKeepReceiver,
 }
 
 #[derive(Clone)]
 pub struct KeepPhase2to3 {
-    pub c_u: Scalar<Secp256k1>,
-    pub c_v: Scalar<Secp256k1>,
+    pub c_u: Scalar,
+    pub c_v: Scalar,
     pub commitment: HashOutput,
     pub mul_keep: MulDataToKeepReceiver,
-    pub chi: Scalar<Secp256k1>,
+    pub chi: Scalar,
 }
 
 // "Unique keep" messages refer to all counterparties at once,
@@ -82,19 +84,19 @@ pub struct KeepPhase2to3 {
 
 #[derive(Clone)]
 pub struct UniqueKeep1to2 {
-    pub instance_key: Scalar<Secp256k1>,
-    pub instance_point: Point<Secp256k1>,
-    pub inversion_mask: Scalar<Secp256k1>,
-    pub zeta: Scalar<Secp256k1>,
+    pub instance_key: Scalar,
+    pub instance_point: ProjectivePoint,
+    pub inversion_mask: Scalar,
+    pub zeta: Scalar,
 }
 
 #[derive(Clone)]
 pub struct UniqueKeep2to3 {
-    pub instance_key: Scalar<Secp256k1>,
-    pub instance_point: Point<Secp256k1>,
-    pub inversion_mask: Scalar<Secp256k1>,
-    pub key_share: Scalar<Secp256k1>,
-    pub public_share: Point<Secp256k1>,
+    pub instance_key: Scalar,
+    pub instance_point: ProjectivePoint,
+    pub inversion_mask: Scalar,
+    pub key_share: Scalar,
+    pub public_share: ProjectivePoint,
 }
 
 //////////////////////////
@@ -112,10 +114,10 @@ impl Party {
         }
 
         // Step 5 - We sample our secret data.
-        let instance_key = Scalar::<Secp256k1>::random();
-        let inversion_mask = Scalar::<Secp256k1>::random();
+        let instance_key = Scalar::random(rand::thread_rng());
+        let inversion_mask = Scalar::random(rand::thread_rng());
 
-        let instance_point = Point::<Secp256k1>::generator() * &instance_key;
+        let instance_point = ProjectivePoint::GENERATOR * &instance_key;
 
         // Step 6 - We prepare the messages to keep and to send.
 
@@ -184,17 +186,17 @@ impl Party {
         
         // We find the Lagrange coefficient associated to us.
         // It is the same as the one calculated during DKG.
-        let mut l_numerator = Scalar::<Secp256k1>::from(1);
-        let mut l_denominator = Scalar::<Secp256k1>::from(1);
+        let mut l_numerator = Scalar::ONE;
+        let mut l_denominator = Scalar::ONE;
         for counterparty in &data.counterparties {
-            l_numerator = l_numerator * Scalar::<Secp256k1>::from(*counterparty as u16);
-            l_denominator = l_denominator * (Scalar::<Secp256k1>::from(*counterparty as u16) - Scalar::<Secp256k1>::from(self.party_index as u16));
+            l_numerator = l_numerator * Scalar::from(*counterparty as u64);
+            l_denominator = l_denominator * (Scalar::from(*counterparty as u64) - Scalar::from(self.party_index as u64));
         }
         let l = l_numerator * (l_denominator.invert().unwrap());
 
         // These are sk_i and pk_i from the paper.
-        let key_share = (&self.poly_point * l) + &unique_kept.zeta;
-        let public_share = Point::<Secp256k1>::generator() * &key_share;
+        let key_share = (&self.poly_point * &l) + &unique_kept.zeta;
+        let public_share = ProjectivePoint::GENERATOR * &key_share;
         
         // This is the input for the multiplication protocol.
         let input = vec![unique_kept.instance_key.clone(), key_share.clone()];
@@ -217,8 +219,8 @@ impl Party {
 
             let mul_result = self.mul_senders.get(&counterparty).unwrap().run(&mul_sid, &input, &message.mul_transmit);
             
-            let c_u: Scalar<Secp256k1>;
-            let c_v: Scalar<Secp256k1>;
+            let c_u: Scalar;
+            let c_v: Scalar;
             let mul_transmit: MulDataToReceiver;
             match mul_result {
                 Err(error) => {
@@ -232,8 +234,8 @@ impl Party {
             }
 
             // We compute the remaining values.
-            let gamma_u = Point::<Secp256k1>::generator() * &c_u;
-            let gamma_v = Point::<Secp256k1>::generator() * &c_v;
+            let gamma_u = ProjectivePoint::GENERATOR * &c_u;
+            let gamma_v = ProjectivePoint::GENERATOR * &c_v;
 
             let psi = &unique_kept.inversion_mask - &current_kept.chi;
 
@@ -274,7 +276,7 @@ impl Party {
     // Communication round 2
     // Transmit the messages.
 
-    pub fn sign_phase3(&self, data: &SignData, unique_kept: &UniqueKeep2to3, kept: &HashMap<usize,KeepPhase2to3>, received: &Vec<TransmitPhase2to3>) -> Result<(BigInt,Broadcast3to4),Abort> {
+    pub fn sign_phase3(&self, data: &SignData, unique_kept: &UniqueKeep2to3, kept: &HashMap<usize,KeepPhase2to3>, received: &Vec<TransmitPhase2to3>) -> Result<(String,Broadcast3to4),Abort> {
 
         // Steps 8 and 9
 
@@ -284,8 +286,8 @@ impl Party {
 
         let mut first_sum_u_v = unique_kept.inversion_mask.clone();
 
-        let mut second_sum_u = Scalar::<Secp256k1>::zero();
-        let mut second_sum_v = Scalar::<Secp256k1>::zero();
+        let mut second_sum_u = Scalar::ZERO;
+        let mut second_sum_v = Scalar::ZERO;
 
         for message in received {
 
@@ -308,8 +310,8 @@ impl Party {
 
             let mul_result = self.mul_receivers.get(&counterparty).unwrap().run_phase2(&mul_sid, &current_kept.mul_keep, &message.mul_transmit);
 
-            let d_u: Scalar<Secp256k1>;
-            let d_v: Scalar<Secp256k1>;
+            let d_u: Scalar;
+            let d_v: Scalar;
             match mul_result {
                 Err(error) => {
                     return Err(Abort::new(self.party_index, &format!("Two-party multiplication protocol failed because of Party {}: {:?}", counterparty, error.description)));
@@ -321,9 +323,9 @@ impl Party {
             }
 
             // First consistency checks.
-            let generator = Point::<Secp256k1>::generator();
+            let generator = ProjectivePoint::GENERATOR;
             
-            if &current_kept.chi * &message.instance_point != &message.gamma_u + (generator * &d_u) {
+            if (&message.instance_point * &current_kept.chi) != (&message.gamma_u + &(generator * &d_u)) {
                 return Err(Abort::new(self.party_index, &format!("Consistency check with u-variables failed for Party {}!", counterparty)));
             }
 
@@ -331,7 +333,7 @@ impl Party {
             // to be consistent, we belive it should be "pk_j" instead.
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.
-            if &current_kept.chi * &message.public_share != &message.gamma_v + (generator * &d_v) {
+            if (&message.public_share * &current_kept.chi) != (&message.gamma_v + &(generator * &d_v)) {
                 return Err(Abort::new(self.party_index, &format!("Consistency check with v-variables failed for Party {}!", counterparty)));
             }
 
@@ -354,9 +356,9 @@ impl Party {
         let u = (&unique_kept.instance_key * &first_sum_u_v) + second_sum_u;
         let v = (&unique_kept.key_share * &first_sum_u_v) + second_sum_v;
 
-        let x_coord = total_instance_point.x_coord().unwrap().modulus(Scalar::<Secp256k1>::group_order());
+        let x_coord = hex::encode(total_instance_point.to_affine().x().as_slice());
         // There is no salt because the hash function here is always the same.
-        let w = (hash_as_scalar(&data.message_to_sign, &[]) * &unique_kept.inversion_mask) + (v * Scalar::<Secp256k1>::from_bigint(&x_coord));
+        let w = (hash_as_scalar(&data.message_to_sign, &[]) * &unique_kept.inversion_mask) + (v * Scalar::reduce(U256::from_be_hex(&x_coord)));
 
         let broadcast = Broadcast3to4 {
             u,
@@ -371,19 +373,19 @@ impl Party {
     // Communication round 3
     // Broadcast the messages (including to ourselves).
 
-    pub fn sign_phase4(&self, data: &SignData, x_coord: &BigInt, received: &Vec<Broadcast3to4>) -> Result<BigInt,Abort> {
+    pub fn sign_phase4(&self, data: &SignData, x_coord: &str, received: &Vec<Broadcast3to4>) -> Result<String,Abort> {
 
         // Step 10
 
-        let mut numerator = Scalar::<Secp256k1>::zero();
-        let mut denominator = Scalar::<Secp256k1>::zero();
+        let mut numerator = Scalar::ZERO;
+        let mut denominator = Scalar::ZERO;
         for message in received {
             numerator = numerator + &message.w;
             denominator = denominator + &message.u;
         }
 
         let signature_as_scalar = numerator * (denominator.invert().unwrap());
-        let signature = signature_as_scalar.to_bigint();
+        let signature = hex::encode(signature_as_scalar.to_bytes().as_slice());
 
         let verification = verify_ecdsa_signature(&data.message_to_sign, &self.pk, x_coord, &signature);
         if !verification {
@@ -395,31 +397,30 @@ impl Party {
 }
 
 // This function is the verifying function from usual ECDSA.
-pub fn verify_ecdsa_signature(msg: &[u8], pk: &Point<Secp256k1>, x_coord: &BigInt, signature: &BigInt) -> bool {
+pub fn verify_ecdsa_signature(msg: &[u8], pk: &ProjectivePoint, x_coord: &str, signature: &str) -> bool {
+
+    let rx_as_int = U256::from_be_hex(x_coord);
+    let s_as_int = U256::from_be_hex(signature);
 
     // Verify if the numbers are in the correct range.
-    if !(&BigInt::zero() < x_coord && x_coord < Scalar::<Secp256k1>::group_order() && &BigInt::zero() < signature && signature < Scalar::<Secp256k1>::group_order()) {
+    if !(U256::ZERO < rx_as_int && rx_as_int < Secp256k1::ORDER && U256::ZERO < s_as_int && s_as_int < Secp256k1::ORDER) {
         return false;
     }
 
-    let rx_as_scalar = Scalar::<Secp256k1>::from_bigint(x_coord);
-    let s_as_scalar = Scalar::<Secp256k1>::from_bigint(signature);
+    let rx_as_scalar = Scalar::reduce(rx_as_int);
+    let s_as_scalar = Scalar::reduce(s_as_int);
 
     let inverse_s = s_as_scalar.invert().unwrap();
 
     let first = hash_as_scalar(msg, &[]) * &inverse_s;
-    let second = &rx_as_scalar * inverse_s;
+    let second = &rx_as_scalar * &inverse_s;
 
-    let point_to_check = first * Point::<Secp256k1>::generator() + second * pk;
-    let x_check = point_to_check.x_coord();
+    let point_to_check = (ProjectivePoint::GENERATOR * first)  + (pk * &second);
+    if point_to_check == ProjectivePoint::IDENTITY { return false ; }
 
-    match x_check {
-        None => { false },
-        Some(x) => {
-            let x_check_as_scalar = Scalar::<Secp256k1>::from_bigint(&x);
-            x_check_as_scalar == rx_as_scalar
-        }
-    }
+    let x_check = Scalar::reduce(U256::from_be_slice(point_to_check.to_affine().x().as_slice()));
+
+    x_check == rx_as_scalar
 }
 
 #[cfg(test)]
@@ -445,7 +446,7 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::<Secp256k1>::random();
+        let secret_key = Scalar::random(rand::thread_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
@@ -535,7 +536,7 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
@@ -582,7 +583,7 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::<Secp256k1>::random();
+        let secret_key = Scalar::random(rand::thread_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING (as in test_signing)
@@ -672,7 +673,7 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
@@ -700,7 +701,7 @@ mod tests {
         // It is essentially independent of the party, so we compute just once.
         let some_index = executing_parties[0];
         let result = parties[some_index - 1].sign_phase4(all_data.get(&some_index).unwrap(), &x_coord, &broadcast_3to4);
-        let signature: BigInt;
+        let signature: String;
         match result {
             Err(abort) => {
                 panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -714,23 +715,23 @@ mod tests {
         // ECDSA (computations that would be done if there were only one person)
 
         // Let us retrieve the total instance/ephemeral key.
-        let mut total_instance_key = Scalar::<Secp256k1>::zero();
+        let mut total_instance_key = Scalar::ZERO;
         for (_,kept) in unique_kept_1to2 {
             total_instance_key = total_instance_key + kept.instance_key;
         }
 
         // We compare the total "instance point" with the parties' calculations.
-        let total_instance_point = Point::<Secp256k1>::generator() * &total_instance_key;
-        let expected_x_coord = total_instance_point.x_coord().unwrap().modulus(Scalar::<Secp256k1>::group_order());
+        let total_instance_point = ProjectivePoint::GENERATOR * &total_instance_key;
+        let expected_x_coord = hex::encode(total_instance_point.to_affine().x().as_slice());
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:
         let hashed_message = hash_as_scalar(message_to_sign, &[]);
-        assert_eq!(hashed_message, Scalar::<Secp256k1>::from_bigint(&BigInt::from_hex("ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d").unwrap()));
+        assert_eq!(hashed_message, Scalar::reduce(U256::from_be_hex("ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d")));
 
         // Now we can find the signature in the usual way.
-        let expected_signature_as_scalar = total_instance_key.invert().unwrap() * (hashed_message + (secret_key * Scalar::<Secp256k1>::from_bigint(&expected_x_coord)));
-        let expected_signature = expected_signature_as_scalar.to_bigint();
+        let expected_signature_as_scalar = total_instance_key.invert().unwrap() * (hashed_message + (secret_key * Scalar::reduce(U256::from_be_hex(&expected_x_coord))));
+        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
 
         // We compare the results.
         assert_eq!(signature, expected_signature);
@@ -763,7 +764,7 @@ mod tests {
         }
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(parameters.share_count);
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             let out1 = dkg_phase1(&all_data[i]);
 
@@ -772,7 +773,7 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments = vec![Vec::<Scalar<Secp256k1>>::with_capacity(parameters.share_count); parameters.share_count];
+        let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j].push(row_i[j].clone());
@@ -780,7 +781,7 @@ mod tests {
         }
 
         // Phase 2
-        let mut poly_points: Vec<Scalar<Secp256k1>> = Vec::with_capacity(parameters.share_count);
+        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count);
         let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(parameters.share_count);
         let mut zero_kept_2to3: Vec<HashMap<usize,KeepInitZeroSharePhase2to3>> = Vec::with_capacity(parameters.share_count);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(parameters.share_count);
@@ -981,7 +982,7 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<BigInt> = Vec::with_capacity(parameters.threshold);
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
             let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());

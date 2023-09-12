@@ -13,7 +13,7 @@
 /// comes from Protocol 9 of the DKLs18 paper (https://eprint.iacr.org/2018/499.pdf).
 /// It is needed to transform the outputs to the desired form.
 
-use curv::elliptic::curves::{Scalar, Secp256k1};
+use k256::Scalar;
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
@@ -63,7 +63,7 @@ impl OTESender {
     // Attention: The roles are reversed during this part!
     // Hence, a sender in the extension initializes as a receiver in the base OT. 
 
-    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar<Secp256k1>>, Vec<EncProof>) {
+    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
         let ot_receiver = OTReceiver::init();
 
         // The choice bits are sampled randomly.
@@ -77,7 +77,7 @@ impl OTESender {
         (ot_receiver, correlation, vec_r, enc_proofs)
     }
 
-    pub fn init_phase2(ot_receiver: &OTReceiver, session_id: &[u8], correlation: Vec<bool>, vec_r: &Vec<Scalar<Secp256k1>>, dlog_proof: &DLogProof) -> Result<OTESender, ErrorOT> {
+    pub fn init_phase2(ot_receiver: &OTReceiver, session_id: &[u8], correlation: Vec<bool>, vec_r: &Vec<Scalar>, dlog_proof: &DLogProof) -> Result<OTESender, ErrorOT> {
         
         // The outputs from the base OT become the sender's seeds.
         let seeds = ot_receiver.run_phase2_batch(session_id, vec_r, dlog_proof)?;
@@ -93,7 +93,7 @@ impl OTESender {
 
     // Input: Correlation for the points (as in Functionality 3 of DKLs19) and values transmitted by the receiver.
     // Output: Protocol's output and a value to be sent to the receiver.
-    pub fn run(&self, session_id: &[u8], input_correlation: &Vec<Scalar<Secp256k1>>, data: &OTEDataToSender) -> Result<(Vec<Scalar<Secp256k1>>, Vec<Scalar<Secp256k1>>), ErrorOT> {
+    pub fn run(&self, session_id: &[u8], input_correlation: &Vec<Scalar>, data: &OTEDataToSender) -> Result<(Vec<Scalar>, Vec<Scalar>), ErrorOT> {
 
         // EXTEND
 
@@ -226,8 +226,8 @@ impl OTESender {
 
         }
 
-        let mut v0: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
-        let mut v1: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
+        let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
+        let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         for j in 0..BATCH_SIZE {
 
             // For v1, we compute transposed_q[j] ^ correlation.
@@ -250,7 +250,7 @@ impl OTESender {
         // Step 1 - We compute t_A and tau, as in the paper.
         // Note that t_A is just the message v0 we computed above.
 
-        let mut tau: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
+        let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         for j in 0..BATCH_SIZE {
             let tau_j = &v1[j] - &v0[j] + &input_correlation[j];
             tau.push(tau_j);
@@ -440,7 +440,7 @@ impl OTEReceiver {
 
     // Input: Previous inputs and value tau sent by the sender.
     // Output: Protocol's output.
-    pub fn run_phase2(&self, session_id: &[u8], choice_bits: &Vec<bool>, extended_seeds: &Vec<PRGOutput>, tau: &Vec<Scalar<Secp256k1>>) -> Vec<Scalar<Secp256k1>> {
+    pub fn run_phase2(&self, session_id: &[u8], choice_bits: &Vec<bool>, extended_seeds: &Vec<PRGOutput>, tau: &Vec<Scalar>) -> Vec<Scalar> {
         
         // TRANSPOSE AND RANDOMIZE
 
@@ -451,7 +451,7 @@ impl OTEReceiver {
         // Step 2 - We compute the final message. For the final part, it will be better
         // if we compute it in the form Scalar<Secp256k1>.
 
-        let mut v: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
+        let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         for j in 0..BATCH_SIZE {
             let salt = [&j.to_be_bytes(), session_id].concat();
             v.push(hash_as_scalar(&transposed_t[j], &salt));
@@ -468,7 +468,7 @@ impl OTEReceiver {
 
         // Step 2 - We compute t_B as in the paper. We use the value tau sent by the sender.
 
-        let mut t_b: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
+        let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         for j in 0..BATCH_SIZE {
             let mut t_b_j = -&v[j];
             if choice_bits[j] {
@@ -627,6 +627,7 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use k256::elliptic_curve::Field;
     use rand::Rng;
 
     #[test]
@@ -686,10 +687,10 @@ mod tests {
         // PROTOCOL
 
         // Sampling the choices.
-        let mut sender_input_correlation: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
+        let mut sender_input_correlation: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE);
         for _ in 0..BATCH_SIZE {
-            sender_input_correlation.push(Scalar::<Secp256k1>::random());
+            sender_input_correlation.push(Scalar::random(rand::thread_rng()));
             receiver_choice_bits.push(rand::random());
         }
 
@@ -702,8 +703,8 @@ mod tests {
         // Unique phase - Sender
         let sender_result = ote_sender.run(&session_id, &sender_input_correlation, &data_to_sender);
 
-        let sender_output: Vec<Scalar<Secp256k1>>;
-        let tau: Vec<Scalar<Secp256k1>>;
+        let sender_output: Vec<Scalar>;
+        let tau: Vec<Scalar>;
         match sender_result {
             Ok((v0, t)) => {
                 (sender_output, tau) = (v0,t);
@@ -727,7 +728,7 @@ mod tests {
             if receiver_choice_bits[i] {
                 assert_eq!(sum, sender_input_correlation[i]);
             } else {
-                assert_eq!(sum, Scalar::<Secp256k1>::zero());
+                assert_eq!(sum, Scalar::ZERO);
             }
         }
     }

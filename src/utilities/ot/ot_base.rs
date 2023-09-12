@@ -5,7 +5,8 @@
 /// we implement the endemic OT protocol of Zhou et al., which can be found on
 /// Section 3 of https://eprint.iacr.org/2022/1525.pdf.
 
-use curv::elliptic::curves::{Scalar, Point, Secp256k1};
+use k256::{Scalar, ProjectivePoint};
+use k256::elliptic_curve::Field;
 use rand::Rng;
 
 use crate::SECURITY;
@@ -19,7 +20,7 @@ use crate::utilities::ot::ErrorOT;
 
 #[derive(Debug, Clone)]
 pub struct OTSender {
-    pub s: Scalar<Secp256k1>,
+    pub s: Scalar,
     pub proof: DLogProof,
 }
 
@@ -52,7 +53,7 @@ impl OTSender {
     // logarithm. Thus, we isolate this part from the rest for efficiency.
     pub fn init(session_id: &[u8]) -> OTSender {
         
-        let s = Scalar::<Secp256k1>::random();
+        let s = Scalar::random(rand::thread_rng());
 
         // In the paper, different protocols use different random oracles.
         // Thus, we will add a unique string to the session id here.
@@ -85,7 +86,7 @@ impl OTSender {
         // we just take the letter 'R' for simplicity.
         // I guess we could omit it, but we leave it to "change the oracle".
         let msg_for_h = ["R".as_bytes(), seed].concat();
-        let h = Point::<Secp256k1>::generator() * hash_as_scalar(&msg_for_h, session_id);
+        let h = ProjectivePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id);
 
         // We verify the proof.
         let current_sid = [session_id, "EncProof".as_bytes()].concat();
@@ -102,8 +103,8 @@ impl OTSender {
 
         let (_,v) = enc_proof.get_u_and_v();
 
-        let value_for_m0 = &self.s * &v;
-        let value_for_m1 = &self.s * (&v - &h);
+        let value_for_m0 = &v * &self.s;
+        let value_for_m1 = (&v - &h) * &self.s;
 
         let msg_for_m0 = ["S".as_bytes(), &point_to_bytes(&value_for_m0)].concat();
         let msg_for_m1 = ["S".as_bytes(), &point_to_bytes(&value_for_m1)].concat();
@@ -152,17 +153,17 @@ impl OTReceiver {
     }
 
     // Phase 1 - We sample the secret values and provide proof.
-    pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar<Secp256k1>, EncProof) {
+    pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
 
         // We sample the secret scalar r.
-        let r = Scalar::<Secp256k1>::random();
+        let r = Scalar::random(rand::thread_rng());
 
         // We compute h as in the paper.
         // Instead of using a real identifier for the receiver,
         // we just take the letter 'R' for simplicity.
         // I guess we could omit it, but we leave it to "change the oracle".
         let msg_for_h = ["R".as_bytes(), &self.seed].concat();
-        let h = Point::<Secp256k1>::generator() * hash_as_scalar(&msg_for_h, session_id);
+        let h = ProjectivePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id);
 
         // We prove our data.
         // In the paper, different protocols use different random oracles.
@@ -175,11 +176,11 @@ impl OTReceiver {
     }
 
     // Phase 1 batch version: used for multiple executions (e.g. OT extension).
-    pub fn run_phase1_batch(&self, session_id: &[u8], bits: &Vec<bool>) -> (Vec<Scalar<Secp256k1>>, Vec<EncProof>) {
+    pub fn run_phase1_batch(&self, session_id: &[u8], bits: &Vec<bool>) -> (Vec<Scalar>, Vec<EncProof>) {
         
         let batch_size = bits.len();
         
-        let mut vec_r: Vec<Scalar<Secp256k1>> = Vec::with_capacity(batch_size);
+        let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size);
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
 
@@ -204,7 +205,7 @@ impl OTReceiver {
     // first depends only on the initialization values and can be done
     // once, while the second is different for each iteration.
 
-    pub fn run_phase2_step1(&self, session_id: &[u8], dlog_proof: &DLogProof) -> Result<Point<Secp256k1>, ErrorOT> {
+    pub fn run_phase2_step1(&self, session_id: &[u8], dlog_proof: &DLogProof) -> Result<ProjectivePoint, ErrorOT> {
 
         // Verification of the proof.
         let current_sid = [session_id, "DLogProof".as_bytes()].concat();
@@ -219,13 +220,13 @@ impl OTReceiver {
         Ok(z)
     }
 
-    pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar<Secp256k1>, z: &Point<Secp256k1>) -> HashOutput {
+    pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &ProjectivePoint) -> HashOutput {
 
         // We compute the message.
         // As before, instead of an identifier for the sender,
         // we just take the letter 'S' for simplicity.
 
-        let value_for_mb = r * z;
+        let value_for_mb = z * r;
 
         let msg_for_mb = ["S".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
         let mb = hash(&msg_for_mb, session_id);       
@@ -235,7 +236,7 @@ impl OTReceiver {
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
-    pub fn run_phase2_batch(&self, session_id: &[u8], vec_r: &Vec<Scalar<Secp256k1>>, dlog_proof: &DLogProof) -> Result<Vec<HashOutput>, ErrorOT> {
+    pub fn run_phase2_batch(&self, session_id: &[u8], vec_r: &Vec<Scalar>, dlog_proof: &DLogProof) -> Result<Vec<HashOutput>, ErrorOT> {
         
         // Step 1
         let z = self.run_phase2_step1(session_id, dlog_proof)?;

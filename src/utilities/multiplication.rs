@@ -5,7 +5,8 @@
 /// The first paper also gives some orientations on how to implement the protocol
 /// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
 
-use curv::elliptic::curves::{Scalar, Secp256k1};
+use k256::Scalar;
+use k256::elliptic_curve::Field;
 
 use crate::utilities::hashes::*;
 use crate::utilities::proofs::{DLogProof, EncProof};
@@ -19,33 +20,33 @@ pub const L: usize = 2;
 
 #[derive(Clone)]
 pub struct MulSender {
-    pub public_gadget: Vec<Scalar<Secp256k1>>,
+    pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
 #[derive(Clone)]
 pub struct MulReceiver {
-    pub public_gadget: Vec<Scalar<Secp256k1>>,
+    pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
 }
 
 // These structs are for better readability of the code.
 #[derive(Clone)]
 pub struct MulDataToReceiver {
-    pub tau_tilde: Vec<Vec<Scalar<Secp256k1>>>,
-    pub tau_hat: Vec<Vec<Scalar<Secp256k1>>>,
+    pub tau_tilde: Vec<Vec<Scalar>>,
+    pub tau_hat: Vec<Vec<Scalar>>,
     pub verify_r: HashOutput,
-    pub verify_u: Vec<Scalar<Secp256k1>>,
-    pub gamma_sender: Vec<Scalar<Secp256k1>>,
+    pub verify_u: Vec<Scalar>,
+    pub gamma_sender: Vec<Scalar>,
 }
 
 #[derive(Clone)]
 pub struct MulDataToKeepReceiver {
-    pub b: Scalar<Secp256k1>,
+    pub b: Scalar,
     pub choice_bits: Vec<bool>,
     pub extended_seeds: Vec<PRGOutput>,
-    pub chi_tilde: Vec<Scalar<Secp256k1>>,
-    pub chi_hat: Vec<Scalar<Secp256k1>>,
+    pub chi_tilde: Vec<Scalar>,
+    pub chi_hat: Vec<Scalar>,
 }
 
 // We create a new struct for errors in this protocol.
@@ -71,20 +72,20 @@ impl MulSender {
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
 
-    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar<Secp256k1>>, Vec<EncProof>) {
+    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
         OTESender::init_phase1(session_id)
     }
 
     // The nonce will be sent by the receiver for the computation of the public gadget vector.
-    pub fn init_phase2(ot_receiver: &OTReceiver, session_id: &[u8], correlation: Vec<bool>, vec_r: &Vec<Scalar<Secp256k1>>, dlog_proof: &DLogProof, nonce: &Scalar<Secp256k1>) -> Result<MulSender, ErrorOT> {
+    pub fn init_phase2(ot_receiver: &OTReceiver, session_id: &[u8], correlation: Vec<bool>, vec_r: &Vec<Scalar>, dlog_proof: &DLogProof, nonce: &Scalar) -> Result<MulSender, ErrorOT> {
         let ote_sender = OTESender::init_phase2(ot_receiver, session_id, correlation, vec_r, dlog_proof)?;
 
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
-        let mut public_gadget: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
+        let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         let mut counter = nonce.clone();
         for _ in 0..BATCH_SIZE {
-            counter = counter + Scalar::<Secp256k1>::from(1);
+            counter = counter + Scalar::ONE;
             public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
         }
 
@@ -106,7 +107,7 @@ impl MulSender {
 
     // Input: Protocol's input and data coming from receiver.
     // Output: Protocol's output and data to receiver.
-    pub fn run(&self, session_id: &[u8], input: &Vec<Scalar<Secp256k1>>, data: &OTEDataToSender) -> Result<(Vec<Scalar<Secp256k1>>, MulDataToReceiver), ErrorMul> {
+    pub fn run(&self, session_id: &[u8], input: &Vec<Scalar>, data: &OTEDataToSender) -> Result<(Vec<Scalar>, MulDataToReceiver), ErrorMul> {
 
         // RANDOMIZED MULTIPLICATION
 
@@ -116,11 +117,11 @@ impl MulSender {
         // We also set the correlation for the OT protocol.
 
         // There are L pads and L check_values.
-        let mut a_tilde: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
-        let mut a_hat: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L);
+        let mut a_hat: Vec<Scalar> = Vec::with_capacity(L);
         for _ in 0..L {
-            a_tilde.push(Scalar::<Secp256k1>::random());
-            a_hat.push(Scalar::<Secp256k1>::random());
+            a_tilde.push(Scalar::random(rand::thread_rng()));
+            a_hat.push(Scalar::random(rand::thread_rng()));
         }
 
         // For the correlation, let us first explain the case L = 1.
@@ -133,8 +134,8 @@ impl MulSender {
         // Now, by DKLs23, we hardcoded l = 1 in DKLs19. At the same time,
         // DKLs23 has its parameter L. To adapt the old protocol, we repeat
         // Step 2 in DKLs23 L times, so in the end we get 2*L correlations.
-        let mut correlation_tilde: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
-        let mut correlation_hat: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
+        let mut correlation_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L);
+        let mut correlation_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         for i in 0..L {
             let correlation_tilde_i = vec![a_tilde[i].clone();BATCH_SIZE];
             let correlation_hat_i = vec![a_hat[i].clone();BATCH_SIZE];
@@ -156,12 +157,12 @@ impl MulSender {
         // be used 2*L times with the 2*L correlations from the previous step.
 
         // These are the sender's output from the OT protocol.
-        let mut z_tilde: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
-        let mut z_hat: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
+        let mut z_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L);
+        let mut z_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
 
         // These values will be used by the receiver to finish the OT protocol.
-        let mut tau_tilde: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
-        let mut tau_hat: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
+        let mut tau_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L);
+        let mut tau_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
 
         for i in 0..L {
             
@@ -199,8 +200,8 @@ impl MulSender {
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
-        let mut chi_tilde: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
-        let mut chi_hat: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L);
+        let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
             
             // We compute the salts according to i and the varible.
@@ -220,7 +221,7 @@ impl MulSender {
         // so we'll compute r directly in bytes.
         // The variable below saves each row of r in bytes.
         let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L);
-        let mut verify_u: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut verify_u: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
 
             // We compute the i-th row of the matrix r in bytes.
@@ -248,7 +249,7 @@ impl MulSender {
 
         // Step 7 - We compute the difference gamma_A.
 
-        let mut gamma: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut gamma: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
             let difference = &input[i] - &a_tilde[i];
             gamma.push(difference);
@@ -257,9 +258,9 @@ impl MulSender {
         // Step 8 - Finally, we compute the protocol's output.
         // Recall that we hardcoded gamma_B = 0.
 
-        let mut output: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut output: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
-            let mut summation = Scalar::<Secp256k1>::zero();
+            let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
                 summation = summation + (&self.public_gadget[j] * &z_tilde[i][j]);
             }
@@ -289,26 +290,26 @@ impl MulReceiver {
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
 
-    pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof, Scalar<Secp256k1>) {
+    pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof, Scalar) {
         let (ot_sender, proof) = OTEReceiver::init_phase1(session_id);
 
         // For the choice of the public gadget vector, we will use the same approach
         // as in https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         // We sample a nonce that will be used by both parties to compute a common vector.
-        let nonce = Scalar::<Secp256k1>::random();
+        let nonce = Scalar::random(rand::thread_rng());
 
         (ot_sender, proof, nonce)
     }
 
-    pub fn init_phase2(ot_sender: &OTSender, session_id: &[u8], seed: &Seed, enc_proofs: &Vec<EncProof>, nonce: &Scalar<Secp256k1>) -> Result<MulReceiver, ErrorOT> {
+    pub fn init_phase2(ot_sender: &OTSender, session_id: &[u8], seed: &Seed, enc_proofs: &Vec<EncProof>, nonce: &Scalar) -> Result<MulReceiver, ErrorOT> {
         let ote_receiver = OTEReceiver::init_phase2(ot_sender, session_id, seed, enc_proofs)?;
 
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
-        let mut public_gadget: Vec<Scalar<Secp256k1>> = Vec::with_capacity(BATCH_SIZE);
+        let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         let mut counter = nonce.clone();
         for _ in 0..BATCH_SIZE {
-            counter = counter + Scalar::<Secp256k1>::from(1);
+            counter = counter + Scalar::ONE;
             public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
         }
 
@@ -331,7 +332,7 @@ impl MulReceiver {
     // Input: Only the session id.
     // Output: First of protocol's outputs, data to keep for next phase and data to the sender.
     // (Recall that the receiver gets the random factor from the multiplication as output.) 
-    pub fn run_phase1(&self, session_id: &[u8]) -> (Scalar<Secp256k1>, MulDataToKeepReceiver, OTEDataToSender) {
+    pub fn run_phase1(&self, session_id: &[u8]) -> (Scalar, MulDataToKeepReceiver, OTEDataToSender) {
 
         // RANDOMIZED MULTIPLICATION
 
@@ -342,7 +343,7 @@ impl MulReceiver {
         // will denote b_tilde simply as b.
 
         let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE);
-        let mut b = Scalar::<Secp256k1>::zero();
+        let mut b = Scalar::ZERO;
         for i in 0..BATCH_SIZE {
             let current_bit: bool = rand::random();
             if current_bit {
@@ -368,8 +369,8 @@ impl MulReceiver {
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
-        let mut chi_tilde: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
-        let mut chi_hat: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L);
+        let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
             
             // We compute the salts according to i and the varible.
@@ -398,7 +399,7 @@ impl MulReceiver {
 
     // Input: Data from previous phase and data from sender.
     // Output: Second of protocol's outputs.
-    pub fn run_phase2(&self, session_id: &[u8], data_kept: &MulDataToKeepReceiver, data_received: &MulDataToReceiver) -> Result<Vec<Scalar<Secp256k1>>,ErrorMul> {
+    pub fn run_phase2(&self, session_id: &[u8], data_kept: &MulDataToKeepReceiver, data_received: &MulDataToReceiver) -> Result<Vec<Scalar>,ErrorMul> {
 
         // Step 3 (Conclusion) - We conclude the OT protocol.
 
@@ -406,8 +407,8 @@ impl MulReceiver {
         // so we will have 2*L outputs. They are separated in two
         // variables: z_tilde and z_hat.
 
-        let mut z_tilde: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
-        let mut z_hat: Vec<Vec<Scalar<Secp256k1>>> = Vec::with_capacity(L);
+        let mut z_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L);
+        let mut z_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         for i in 0..L {
             let output_tilde = self.ote_receiver.run_phase2(session_id, &data_kept.choice_bits, &data_kept.extended_seeds, &data_received.tau_tilde[i]);
             let output_hat = self.ote_receiver.run_phase2(session_id, &data_kept.choice_bits, &data_kept.extended_seeds, &data_received.tau_hat[i]);
@@ -462,9 +463,9 @@ impl MulReceiver {
         // Step 8 - Finally, we compute the protocol's output.
         // Recall that we hardcoded gamma_B = 0.
 
-        let mut output: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut output: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
-            let mut summation = Scalar::<Secp256k1>::zero();
+            let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
                 summation = summation + (&self.public_gadget[j] * &z_tilde[i][j]);
             }
@@ -525,9 +526,9 @@ mod tests {
         // PROTOCOL
 
         // Sampling the choices.
-        let mut sender_input: Vec<Scalar<Secp256k1>> = Vec::with_capacity(L);
+        let mut sender_input: Vec<Scalar> = Vec::with_capacity(L);
         for _ in 0..L {
-            sender_input.push(Scalar::<Secp256k1>::random());
+            sender_input.push(Scalar::random(rand::thread_rng()));
         }
 
         // Phase 1 - Receiver
@@ -540,7 +541,7 @@ mod tests {
         // Unique phase - Sender
         let sender_result = mul_sender.run(&session_id, &sender_input, &data_to_sender);
 
-        let sender_output: Vec<Scalar<Secp256k1>>;
+        let sender_output: Vec<Scalar>;
         let data_to_receiver: MulDataToReceiver;
         match sender_result {
             Ok((output, data)) => {
@@ -558,7 +559,7 @@ mod tests {
         // Phase 2 - Receiver
         let receiver_result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
 
-        let receiver_output: Vec<Scalar<Secp256k1>>;
+        let receiver_output: Vec<Scalar>;
         match receiver_result {
             Ok(output) => {
                 receiver_output = output;
