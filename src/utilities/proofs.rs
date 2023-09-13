@@ -9,7 +9,7 @@
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
 
-use k256::{Scalar, ProjectivePoint, U256};
+use k256::{Scalar, AffinePoint, ProjectivePoint, U256};
 use k256::elliptic_curve::{Field, ops::Reduce};
 use rand::Rng;
 
@@ -41,9 +41,9 @@ pub struct InteractiveDLogProof {
 impl InteractiveDLogProof {
 
     // Step 1 - Sample the random commitments.
-    pub fn prove_step1() -> (Scalar, ProjectivePoint) {
+    pub fn prove_step1() -> (Scalar, AffinePoint) {
         let scalar_rand_commitment = Scalar::random(rand::thread_rng());
-        let point_rand_commitment = ProjectivePoint::GENERATOR * &scalar_rand_commitment;
+        let point_rand_commitment = (AffinePoint::GENERATOR * &scalar_rand_commitment).to_affine();
 
         (scalar_rand_commitment, point_rand_commitment)
     }
@@ -76,7 +76,7 @@ impl InteractiveDLogProof {
     // Attention: the challenge should enter as a parameter here, but in the
     // next protocol, it will come from the prover, so we decided to save it
     // inside the struct.
-    pub fn verify(&self, point: &ProjectivePoint, point_rand_commitment: &ProjectivePoint) -> bool {
+    pub fn verify(&self, point: &AffinePoint, point_rand_commitment: &AffinePoint) -> bool {
 
         // For convenience, we are using a challenge in bytes.
         // We convert it back to a scalar.
@@ -87,7 +87,7 @@ impl InteractiveDLogProof {
         let challenge_scalar = Scalar::reduce(U256::from_be_slice(&extended));
 
         // We compare the values that should agree.
-        let point_verify = (ProjectivePoint::GENERATOR * &self.challenge_response) + (point * &challenge_scalar);
+        let point_verify = ((AffinePoint::GENERATOR * &self.challenge_response) + (*point * &challenge_scalar)).to_affine();
 
         point_verify == *point_rand_commitment
     }
@@ -97,8 +97,8 @@ impl InteractiveDLogProof {
 // Schnorr's protocol (non-interactive via randomized Fischlin transform).
 #[derive(Debug, Clone)]
 pub struct DLogProof {
-    pub point: ProjectivePoint,
-    pub rand_commitments: Vec<ProjectivePoint>,
+    pub point: AffinePoint,
+    pub rand_commitments: Vec<AffinePoint>,
     pub proofs: Vec<InteractiveDLogProof>,
 }
 
@@ -123,7 +123,7 @@ impl DLogProof {
     pub fn prove(scalar: &Scalar, session_id: &[u8]) -> DLogProof {
         
         // We execute Step 1 r times.
-        let mut rand_commitments: Vec<ProjectivePoint> = Vec::with_capacity(R);
+        let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R);
         let mut states: Vec<Scalar> = Vec::with_capacity(R);
         for _ in 0..R {
             let (state, rand_commitment) = InteractiveDLogProof::prove_step1();
@@ -216,7 +216,7 @@ impl DLogProof {
         let proofs = [first_proofs, last_proofs].concat();
 
         // We save the point.
-        let point = ProjectivePoint::GENERATOR * scalar;
+        let point = (AffinePoint::GENERATOR * scalar).to_affine();
 
         DLogProof {
             point,
@@ -313,16 +313,16 @@ impl DLogProof {
 // We start with the Chaum-Pedersen protocol (interactive version).
 #[derive(Debug, Clone)]
 pub struct RandomCommitments {
-    pub rc_g: ProjectivePoint,
-    pub rc_h: ProjectivePoint,
+    pub rc_g: AffinePoint,
+    pub rc_h: AffinePoint,
 }
 
 #[derive(Debug, Clone)]
 pub struct CPProof {
-    pub base_g: ProjectivePoint,   // Parameters for the proof.
-    pub base_h: ProjectivePoint,   // In the encryption proof, base_g = generator.
-    pub point_u: ProjectivePoint,
-    pub point_v: ProjectivePoint,
+    pub base_g: AffinePoint,   // Parameters for the proof.
+    pub base_h: AffinePoint,   // In the encryption proof, base_g = generator.
+    pub point_u: AffinePoint,
+    pub point_v: AffinePoint,
 
     pub challenge_response: Scalar,
 }
@@ -336,11 +336,11 @@ impl CPProof {
     // calculated via Fiat-Shamir.
 
     // Step 1 - Sample the random commitments.
-    pub fn prove_step1(base_g: &ProjectivePoint, base_h: &ProjectivePoint) -> (Scalar, RandomCommitments) {
+    pub fn prove_step1(base_g: &AffinePoint, base_h: &AffinePoint) -> (Scalar, RandomCommitments) {
         let scalar_rand_commitment = Scalar::random(rand::thread_rng());
 
-        let point_rand_commitment_g = base_g * &scalar_rand_commitment;
-        let point_rand_commitment_h = base_h * &scalar_rand_commitment;
+        let point_rand_commitment_g = (*base_g * &scalar_rand_commitment).to_affine();
+        let point_rand_commitment_h = (*base_h * &scalar_rand_commitment).to_affine();
 
         let rand_commitments = RandomCommitments {
             rc_g: point_rand_commitment_g,
@@ -352,11 +352,11 @@ impl CPProof {
 
     // Step 2 - Compute the response for a given challenge.
     // Here, scalar is the witness for the proof.
-    pub fn prove_step2(base_g: &ProjectivePoint, base_h: &ProjectivePoint, scalar: &Scalar, scalar_rand_commitment: &Scalar, challenge: &Scalar) -> CPProof {
+    pub fn prove_step2(base_g: &AffinePoint, base_h: &AffinePoint, scalar: &Scalar, scalar_rand_commitment: &Scalar, challenge: &Scalar) -> CPProof {
 
         // We get u and v.
-        let point_u = base_g * scalar;
-        let point_v = base_h * scalar;
+        let point_u = (*base_g * scalar).to_affine();
+        let point_v = (*base_h * scalar).to_affine();
 
         // We compute the response.
         let challenge_response = scalar_rand_commitment - &(challenge * scalar);
@@ -376,8 +376,8 @@ impl CPProof {
     pub fn verify(&self, rand_commitments: &RandomCommitments, challenge: &Scalar) -> bool {
 
         // We compare the values that should agree.
-        let point_verify_g = (&self.base_g * &self.challenge_response) + (&self.point_u * challenge);
-        let point_verify_h = (&self.base_h * &self.challenge_response) + (&self.point_v * challenge);
+        let point_verify_g = ((self.base_g * &self.challenge_response) + (self.point_u * challenge)).to_affine();
+        let point_verify_h = ((self.base_h * &self.challenge_response) + (self.point_v * challenge)).to_affine();
 
         (point_verify_g == rand_commitments.rc_g) && (point_verify_h == rand_commitments.rc_h)
     }
@@ -386,15 +386,15 @@ impl CPProof {
     // a witness. The only way to do this is to sample the challenge ourselves and use it
     // to compute the other values. We then return the challenge used, the commitments
     // and the corresponding proof.
-    pub fn simulate(base_g: &ProjectivePoint, base_h: &ProjectivePoint, point_u: &ProjectivePoint, point_v: &ProjectivePoint) -> (RandomCommitments, Scalar, CPProof){
+    pub fn simulate(base_g: &AffinePoint, base_h: &AffinePoint, point_u: &AffinePoint, point_v: &AffinePoint) -> (RandomCommitments, Scalar, CPProof){
 
         // We sample the challenge and the response first.
         let challenge = Scalar::random(rand::thread_rng());
         let challenge_response = Scalar::random(rand::thread_rng());
 
         // Now we compute the "random" commitments that work for this challenge.
-        let point_rand_commitment_g = (base_g * &challenge_response) + (point_u * &challenge);
-        let point_rand_commitment_h = (base_h * &challenge_response) + (point_v * &challenge);
+        let point_rand_commitment_g = ((*base_g * &challenge_response) + (*point_u * &challenge)).to_affine();
+        let point_rand_commitment_h = ((*base_h * &challenge_response) + (*point_v * &challenge)).to_affine();
 
         let rand_commitments = RandomCommitments {
             rc_g: point_rand_commitment_g,
@@ -430,26 +430,26 @@ pub struct EncProof {
 
 impl EncProof {
 
-    pub fn prove(session_id: &[u8], base_h: &ProjectivePoint, scalar: &Scalar, bit: bool) -> EncProof {
+    pub fn prove(session_id: &[u8], base_h: &AffinePoint, scalar: &Scalar, bit: bool) -> EncProof {
         
         // PRELIMINARIES
 
         // g is the generator in this case.
-        let base_g = ProjectivePoint::GENERATOR;
+        let base_g = AffinePoint::GENERATOR;
 
         // We compute u and v from Section 3 in the paper.
         // Be careful: these are not point_u and point_v from CPProof.
        
        // u is independent of the bit chosen.
-        let u = base_h * scalar;
+        let u = (*base_h * scalar).to_affine();
         
         // v = h*bit + g*scalar.
         // The other possible value for v will be used in a simulated proof.
         // See below for a better explanation.
         let (v, fake_v) = if bit {
-            ((base_g * scalar) + base_h, (base_g * scalar) + base_h)
+            (((base_g * scalar) + base_h).to_affine(), ((base_g * scalar) + base_h).to_affine())
         } else {
-            (base_g * scalar, (base_g * scalar) - base_h)
+            ((base_g * scalar).to_affine(), ((base_g * scalar) - base_h).to_affine())
         };
 
 
@@ -543,11 +543,11 @@ impl EncProof {
     pub fn verify(&self, session_id: &[u8]) -> bool {
 
         // We check if the proofs are compatible.
-        if (self.proof0.base_g != ProjectivePoint::GENERATOR)
+        if (self.proof0.base_g != AffinePoint::GENERATOR)
         || (self.proof0.base_g != self.proof1.base_g)
         || (self.proof0.base_h != self.proof1.base_h)
         || (self.proof0.point_v != self.proof1.point_v) // This is u from Section 3 in the paper.
-        || (self.proof0.point_u != (&self.proof1.point_u + &self.proof1.base_h))    // proof0 contains v and proof1 contains v-h.
+        || (self.proof0.point_u != (ProjectivePoint::from(self.proof1.point_u) + self.proof1.base_h).to_affine())    // proof0 contains v and proof1 contains v-h.
         {
             return false;
         }
@@ -579,7 +579,7 @@ impl EncProof {
     }
 
     // For convenience and to avoid confusion with the change of order.
-    pub fn get_u_and_v(&self) -> (ProjectivePoint, ProjectivePoint) {
+    pub fn get_u_and_v(&self) -> (AffinePoint, AffinePoint) {
         (self.proof0.point_v.clone(), self.proof0.point_u.clone())
     }
 
@@ -642,9 +642,9 @@ mod tests {
         let log_base_h = Scalar::random(rand::thread_rng());
         let scalar = Scalar::random(rand::thread_rng());
 
-        let generator = ProjectivePoint::GENERATOR;
-        let base_g = generator * log_base_g;
-        let base_h = generator * log_base_h;
+        let generator = AffinePoint::GENERATOR;
+        let base_g = (generator * log_base_g).to_affine();
+        let base_h = (generator * log_base_h).to_affine();
 
         // Prover - Step 1.
         let (scalar_rand_commitment, rand_commitments) = CPProof::prove_step1(&base_g, &base_h);
@@ -668,11 +668,11 @@ mod tests {
         let log_point_u = Scalar::random(rand::thread_rng());
         let log_point_v = Scalar::random(rand::thread_rng());
 
-        let generator = ProjectivePoint::GENERATOR;
-        let base_g = generator * log_base_g;
-        let base_h = generator * log_base_h;
-        let point_u = generator * log_point_u;
-        let point_v = generator * log_point_v;
+        let generator = AffinePoint::GENERATOR;
+        let base_g = (generator * log_base_g).to_affine();
+        let base_h = (generator * log_base_h).to_affine();
+        let point_u = (generator * log_point_u).to_affine();
+        let point_v = (generator * log_point_v).to_affine();
 
         // Simulation.
         let (rand_commitments, challenge, proof) = CPProof::simulate(&base_g, &base_h, &point_u, &point_v);
@@ -691,7 +691,7 @@ mod tests {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
         let log_base_h = Scalar::random(rand::thread_rng());
-        let base_h = ProjectivePoint::GENERATOR * log_base_h;
+        let base_h = (AffinePoint::GENERATOR * log_base_h).to_affine();
 
         let scalar = Scalar::random(rand::thread_rng());
 

@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use k256::{Scalar, ProjectivePoint};
+use k256::{Scalar, AffinePoint};
 use k256::elliptic_curve::Field;
 
 use crate::utilities::hashes::*;
@@ -236,7 +236,7 @@ impl Party {
         let verifying_pk = dkg_step5(&self.parameters, self.party_index, refresh_sid, proofs_commitments)?;
 
         // The public key calculated above should be the zero point on the curve.
-        if verifying_pk != ProjectivePoint::IDENTITY {
+        if verifying_pk != AffinePoint::IDENTITY {
             return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
 
@@ -472,7 +472,7 @@ impl Party {
         let verifying_pk = dkg_step5(&self.parameters, self.party_index, refresh_sid, proofs_commitments)?;
 
         // The public key calculated above should be the zero point on the curve.
-        if verifying_pk != ProjectivePoint::IDENTITY {
+        if verifying_pk != AffinePoint::IDENTITY {
             return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
 

@@ -2,7 +2,7 @@
 /// We follow the approach suggested on page 7 of the paper.
 
 use crate::utilities::hashes::*;
-use k256::ProjectivePoint;
+use k256::AffinePoint;
 use rand::Rng;
 
 //Computational security parameter lambda_c from DKLs23 (divided by 8)
@@ -33,12 +33,12 @@ pub fn verify_commitment(msg: &[u8], commitment: &HashOutput, salt: &[u8]) -> bo
 
 //During the signing protocol, parties should be able to commit to points on the elliptic curve.
 //Thus, for convenience, we adapt the previous functions to this case.
-pub fn commit_point(point: &ProjectivePoint) -> (HashOutput, Vec<u8>) {
+pub fn commit_point(point: &AffinePoint) -> (HashOutput, Vec<u8>) {
     let point_as_bytes = point_to_bytes(point);
     commit(&point_as_bytes)
 }
 
-pub fn verify_commitment_point(point: &ProjectivePoint, commitment: &HashOutput, salt: &[u8]) -> bool {
+pub fn verify_commitment_point(point: &AffinePoint, commitment: &HashOutput, salt: &[u8]) -> bool {
     let point_as_bytes = point_to_bytes(point);
     verify_commitment(&point_as_bytes, commitment, salt)
 }

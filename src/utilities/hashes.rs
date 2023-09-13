@@ -14,7 +14,7 @@
 /// and maybe implementing something similar.
 
 use bitcoin_hashes::{Hash, sha256};
-use k256::{Scalar, ProjectivePoint, U256};
+use k256::{Scalar, AffinePoint, U256};
 use k256::elliptic_curve::{bigint::Encoding, group::GroupEncoding, ops::Reduce};
 
 use crate::SECURITY;
@@ -40,12 +40,12 @@ pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
     Scalar::reduce(as_int)
 }
 
-// k256 does not convert Scalar and ProjectivePoint directly to bytes. We add this for convenience.
+// k256 does not convert Scalar and AffinePoint directly to bytes. We add this for convenience.
 pub fn scalar_to_bytes(scalar: &Scalar) -> Vec<u8> {
     scalar.to_bytes().as_slice().to_vec()
 }
 
-pub fn point_to_bytes(point: &ProjectivePoint) -> Vec<u8> {
+pub fn point_to_bytes(point: &AffinePoint) -> Vec<u8> {
     point.to_bytes().as_slice().to_vec()
 }
 

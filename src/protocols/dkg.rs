@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use k256::{Scalar, ProjectivePoint};
+use k256::{Scalar, AffinePoint};
 use k256::elliptic_curve::{Field, point::AffineCoordinates};
 use hex;
 use rand::Rng;
@@ -187,9 +187,9 @@ pub fn dkg_step3(party_index: usize, session_id: &[u8], poly_fragments: &Vec<Sca
 
 // Step 5 - Each party validates the other proofs. They also recover the "public keys fragements" from the other parties.
 // Finally, a consistency check is done. In the process, the publick key is computed (Step 6).
-pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8], proofs_commitments: &Vec<ProofCommitment>) -> Result<ProjectivePoint,Abort> {
+pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8], proofs_commitments: &Vec<ProofCommitment>) -> Result<AffinePoint,Abort> {
         
-    let mut commited_points: Vec<ProjectivePoint> = Vec::with_capacity(parameters.share_count); //The "public key fragments"
+    let mut commited_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count); //The "public key fragments"
 
     // Verify the proofs and gather the commited points.        
     for party_j in proofs_commitments {
@@ -203,13 +203,13 @@ pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8],
     }
 
     // Initializes what will be the public key.
-    let mut pk = ProjectivePoint::IDENTITY;
+    let mut pk = AffinePoint::IDENTITY;
 
     // Verify that all points come from the same polyonimal. To do so, for each contiguous set of parties,
     // perform Shamir reconstruction in the exponent and check if the results agree.
     // The common value calculated is the public key.
     for i in 1..=(parameters.share_count - parameters.threshold + 1) {
-        let mut current_pk = ProjectivePoint::IDENTITY;
+        let mut current_pk = AffinePoint::IDENTITY;
         for j in i..=(i + parameters.threshold - 1) {
 
             // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
@@ -224,8 +224,8 @@ pub fn dkg_step5(parameters: &Parameters, party_index: usize, session_id: &[u8],
             }
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
                 
-            let lj_times_point = &commited_points[j-1] * &lj; // j-1 because index starts at 0
-            current_pk = current_pk + lj_times_point;
+            let lj_times_point = commited_points[j-1] * &lj; // j-1 because index starts at 0
+            current_pk = (lj_times_point + current_pk).to_affine();
         }
         // The first value is taken as the public key. It should coincide with the next values.
         if i == 1 {
@@ -438,7 +438,7 @@ pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar, proofs_commitments: &
 
     // The public key cannot be the point at infinity.
     // This is pratically impossible, but easy to check.
-    if pk == ProjectivePoint::IDENTITY {
+    if pk == AffinePoint::IDENTITY {
         return Err(Abort::new(data.party_index, "Initialization failed because the resulting public key was trivial! (Very improbable)"));
     }
 
@@ -590,14 +590,11 @@ pub fn dkg_phase4(data: &SessionData, poly_point: &Scalar, proofs_commitments: &
 }
 
 // For convenience, we are going to include the Ethereum address.
-pub fn compute_eth_address(pk: &ProjectivePoint) -> String {
+pub fn compute_eth_address(pk: &AffinePoint) -> String {
     
     // Here, we will compute the address using the compressed form of pk.
-
-    let affine = pk.to_affine();
-
-    let x_as_bytes = affine.x().as_slice().to_vec();
-    let prefix = if affine.y_is_odd().into() { vec![3] } else { vec![2] };
+    let x_as_bytes = pk.x().as_slice().to_vec();
+    let prefix = if pk.y_is_odd().into() { vec![3] } else { vec![2] };
 
     let compressed_pk = [prefix, x_as_bytes].concat();
 
@@ -703,7 +700,7 @@ mod tests {
         }
 
         // Phase 4 (Step 5)
-        let mut result_parties: Vec<Result<ProjectivePoint,Abort>> = Vec::with_capacity(parameters.share_count);
+        let mut result_parties: Vec<Result<AffinePoint,Abort>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             result_parties.push(dkg_step5(&parameters, i+1, &session_id, &proofs_commitments));
         }
@@ -749,7 +746,7 @@ mod tests {
         let p2_pk = p2_result.unwrap();
         
         // Verifying the public key
-        let expected_pk = ProjectivePoint::GENERATOR * Scalar::from(2u32); 
+        let expected_pk = (AffinePoint::GENERATOR * Scalar::from(2u32)).to_affine(); 
         assert_eq!(p1_pk, expected_pk);
         assert_eq!(p2_pk, expected_pk);
     }
@@ -789,7 +786,7 @@ mod tests {
         let p2_pk = p2_result.unwrap();
         
         // Verifying the public key
-        let expected_pk = ProjectivePoint::GENERATOR * Scalar::from(23u32); 
+        let expected_pk = (AffinePoint::GENERATOR * Scalar::from(23u32)).to_affine(); 
         assert_eq!(p1_pk, expected_pk);
         assert_eq!(p2_pk, expected_pk);
     }
@@ -822,12 +819,12 @@ mod tests {
         }
 
         // Phase 4 (Step 5)
-        let mut results: Vec<Result<ProjectivePoint,Abort>> = Vec::with_capacity(parameters.share_count);
+        let mut results: Vec<Result<AffinePoint,Abort>> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
             results.push(dkg_step5(&parameters, i+1, &session_id, &proofs_commitments));
         }
 
-        let mut public_keys: Vec<ProjectivePoint> = Vec::with_capacity(parameters.share_count);
+        let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count);
         for result in results {
             match result {
                 Ok(pk) => { public_keys.push(pk); },
@@ -836,7 +833,7 @@ mod tests {
         }
         
         // Verifying the public key
-        let expected_pk = ProjectivePoint::GENERATOR * Scalar::from(2u32).negate();
+        let expected_pk = (AffinePoint::GENERATOR * Scalar::from(2u32).negate()).to_affine();
         for pk in public_keys {
             assert_eq!(pk, expected_pk);
         }
@@ -1010,7 +1007,7 @@ mod tests {
         // You should test different values using, for example,
         // https://paulmillr.com/noble/ and https://emn178.github.io/online-tools/keccak_256.html.
         let sk = Scalar::reduce(U256::from_be_hex("cc545f6edbac6c62def9205033629e553acb1fceb95c171cf389c636ce4613a2"));
-        let pk = ProjectivePoint::GENERATOR * sk;
+        let pk = (AffinePoint::GENERATOR * sk).to_affine();
 
         let address = compute_eth_address(&pk);
         assert_eq!(address, "0x8be92babaa139ecf60145f822520b68cebb44711".to_string());

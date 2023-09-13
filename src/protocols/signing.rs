@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use k256::{Secp256k1, Scalar, ProjectivePoint, U256};
+use k256::{Secp256k1, Scalar, AffinePoint, ProjectivePoint, U256};
 use k256::elliptic_curve::{Curve, Field, point::AffineCoordinates, ops::Reduce};
 
 use hex;
@@ -39,11 +39,11 @@ pub struct TransmitPhase1to2 {
 #[derive(Clone)]
 pub struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
-    pub gamma_u: ProjectivePoint,
-    pub gamma_v: ProjectivePoint,
+    pub gamma_u: AffinePoint,
+    pub gamma_v: AffinePoint,
     pub psi: Scalar,
-    pub public_share: ProjectivePoint,
-    pub instance_point: ProjectivePoint,
+    pub public_share: AffinePoint,
+    pub instance_point: AffinePoint,
     pub salt: Vec<u8>,
     pub mul_transmit: MulDataToReceiver,
 }
@@ -85,7 +85,7 @@ pub struct KeepPhase2to3 {
 #[derive(Clone)]
 pub struct UniqueKeep1to2 {
     pub instance_key: Scalar,
-    pub instance_point: ProjectivePoint,
+    pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub zeta: Scalar,
 }
@@ -93,10 +93,10 @@ pub struct UniqueKeep1to2 {
 #[derive(Clone)]
 pub struct UniqueKeep2to3 {
     pub instance_key: Scalar,
-    pub instance_point: ProjectivePoint,
+    pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub key_share: Scalar,
-    pub public_share: ProjectivePoint,
+    pub public_share: AffinePoint,
 }
 
 //////////////////////////
@@ -117,7 +117,7 @@ impl Party {
         let instance_key = Scalar::random(rand::thread_rng());
         let inversion_mask = Scalar::random(rand::thread_rng());
 
-        let instance_point = ProjectivePoint::GENERATOR * &instance_key;
+        let instance_point = (AffinePoint::GENERATOR * &instance_key).to_affine();
 
         // Step 6 - We prepare the messages to keep and to send.
 
@@ -196,7 +196,7 @@ impl Party {
 
         // These are sk_i and pk_i from the paper.
         let key_share = (&self.poly_point * &l) + &unique_kept.zeta;
-        let public_share = ProjectivePoint::GENERATOR * &key_share;
+        let public_share = (AffinePoint::GENERATOR * &key_share).to_affine();
         
         // This is the input for the multiplication protocol.
         let input = vec![unique_kept.instance_key.clone(), key_share.clone()];
@@ -234,8 +234,8 @@ impl Party {
             }
 
             // We compute the remaining values.
-            let gamma_u = ProjectivePoint::GENERATOR * &c_u;
-            let gamma_v = ProjectivePoint::GENERATOR * &c_v;
+            let gamma_u = (AffinePoint::GENERATOR * &c_u).to_affine();
+            let gamma_v = (AffinePoint::GENERATOR * &c_v).to_affine();
 
             let psi = &unique_kept.inversion_mask - &current_kept.chi;
 
@@ -323,9 +323,9 @@ impl Party {
             }
 
             // First consistency checks.
-            let generator = ProjectivePoint::GENERATOR;
+            let generator = AffinePoint::GENERATOR;
             
-            if (&message.instance_point * &current_kept.chi) != (&message.gamma_u + &(generator * &d_u)) {
+            if (message.instance_point * &current_kept.chi) != ((generator * &d_u) + &message.gamma_u) {
                 return Err(Abort::new(self.party_index, &format!("Consistency check with u-variables failed for Party {}!", counterparty)));
             }
 
@@ -333,13 +333,13 @@ impl Party {
             // to be consistent, we belive it should be "pk_j" instead.
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.
-            if (&message.public_share * &current_kept.chi) != (&message.gamma_v + &(generator * &d_v)) {
+            if (message.public_share * &current_kept.chi) != ((generator * &d_v) + &message.gamma_v) {
                 return Err(Abort::new(self.party_index, &format!("Consistency check with v-variables failed for Party {}!", counterparty)));
             }
 
             // We add the current summands to our sums.
-            expected_public_key = expected_public_key + &message.public_share;
-            total_instance_point = total_instance_point + &message.instance_point;
+            expected_public_key = (ProjectivePoint::from(expected_public_key) + message.public_share).to_affine();
+            total_instance_point = (ProjectivePoint::from(total_instance_point) + message.instance_point).to_affine();
 
             first_sum_u_v = first_sum_u_v + &message.psi;
 
@@ -356,7 +356,7 @@ impl Party {
         let u = (&unique_kept.instance_key * &first_sum_u_v) + second_sum_u;
         let v = (&unique_kept.key_share * &first_sum_u_v) + second_sum_v;
 
-        let x_coord = hex::encode(total_instance_point.to_affine().x().as_slice());
+        let x_coord = hex::encode(total_instance_point.x().as_slice());
         // There is no salt because the hash function here is always the same.
         let w = (hash_as_scalar(&data.message_to_sign, &[]) * &unique_kept.inversion_mask) + (v * Scalar::reduce(U256::from_be_hex(&x_coord)));
 
@@ -397,7 +397,7 @@ impl Party {
 }
 
 // This function is the verifying function from usual ECDSA.
-pub fn verify_ecdsa_signature(msg: &[u8], pk: &ProjectivePoint, x_coord: &str, signature: &str) -> bool {
+pub fn verify_ecdsa_signature(msg: &[u8], pk: &AffinePoint, x_coord: &str, signature: &str) -> bool {
 
     let rx_as_int = U256::from_be_hex(x_coord);
     let s_as_int = U256::from_be_hex(signature);
@@ -415,10 +415,10 @@ pub fn verify_ecdsa_signature(msg: &[u8], pk: &ProjectivePoint, x_coord: &str, s
     let first = hash_as_scalar(msg, &[]) * &inverse_s;
     let second = &rx_as_scalar * &inverse_s;
 
-    let point_to_check = (ProjectivePoint::GENERATOR * first)  + (pk * &second);
-    if point_to_check == ProjectivePoint::IDENTITY { return false ; }
+    let point_to_check = ((AffinePoint::GENERATOR * first)  + (*pk * &second)).to_affine();
+    if point_to_check == AffinePoint::IDENTITY { return false ; }
 
-    let x_check = Scalar::reduce(U256::from_be_slice(point_to_check.to_affine().x().as_slice()));
+    let x_check = Scalar::reduce(U256::from_be_slice(point_to_check.x().as_slice()));
 
     x_check == rx_as_scalar
 }
@@ -721,8 +721,8 @@ mod tests {
         }
 
         // We compare the total "instance point" with the parties' calculations.
-        let total_instance_point = ProjectivePoint::GENERATOR * &total_instance_key;
-        let expected_x_coord = hex::encode(total_instance_point.to_affine().x().as_slice());
+        let total_instance_point = (AffinePoint::GENERATOR * &total_instance_key).to_affine();
+        let expected_x_coord = hex::encode(total_instance_point.x().as_slice());
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:

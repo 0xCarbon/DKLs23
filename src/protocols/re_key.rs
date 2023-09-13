@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use k256::{Scalar, ProjectivePoint};
+use k256::{Scalar, AffinePoint};
 use k256::elliptic_curve::Field;
 
 use rand::Rng;
@@ -30,7 +30,7 @@ use crate::utilities::zero_sharings::{self, ZeroShare};
 pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, option_chain_code: Option<ChainCode>) -> Vec<Party> {
 
     // Public key.
-    let pk = ProjectivePoint::GENERATOR * secret_key;
+    let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
 
     // We will compute "poly_point" for each party with this polynomial
     // via Shamir's secret sharing.

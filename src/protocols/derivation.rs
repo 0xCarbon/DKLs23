@@ -12,7 +12,7 @@
 
 use bitcoin_hashes::{Hash, HashEngine, Hmac, HmacEngine, sha512, hash160};
 
-use k256::{Secp256k1, Scalar, ProjectivePoint, U256};
+use k256::{Secp256k1, Scalar, AffinePoint, U256};
 use k256::elliptic_curve::{Curve, ops::Reduce, point::AffineCoordinates};
 
 use crate::protocols::Party;
@@ -49,7 +49,7 @@ pub struct DerivationData {
     pub child_number: u32,
     pub parent_fingerprint: Fingerprint,
     pub poly_point: Scalar,
-    pub pk: ProjectivePoint,
+    pub pk: AffinePoint,
     pub chain_code: ChainCode,
 }
 
@@ -93,9 +93,9 @@ impl DerivationData {
         // the resulting secret key also shifts by the same amount.
         // Note that the tweak depends only on public data.
         let new_poly_point = &self.poly_point + &tweak;
-        let new_pk = &self.pk + &(ProjectivePoint::GENERATOR * &tweak);
+        let new_pk = ((AffinePoint::GENERATOR * &tweak) + self.pk).to_affine();
 
-        if new_pk == ProjectivePoint::IDENTITY {
+        if new_pk == AffinePoint::IDENTITY {
             return Err(ErrorDerivation::new("Very improbable: Child index results in value not allowed by BIP-32!"));
         }
 
@@ -179,11 +179,9 @@ impl Party {
 }
 
 // This function serializes an affine point on the elliptic curve into compressed form.
-pub fn serialize_point_compressed(point: &ProjectivePoint) -> Vec<u8> {
-    let affine = point.to_affine();
-
-    let x_as_bytes = affine.x().as_slice().to_vec();
-    let prefix = if affine.y_is_odd().into() { vec![3] } else { vec![2] };
+pub fn serialize_point_compressed(point: &AffinePoint) -> Vec<u8> {
+    let x_as_bytes = point.x().as_slice().to_vec();
+    let prefix = if point.y_is_odd().into() { vec![3] } else { vec![2] };
 
     [prefix, x_as_bytes].concat()
 }
@@ -234,7 +232,7 @@ mod tests {
         // The following values were calculated at random with: https://bitaps.com/bip32.
         // You should test other values as well.
         let sk = Scalar::reduce(U256::from_be_hex("7119a4064db44307dbb97dcc1a34fac7cf152cc35ad65dbc97649e3e250a22d3"));
-        let pk = ProjectivePoint::GENERATOR * &sk;
+        let pk = (AffinePoint::GENERATOR * &sk).to_affine();
         let chain_code: ChainCode = hex::decode("5190725e347a7ef19bb857525bfbc491f80ec355864b95661129dc1e5970002f").unwrap().try_into().unwrap();
 
         let data = DerivationData {

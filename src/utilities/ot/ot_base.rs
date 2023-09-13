@@ -5,7 +5,7 @@
 /// we implement the endemic OT protocol of Zhou et al., which can be found on
 /// Section 3 of https://eprint.iacr.org/2022/1525.pdf.
 
-use k256::{Scalar, ProjectivePoint};
+use k256::{Scalar, AffinePoint, ProjectivePoint};
 use k256::elliptic_curve::Field;
 use rand::Rng;
 
@@ -86,7 +86,7 @@ impl OTSender {
         // we just take the letter 'R' for simplicity.
         // I guess we could omit it, but we leave it to "change the oracle".
         let msg_for_h = ["R".as_bytes(), seed].concat();
-        let h = ProjectivePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id);
+        let h = (AffinePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id)).to_affine();
 
         // We verify the proof.
         let current_sid = [session_id, "EncProof".as_bytes()].concat();
@@ -103,8 +103,8 @@ impl OTSender {
 
         let (_,v) = enc_proof.get_u_and_v();
 
-        let value_for_m0 = &v * &self.s;
-        let value_for_m1 = (&v - &h) * &self.s;
+        let value_for_m0 = (v * &self.s).to_affine();
+        let value_for_m1 = ((ProjectivePoint::from(v) - h) * &self.s).to_affine();
 
         let msg_for_m0 = ["S".as_bytes(), &point_to_bytes(&value_for_m0)].concat();
         let msg_for_m1 = ["S".as_bytes(), &point_to_bytes(&value_for_m1)].concat();
@@ -163,7 +163,7 @@ impl OTReceiver {
         // we just take the letter 'R' for simplicity.
         // I guess we could omit it, but we leave it to "change the oracle".
         let msg_for_h = ["R".as_bytes(), &self.seed].concat();
-        let h = ProjectivePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id);
+        let h = (AffinePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id)).to_affine();
 
         // We prove our data.
         // In the paper, different protocols use different random oracles.
@@ -205,7 +205,7 @@ impl OTReceiver {
     // first depends only on the initialization values and can be done
     // once, while the second is different for each iteration.
 
-    pub fn run_phase2_step1(&self, session_id: &[u8], dlog_proof: &DLogProof) -> Result<ProjectivePoint, ErrorOT> {
+    pub fn run_phase2_step1(&self, session_id: &[u8], dlog_proof: &DLogProof) -> Result<AffinePoint, ErrorOT> {
 
         // Verification of the proof.
         let current_sid = [session_id, "DLogProof".as_bytes()].concat();
@@ -220,13 +220,13 @@ impl OTReceiver {
         Ok(z)
     }
 
-    pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &ProjectivePoint) -> HashOutput {
+    pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
 
         // We compute the message.
         // As before, instead of an identifier for the sender,
         // we just take the letter 'S' for simplicity.
 
-        let value_for_mb = z * r;
+        let value_for_mb = (*z * r).to_affine();
 
         let msg_for_mb = ["S".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
         let mb = hash(&msg_for_mb, session_id);       
