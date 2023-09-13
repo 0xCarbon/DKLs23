@@ -59,13 +59,13 @@ pub struct SessionData {
 ////////// INITIALIZING ZERO SHARING PROTOCOL.
 
 // Transmit
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_sharings::Seed,
@@ -73,13 +73,13 @@ pub struct TransmitInitZeroSharePhase3to4 {
 }
 
 // Keep
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase2to3 {
     pub seed: zero_sharings::Seed,
     pub salt: Vec<u8>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase3to4 {
     pub seed: zero_sharings::Seed,
 }
@@ -87,7 +87,7 @@ pub struct KeepInitZeroSharePhase3to4 {
 ////////// INITIALIZING TWO-PARTY MULTIPLICATION PROTOCOL.
 
 // Transmit
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
 
@@ -99,7 +99,7 @@ pub struct TransmitInitMulPhase3to4 {
 }
 
 // Keep
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitMulPhase3to4 {
     pub ot_sender: ot_base::OTSender,
     pub nonce: Scalar,
@@ -112,13 +112,13 @@ pub struct KeepInitMulPhase3to4 {
 ////////// INITIALIZING KEY DERIVATION (VIA BIP-32).
 
 // Broadcast
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase2to4 {
     pub sender_index: usize,
     pub cc_commitment: HashOutput,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase3to4 {
     pub sender_index: usize,
     pub aux_chain_code: ChainCode,
@@ -126,7 +126,7 @@ pub struct BroadcastDerivationPhase3to4 {
 }
 
 // Unique keep
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UniqueKeepDerivationPhase2to3 {
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,

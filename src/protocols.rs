@@ -20,7 +20,7 @@ pub struct Parameters {
 }
 
 // This struct represents a party after key generation ready to sign a message.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Party {
     pub parameters: Parameters,
     pub party_index: usize,
@@ -72,7 +72,7 @@ impl Party {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Abort {
     pub index: usize,
     pub description: String,
@@ -88,7 +88,7 @@ impl Abort {
 }
 
 // This struct saves the sender and receiver of a message.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PartiesMessage {
     pub sender: usize,
     pub receiver: usize,

@@ -1,13 +1,13 @@
+use crate::utilities::commits;
 /// This file implements the zero-sharing sampling functionality from the DKLs23 protocol
 /// (this is Functionality 3.4 on page 7 of their paper).
-/// 
+///
 /// The implementation follows the suggestion yhey give using the commitment functionality.
-
 use crate::utilities::hashes::*;
-use crate::utilities::commits;
 
 use k256::Scalar;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 //Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
@@ -16,27 +16,26 @@ pub type Seed = [u8; SECURITY];
 //This struct represents the common seed a pair of parties shares.
 //The variable "lowest_index" verifies if the party that owns this
 //data has the lowest index in the pair.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeedPair {
     pub lowest_index: bool,
     pub index_counterparty: usize,
     pub seed: Seed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZeroShare {
     pub seeds: Vec<SeedPair>,
 }
 
 impl ZeroShare {
-
     /// We implement the functions in the order they should be applied during the protocol.
 
     /// INITIALIZATION
 
     /// Each party sends a different seed to every other party using the commitment functionality
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
-        let seed = rand::thread_rng().gen::<Seed>();    //This function doesn't work for higher SECURITY.
+        let seed = rand::thread_rng().gen::<Seed>(); //This function doesn't work for higher SECURITY.
         let (commitment, salt) = commits::commit(&seed);
         (seed, commitment, salt)
     }
@@ -47,8 +46,12 @@ impl ZeroShare {
     }
 
     /// For each pair, we create a common seed.
-    pub fn generate_seed_pair(index_party: usize, index_counterparty: usize, seed_party: &Seed, seed_counterparty: &Seed) -> SeedPair {
-        
+    pub fn generate_seed_pair(
+        index_party: usize,
+        index_counterparty: usize,
+        seed_party: &Seed,
+        seed_counterparty: &Seed,
+    ) -> SeedPair {
         //Instead of adding the seeds, as suggested in DKLs23, we apply the XOR operation.
         let mut seed: Seed = [0u8; SECURITY];
         for i in 0..SECURITY {
@@ -56,9 +59,10 @@ impl ZeroShare {
         }
 
         let lowest_index: bool;
-        if index_party <= index_counterparty { //The case where index_party == index_couterparty shouldn't occur in practice.
+        if index_party <= index_counterparty {
+            //The case where index_party == index_couterparty shouldn't occur in practice.
             lowest_index = true;
-        } else {                        
+        } else {
             lowest_index = false;
         }
 
@@ -71,13 +75,11 @@ impl ZeroShare {
 
     /// Having all the seed pairs, we can finish the initialization procedure.
     pub fn initialize(seeds: Vec<SeedPair>) -> ZeroShare {
-        ZeroShare {
-            seeds,
-        }
+        ZeroShare { seeds }
     }
 
     /// FUNCTIONALITY
-    
+
     /// To compute the zero shares, the parties must agree on the same "random seed"
     /// for the "random number generator". This is achieved by using the current session id.
     /// Moreover, not all parties need to participate in this step, so we need to provide a
@@ -86,13 +88,14 @@ impl ZeroShare {
         let mut share = Scalar::ZERO;
         let seeds = self.seeds.clone();
         for seed_pair in seeds {
-
             //We ignore if this seed pair comes from a counterparty not in the current list of counterparties
-            if !counterparties.contains(&seed_pair.index_counterparty) { continue; }
+            if !counterparties.contains(&seed_pair.index_counterparty) {
+                continue;
+            }
 
             //Seeds generate fragments that add up to the share that will be returned.
             let fragment = hash_as_scalar(&seed_pair.seed, session_id);
-            
+
             //This sign guarantees that the shares from different parties add up to zero.
             if seed_pair.lowest_index {
                 share = share - fragment;
@@ -115,7 +118,8 @@ mod tests {
         //Parties generate the initial seeds and the commitments.
         let mut step1: Vec<Vec<(Seed, HashOutput, Vec<u8>)>> = Vec::with_capacity(number_parties);
         for _ in 0..number_parties {
-            let mut step1_party_i: Vec<(Seed, HashOutput, Vec<u8>)> = Vec::with_capacity(number_parties);
+            let mut step1_party_i: Vec<(Seed, HashOutput, Vec<u8>)> =
+                Vec::with_capacity(number_parties);
             for _ in 0..number_parties {
                 //Each party should skip his own iteration, but we ignore this now for simplicity.
                 step1_party_i.push(ZeroShare::generate_seed_with_commitment());
@@ -136,21 +140,28 @@ mod tests {
         //Each party creates his "seed pairs" and finishes the initialization.
         let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(number_parties);
         for i in 0..number_parties {
-                let mut seeds: Vec<SeedPair> = Vec::with_capacity(number_parties - 1);
-                for j in 0..number_parties {
-                    if i == j { continue; } //Now each party skip his iteration.
-                    let (seed_party,_,_) = step1[i][j];
-                    let (seed_counterparty,_,_) = step1[j][i];
-                    //We add 1 below because indexes for parties start at 1 and not 0.
-                    seeds.push(ZeroShare::generate_seed_pair(i+1, j+1, &seed_party, &seed_counterparty));
-                }
-                zero_shares.push(ZeroShare::initialize(seeds));
+            let mut seeds: Vec<SeedPair> = Vec::with_capacity(number_parties - 1);
+            for j in 0..number_parties {
+                if i == j {
+                    continue;
+                } //Now each party skip his iteration.
+                let (seed_party, _, _) = step1[i][j];
+                let (seed_counterparty, _, _) = step1[j][i];
+                //We add 1 below because indexes for parties start at 1 and not 0.
+                seeds.push(ZeroShare::generate_seed_pair(
+                    i + 1,
+                    j + 1,
+                    &seed_party,
+                    &seed_counterparty,
+                ));
+            }
+            zero_shares.push(ZeroShare::initialize(seeds));
         }
 
         //We can finally execute the functionality.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let executing_parties: Vec<usize> = vec![1,3,5,7,8]; //These are the parties running the protocol.
-        let mut shares: Vec<Scalar> = Vec::with_capacity(executing_parties.len()); 
+        let executing_parties: Vec<usize> = vec![1, 3, 5, 7, 8]; //These are the parties running the protocol.
+        let mut shares: Vec<Scalar> = Vec::with_capacity(executing_parties.len());
         for party in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();

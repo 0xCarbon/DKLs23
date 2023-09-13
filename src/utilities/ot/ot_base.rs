@@ -1,24 +1,24 @@
+use k256::elliptic_curve::Field;
 /// This file implements an oblivious transfer (OT) which will serve as a base
 /// for the OT extension protocol.
-/// 
+///
 /// As suggested in page 30 of DKLs23 (https://eprint.iacr.org/2023/765.pdf),
 /// we implement the endemic OT protocol of Zhou et al., which can be found on
 /// Section 3 of https://eprint.iacr.org/2022/1525.pdf.
-
-use k256::{Scalar, AffinePoint, ProjectivePoint};
-use k256::elliptic_curve::Field;
+use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
-use crate::SECURITY;
 use crate::utilities::hashes::*;
-use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::ot::ErrorOT;
+use crate::utilities::proofs::{DLogProof, EncProof};
+use crate::SECURITY;
 
 // SENDER DATA
 
 // Sender after initialization.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OTSender {
     pub s: Scalar,
     pub proof: DLogProof,
@@ -30,7 +30,7 @@ pub struct OTSender {
 
 pub type Seed = [u8; SECURITY];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OTReceiver {
     pub seed: Seed,
 }
@@ -47,12 +47,10 @@ pub struct OTReceiver {
 // "batch" variants for each of the phases.
 
 impl OTSender {
-
     // Initialization - According to first paragraph on page 18,
     // the sender can reuse the secret s and the proof of discrete
     // logarithm. Thus, we isolate this part from the rest for efficiency.
     pub fn init(session_id: &[u8]) -> OTSender {
-        
         let s = Scalar::random(rand::thread_rng());
 
         // In the paper, different protocols use different random oracles.
@@ -60,10 +58,7 @@ impl OTSender {
         let current_sid = [session_id, "DLogProof".as_bytes()].concat();
         let proof = DLogProof::prove(&s, &current_sid);
 
-        OTSender {
-            s,
-            proof,
-        }
+        OTSender { s, proof }
     }
 
     // Phase 1 - The sender transmits z = s * generator and the proof
@@ -79,8 +74,12 @@ impl OTSender {
     // He receives the receiver's seed and encryption proof (which contains u and v).
 
     // Phase 2 - We verify the receiver's data and compute the output.
-    pub fn run_phase2(&self, session_id: &[u8], seed: &Seed, enc_proof: &EncProof) -> Result<(HashOutput, HashOutput), ErrorOT> {
-
+    pub fn run_phase2(
+        &self,
+        session_id: &[u8],
+        seed: &Seed,
+        enc_proof: &EncProof,
+    ) -> Result<(HashOutput, HashOutput), ErrorOT> {
         // We reconstruct h from the seed (as in the paper).
         // Instead of using a real identifier for the receiver,
         // we just take the letter 'R' for simplicity.
@@ -94,14 +93,16 @@ impl OTSender {
 
         // h is already in enc_proof, but we check if the values agree.
         if !verification || (h != enc_proof.proof0.base_h) {
-            return Err(ErrorOT::new("Receiver cheated in OT: Encryption proof failed!"));
+            return Err(ErrorOT::new(
+                "Receiver cheated in OT: Encryption proof failed!",
+            ));
         }
 
         // We compute the messages.
         // As before, instead of an identifier for the sender,
         // we just take the letter 'S' for simplicity.
 
-        let (_,v) = enc_proof.get_u_and_v();
+        let (_, v) = enc_proof.get_u_and_v();
 
         let value_for_m0 = (v * &self.s).to_affine();
         let value_for_m1 = ((ProjectivePoint::from(v) - h) * &self.s).to_affine();
@@ -116,14 +117,17 @@ impl OTSender {
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
-    pub fn run_phase2_batch(&self, session_id: &[u8], seed: &Seed, enc_proofs: &Vec<EncProof>) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
-        
+    pub fn run_phase2_batch(
+        &self,
+        session_id: &[u8],
+        seed: &Seed,
+        enc_proofs: &Vec<EncProof>,
+    ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
         let batch_size = enc_proofs.len();
-        
+
         let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size);
         let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
@@ -135,26 +139,20 @@ impl OTSender {
 
         Ok((vec_m0, vec_m1))
     }
-    
 }
 
 impl OTReceiver {
-
     // Initialization - According to first paragraph on page 18,
     // the sender can reuse the seed. Thus, we isolate this part
     // from the rest for efficiency.
     pub fn init() -> OTReceiver {
-
         let seed = rand::thread_rng().gen::<Seed>();
 
-        OTReceiver {
-            seed,
-        }
+        OTReceiver { seed }
     }
 
     // Phase 1 - We sample the secret values and provide proof.
     pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
-
         // We sample the secret scalar r.
         let r = Scalar::random(rand::thread_rng());
 
@@ -176,14 +174,16 @@ impl OTReceiver {
     }
 
     // Phase 1 batch version: used for multiple executions (e.g. OT extension).
-    pub fn run_phase1_batch(&self, session_id: &[u8], bits: &Vec<bool>) -> (Vec<Scalar>, Vec<EncProof>) {
-        
+    pub fn run_phase1_batch(
+        &self,
+        session_id: &[u8],
+        bits: &Vec<bool>,
+    ) -> (Vec<Scalar>, Vec<EncProof>) {
         let batch_size = bits.len();
-        
+
         let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size);
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
@@ -205,14 +205,19 @@ impl OTReceiver {
     // first depends only on the initialization values and can be done
     // once, while the second is different for each iteration.
 
-    pub fn run_phase2_step1(&self, session_id: &[u8], dlog_proof: &DLogProof) -> Result<AffinePoint, ErrorOT> {
-
+    pub fn run_phase2_step1(
+        &self,
+        session_id: &[u8],
+        dlog_proof: &DLogProof,
+    ) -> Result<AffinePoint, ErrorOT> {
         // Verification of the proof.
         let current_sid = [session_id, "DLogProof".as_bytes()].concat();
         let verification = DLogProof::verify(dlog_proof, &current_sid);
 
         if !verification {
-            return Err(ErrorOT::new("Sender cheated in OT: Proof of discrete logarithm failed!"));
+            return Err(ErrorOT::new(
+                "Sender cheated in OT: Proof of discrete logarithm failed!",
+            ));
         }
 
         let z = dlog_proof.point.clone();
@@ -221,7 +226,6 @@ impl OTReceiver {
     }
 
     pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
-
         // We compute the message.
         // As before, instead of an identifier for the sender,
         // we just take the letter 'S' for simplicity.
@@ -229,24 +233,27 @@ impl OTReceiver {
         let value_for_mb = (*z * r).to_affine();
 
         let msg_for_mb = ["S".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
-        let mb = hash(&msg_for_mb, session_id);       
+        let mb = hash(&msg_for_mb, session_id);
 
         // We could return the bit as in the paper, but the receiver has this information.
         mb
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
-    pub fn run_phase2_batch(&self, session_id: &[u8], vec_r: &Vec<Scalar>, dlog_proof: &DLogProof) -> Result<Vec<HashOutput>, ErrorOT> {
-        
+    pub fn run_phase2_batch(
+        &self,
+        session_id: &[u8],
+        vec_r: &Vec<Scalar>,
+        dlog_proof: &DLogProof,
+    ) -> Result<Vec<HashOutput>, ErrorOT> {
         // Step 1
         let z = self.run_phase2_step1(session_id, dlog_proof)?;
 
         // Step 2
         let batch_size = vec_r.len();
-        
+
         let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
-
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
@@ -257,7 +264,6 @@ impl OTReceiver {
 
         Ok(vec_mb)
     }
-
 }
 
 #[cfg(test)]

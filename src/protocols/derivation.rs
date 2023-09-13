@@ -3,24 +3,24 @@
 /// Each party can derive their key share individually so that the secret
 /// key reconstructed corresponds to the derivation (via BIP-32) of the
 /// original secret key.
-/// 
+///
 /// We follow mainly this repository:
 /// // https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs.
-/// 
+///
 /// ATTENTION: Since no party has the full secret key, it is not convenient
 /// to do hardened derivation. Thus, we only implement normal derivation.
+use bitcoin_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 
-use bitcoin_hashes::{Hash, HashEngine, Hmac, HmacEngine, sha512, hash160};
-
-use k256::{Secp256k1, Scalar, AffinePoint, U256};
-use k256::elliptic_curve::{Curve, ops::Reduce, point::AffineCoordinates};
+use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates, Curve};
+use k256::{AffinePoint, Scalar, Secp256k1, U256};
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::Party;
 
 use super::dkg::compute_eth_address;
 
-pub type Fingerprint = [u8;4];
-pub type ChainCode = [u8;32];
+pub type Fingerprint = [u8; 4];
+pub type ChainCode = [u8; 32];
 
 // A struct for errors in this file.
 #[derive(Clone)]
@@ -30,12 +30,11 @@ pub struct ErrorDerivation {
 
 impl ErrorDerivation {
     pub fn new(description: &str) -> ErrorDerivation {
-        ErrorDerivation { 
+        ErrorDerivation {
             description: String::from(description),
         }
     }
 }
-
 
 // This struct contains all the data needed for derivation.
 // The values that are really needed are only the last three,
@@ -43,7 +42,7 @@ impl ErrorDerivation {
 // the full extended public key as in BIP-32. The only field
 // missing is the one for the network, but it can be easily
 // inferred from context.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DerivationData {
     pub depth: u8,
     pub child_number: u32,
@@ -54,13 +53,15 @@ pub struct DerivationData {
 }
 
 impl DerivationData {
-
     // Adaptation of function ckd_pub_tweak from the repository:
     // https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs.
-    pub fn child_tweak(&self, child_number: u32) -> Result<(Scalar, ChainCode, Fingerprint), ErrorDerivation> {
+    pub fn child_tweak(
+        &self,
+        child_number: u32,
+    ) -> Result<(Scalar, ChainCode, Fingerprint), ErrorDerivation> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
 
-        let pk_as_bytes = serialize_point_compressed(&self.pk); 
+        let pk_as_bytes = serialize_point_compressed(&self.pk);
         hmac_engine.input(&pk_as_bytes);
         hmac_engine.input(&child_number.to_be_bytes());
 
@@ -68,16 +69,22 @@ impl DerivationData {
 
         let number_for_tweak = U256::from_be_slice(&hmac_result[..32]);
         if number_for_tweak.ge(&Secp256k1::ORDER) {
-            return Err(ErrorDerivation::new("Very improbable: Child index results in value not allowed by BIP-32!"));
+            return Err(ErrorDerivation::new(
+                "Very improbable: Child index results in value not allowed by BIP-32!",
+            ));
         }
 
         let tweak = Scalar::reduce(number_for_tweak);
-        let chain_code: ChainCode = hmac_result[32..].try_into().expect("Half of hmac is guaranteed to be 32 bytes!");
+        let chain_code: ChainCode = hmac_result[32..]
+            .try_into()
+            .expect("Half of hmac is guaranteed to be 32 bytes!");
 
         // We also calculate the fingerprint here for convenience.
         let mut engine = hash160::Hash::engine();
         engine.input(&pk_as_bytes);
-        let fingerprint: Fingerprint = hash160::Hash::from_engine(engine)[0..4].try_into().expect("4 is the fingerprint length!");
+        let fingerprint: Fingerprint = hash160::Hash::from_engine(engine)[0..4]
+            .try_into()
+            .expect("4 is the fingerprint length!");
 
         Ok((tweak, chain_code, fingerprint))
     }
@@ -96,7 +103,9 @@ impl DerivationData {
         let new_pk = ((AffinePoint::GENERATOR * &tweak) + self.pk).to_affine();
 
         if new_pk == AffinePoint::IDENTITY {
-            return Err(ErrorDerivation::new("Very improbable: Child index results in value not allowed by BIP-32!"));
+            return Err(ErrorDerivation::new(
+                "Very improbable: Child index results in value not allowed by BIP-32!",
+            ));
         }
 
         Ok(DerivationData {
@@ -119,7 +128,6 @@ impl DerivationData {
 
         Ok(final_data)
     }
-
 }
 
 // We implement the derivation functions for Party as well.
@@ -147,7 +155,7 @@ impl Party {
 
             derivation_data: new_derivation_data,
 
-            eth_address: new_address,  
+            eth_address: new_address,
         })
     }
 
@@ -181,7 +189,11 @@ impl Party {
 // This function serializes an affine point on the elliptic curve into compressed form.
 pub fn serialize_point_compressed(point: &AffinePoint) -> Vec<u8> {
     let x_as_bytes = point.x().as_slice().to_vec();
-    let prefix = if point.y_is_odd().into() { vec![3] } else { vec![2] };
+    let prefix = if point.y_is_odd().into() {
+        vec![3]
+    } else {
+        vec![2]
+    };
 
     [prefix, x_as_bytes].concat()
 }
@@ -195,7 +207,9 @@ pub fn parse_path(path: &str) -> Result<Vec<u32>, ErrorDerivation> {
         return Err(ErrorDerivation::new("Invalid path format!"));
     }
 
-    let path_parsed: Vec<u32> = parts.map(|x| str::parse::<u32>(x).map_err(|_| ErrorDerivation::new("Invalid path format!"))).collect::<Result<_,_>>()?;
+    let path_parsed: Vec<u32> = parts
+        .map(|x| str::parse::<u32>(x).map_err(|_| ErrorDerivation::new("Invalid path format!")))
+        .collect::<Result<_, _>>()?;
 
     if path_parsed.len() > 255 {
         return Err(ErrorDerivation::new("The path is too long!"));
@@ -203,7 +217,9 @@ pub fn parse_path(path: &str) -> Result<Vec<u32>, ErrorDerivation> {
 
     for index in &path_parsed {
         if *index >= 0x80000000 {
-            return Err(ErrorDerivation::new("Child index should be between 0 and 2^31 - 1!"));
+            return Err(ErrorDerivation::new(
+                "Child index should be between 0 and 2^31 - 1!",
+            ));
         }
     }
 
@@ -215,30 +231,35 @@ mod tests {
 
     use super::*;
 
-    use crate::protocols::Parameters;
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
+    use crate::protocols::Parameters;
 
     use crate::utilities::hashes::*;
 
-    use std::collections::HashMap;
+    use hex;
     use k256::elliptic_curve::Field;
     use rand::Rng;
-    use hex;
+    use std::collections::HashMap;
 
     #[test]
     fn test_derivation() {
-
         // The following values were calculated at random with: https://bitaps.com/bip32.
         // You should test other values as well.
-        let sk = Scalar::reduce(U256::from_be_hex("7119a4064db44307dbb97dcc1a34fac7cf152cc35ad65dbc97649e3e250a22d3"));
+        let sk = Scalar::reduce(U256::from_be_hex(
+            "7119a4064db44307dbb97dcc1a34fac7cf152cc35ad65dbc97649e3e250a22d3",
+        ));
         let pk = (AffinePoint::GENERATOR * &sk).to_affine();
-        let chain_code: ChainCode = hex::decode("5190725e347a7ef19bb857525bfbc491f80ec355864b95661129dc1e5970002f").unwrap().try_into().unwrap();
+        let chain_code: ChainCode =
+            hex::decode("5190725e347a7ef19bb857525bfbc491f80ec355864b95661129dc1e5970002f")
+                .unwrap()
+                .try_into()
+                .unwrap();
 
         let data = DerivationData {
             depth: 0,
             child_number: 0,
-            parent_fingerprint: [0u8;4],
+            parent_fingerprint: [0u8; 4],
             poly_point: sk,
             pk,
             chain_code,
@@ -250,27 +271,37 @@ mod tests {
         match try_derive {
             Err(error) => {
                 panic!("Error: {:?}", error.description);
-            },
+            }
             Ok(child) => {
                 assert_eq!(child.depth, 4);
                 assert_eq!(child.child_number, 3);
                 assert_eq!(hex::encode(child.parent_fingerprint), "7586c333");
-                assert_eq!(hex::encode(scalar_to_bytes(&child.poly_point)), "c4e854f80cac8d8c8d1fc4830c76761a6bea70568c773ddf6b73da911f940fb1");
-                assert_eq!(hex::encode(serialize_point_compressed(&child.pk)), "0221120b5ae5375ddc16605a2a265c61b59a04911ab699fcecf7568f8c19b15fc2");
-                assert_eq!(hex::encode(child.chain_code), "5901a52851d8e2864ef676308f0c9449fb0ec050151af259582ef2faf75f046d");
-            },
+                assert_eq!(
+                    hex::encode(scalar_to_bytes(&child.poly_point)),
+                    "c4e854f80cac8d8c8d1fc4830c76761a6bea70568c773ddf6b73da911f940fb1"
+                );
+                assert_eq!(
+                    hex::encode(serialize_point_compressed(&child.pk)),
+                    "0221120b5ae5375ddc16605a2a265c61b59a04911ab699fcecf7568f8c19b15fc2"
+                );
+                assert_eq!(
+                    hex::encode(child.chain_code),
+                    "5901a52851d8e2864ef676308f0c9449fb0ec050151af259582ef2faf75f046d"
+                );
+            }
         }
-
     }
 
     #[test]
     // This test verifies if the key shares continue working.
     fn test_derivation_and_signing() {
-
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
 
-        let parameters = Parameters { threshold, share_count: threshold + offset }; // You can fix the parameters if you prefer.
+        let parameters = Parameters {
+            threshold,
+            share_count: threshold + offset,
+        }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
@@ -283,15 +314,14 @@ mod tests {
 
         let mut derived_parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
         for i in 0..parameters.share_count {
-
             let result = parties[i].derive_from_path(path);
             match result {
                 Err(error) => {
                     panic!("Error for Party {}: {:?}", i, error.description);
-                },
+                }
                 Ok(party) => {
                     derived_parties.push(party);
-                },
+                }
             }
         }
 
@@ -312,29 +342,36 @@ mod tests {
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party_index);
 
-            all_data.insert(party_index, SignData {
-                sign_id: sign_id.to_vec(),
-                counterparties,
-                message_to_sign: message_to_sign.to_vec(),
-            });
+            all_data.insert(
+                party_index,
+                SignData {
+                    sign_id: sign_id.to_vec(),
+                    counterparties,
+                    message_to_sign: message_to_sign.to_vec(),
+                },
+            );
         }
 
         // Phase 1
-        let mut unique_kept_1to2: HashMap<usize,UniqueKeep1to2> = HashMap::with_capacity(parameters.threshold);
-        let mut kept_1to2: HashMap<usize,HashMap<usize,KeepPhase1to2>> = HashMap::with_capacity(parameters.threshold);
-        let mut transmit_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold); 
+        let mut unique_kept_1to2: HashMap<usize, UniqueKeep1to2> =
+            HashMap::with_capacity(parameters.threshold);
+        let mut kept_1to2: HashMap<usize, HashMap<usize, KeepPhase1to2>> =
+            HashMap::with_capacity(parameters.threshold);
+        let mut transmit_1to2: HashMap<usize, Vec<TransmitPhase1to2>> =
+            HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            let (unique_keep, keep, transmit) = parties[party_index - 1].sign_phase1(all_data.get(&party_index).unwrap());
-        
+            let (unique_keep, keep, transmit) =
+                parties[party_index - 1].sign_phase1(all_data.get(&party_index).unwrap());
+
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
             transmit_1to2.insert(party_index, transmit);
         }
 
         // Communication round 1
-        let mut received_1to2: HashMap<usize,Vec<TransmitPhase1to2>> = HashMap::with_capacity(parameters.threshold);
+        let mut received_1to2: HashMap<usize, Vec<TransmitPhase1to2>> =
+            HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-
             let mut new_row: Vec<TransmitPhase1to2> = Vec::with_capacity(parameters.threshold - 1);
             for (_, messages) in &transmit_1to2 {
                 for message in messages {
@@ -345,31 +382,38 @@ mod tests {
                 }
             }
             received_1to2.insert(party_index, new_row);
-
         }
 
         // Phase 2
-        let mut unique_kept_2to3: HashMap<usize,UniqueKeep2to3> = HashMap::with_capacity(parameters.threshold);
-        let mut kept_2to3: HashMap<usize,HashMap<usize,KeepPhase2to3>> = HashMap::with_capacity(parameters.threshold);
-        let mut transmit_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        let mut unique_kept_2to3: HashMap<usize, UniqueKeep2to3> =
+            HashMap::with_capacity(parameters.threshold);
+        let mut kept_2to3: HashMap<usize, HashMap<usize, KeepPhase2to3>> =
+            HashMap::with_capacity(parameters.threshold);
+        let mut transmit_2to3: HashMap<usize, Vec<TransmitPhase2to3>> =
+            HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            let result = parties[party_index - 1].sign_phase2(all_data.get(&party_index).unwrap(), unique_kept_1to2.get(&party_index).unwrap(), kept_1to2.get(&party_index).unwrap(), received_1to2.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase2(
+                all_data.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap(),
+                kept_1to2.get(&party_index).unwrap(),
+                received_1to2.get(&party_index).unwrap(),
+            );
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
+                }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
                     kept_2to3.insert(party_index, keep);
                     transmit_2to3.insert(party_index, transmit);
-                },
+                }
             }
         }
 
         // Communication round 2
-        let mut received_2to3: HashMap<usize,Vec<TransmitPhase2to3>> = HashMap::with_capacity(parameters.threshold);
+        let mut received_2to3: HashMap<usize, Vec<TransmitPhase2to3>> =
+            HashMap::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-
             let mut new_row: Vec<TransmitPhase2to3> = Vec::with_capacity(parameters.threshold - 1);
             for (_, messages) in &transmit_2to3 {
                 for message in messages {
@@ -380,22 +424,26 @@ mod tests {
                 }
             }
             received_2to3.insert(party_index, new_row);
-
         }
 
         // Phase 3
         let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
         let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
         for party_index in executing_parties.clone() {
-            let result = parties[party_index - 1].sign_phase3(all_data.get(&party_index).unwrap(), unique_kept_2to3.get(&party_index).unwrap(), kept_2to3.get(&party_index).unwrap(), received_2to3.get(&party_index).unwrap());
+            let result = parties[party_index - 1].sign_phase3(
+                all_data.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap(),
+                kept_2to3.get(&party_index).unwrap(),
+                received_2to3.get(&party_index).unwrap(),
+            );
             match result {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                },
+                }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
                     broadcast_3to4.push(broadcast);
-                },
+                }
             }
         }
 
@@ -410,11 +458,13 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[some_index - 1].sign_phase4(all_data.get(&some_index).unwrap(), &x_coord, &broadcast_3to4);
+        let result = parties[some_index - 1].sign_phase4(
+            all_data.get(&some_index).unwrap(),
+            &x_coord,
+            &broadcast_3to4,
+        );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
-
     }
-
 }

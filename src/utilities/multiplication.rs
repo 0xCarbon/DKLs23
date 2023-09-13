@@ -1,30 +1,32 @@
+use k256::elliptic_curve::Field;
 /// This file realizes Functionality 3.5 in DKLs23 (https://eprint.iacr.org/2023/765.pdf).
 /// It is based upon the OT extension protocol in the file ot_extension.rs.
-/// 
+///
 /// As DKLs23 suggested, we use Protocol 1 of DKLs19 (https://eprint.iacr.org/2019/523.pdf).
 /// The first paper also gives some orientations on how to implement the protocol
 /// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
-
 use k256::Scalar;
-use k256::elliptic_curve::Field;
+use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::*;
 use crate::utilities::proofs::{DLogProof, EncProof};
 
-use crate::utilities::ot::ErrorOT;
 use crate::utilities::ot::ot_base::*;
-use crate::utilities::ot::ot_extension::{OTESender, OTEReceiver, OTEDataToSender, BATCH_SIZE, PRGOutput};
+use crate::utilities::ot::ot_extension::{
+    OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
+};
+use crate::utilities::ot::ErrorOT;
 
 // Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
 pub const L: usize = 2;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MulSender {
     pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MulReceiver {
     pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
@@ -64,7 +66,6 @@ impl ErrorMul {
 
 // We implement the protocol.
 impl MulSender {
-    
     // INITIALIZE
 
     // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
@@ -77,8 +78,16 @@ impl MulSender {
     }
 
     // The nonce will be sent by the receiver for the computation of the public gadget vector.
-    pub fn init_phase2(ot_receiver: &OTReceiver, session_id: &[u8], correlation: Vec<bool>, vec_r: &Vec<Scalar>, dlog_proof: &DLogProof, nonce: &Scalar) -> Result<MulSender, ErrorOT> {
-        let ote_sender = OTESender::init_phase2(ot_receiver, session_id, correlation, vec_r, dlog_proof)?;
+    pub fn init_phase2(
+        ot_receiver: &OTReceiver,
+        session_id: &[u8],
+        correlation: Vec<bool>,
+        vec_r: &Vec<Scalar>,
+        dlog_proof: &DLogProof,
+        nonce: &Scalar,
+    ) -> Result<MulSender, ErrorOT> {
+        let ote_sender =
+            OTESender::init_phase2(ot_receiver, session_id, correlation, vec_r, dlog_proof)?;
 
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
@@ -107,8 +116,12 @@ impl MulSender {
 
     // Input: Protocol's input and data coming from receiver.
     // Output: Protocol's output and data to receiver.
-    pub fn run(&self, session_id: &[u8], input: &Vec<Scalar>, data: &OTEDataToSender) -> Result<(Vec<Scalar>, MulDataToReceiver), ErrorMul> {
-
+    pub fn run(
+        &self,
+        session_id: &[u8],
+        input: &Vec<Scalar>,
+        data: &OTEDataToSender,
+    ) -> Result<(Vec<Scalar>, MulDataToReceiver), ErrorMul> {
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - No action for the sender.
@@ -137,8 +150,8 @@ impl MulSender {
         let mut correlation_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         let mut correlation_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         for i in 0..L {
-            let correlation_tilde_i = vec![a_tilde[i].clone();BATCH_SIZE];
-            let correlation_hat_i = vec![a_hat[i].clone();BATCH_SIZE];
+            let correlation_tilde_i = vec![a_tilde[i].clone(); BATCH_SIZE];
+            let correlation_hat_i = vec![a_hat[i].clone(); BATCH_SIZE];
 
             correlation_tilde.push(correlation_tilde_i);
             correlation_hat.push(correlation_hat_i);
@@ -165,45 +178,54 @@ impl MulSender {
         let mut tau_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
 
         for i in 0..L {
-            
             //Running OT protocol for tilde values.
             let result = self.ote_sender.run(session_id, &correlation_tilde[i], data);
-    
+
             match result {
-                Ok((output,tau)) => {
+                Ok((output, tau)) => {
                     z_tilde.push(output);
                     tau_tilde.push(tau);
-                },
-                Err(error) => { 
-                    return Err(ErrorMul::new(&format!("OTE error during multiplication: {:?}", error.description)));
-                },
+                }
+                Err(error) => {
+                    return Err(ErrorMul::new(&format!(
+                        "OTE error during multiplication: {:?}",
+                        error.description
+                    )));
+                }
             }
 
             //Running OT protocol for hat values.
             let result = self.ote_sender.run(session_id, &correlation_hat[i], data);
-    
+
             match result {
-                Ok((output,tau)) => {
+                Ok((output, tau)) => {
                     z_hat.push(output);
                     tau_hat.push(tau);
-                },
-                Err(error) => { 
-                    return Err(ErrorMul::new(&format!("OTE error during multiplication: {:?}", error.description)));
-                },
+                }
+                Err(error) => {
+                    return Err(ErrorMul::new(&format!(
+                        "OTE error during multiplication: {:?}",
+                        error.description
+                    )));
+                }
             }
         }
 
         // Step 4 - We compute the shared random values.
 
         // We use data as a transcript from Step 3.
-        let transcript = [data.u.concat(), data.verify_x.to_vec(), data.verify_t.concat()].concat();
+        let transcript = [
+            data.u.concat(),
+            data.verify_x.to_vec(),
+            data.verify_t.concat(),
+        ]
+        .concat();
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L);
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
-            
             // We compute the salts according to i and the varible.
             let salt_tilde = [&(1usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
             let salt_hat = [&(2usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
@@ -223,7 +245,6 @@ impl MulSender {
         let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L);
         let mut verify_u: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
-
             // We compute the i-th row of the matrix r in bytes.
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
             for j in 0..BATCH_SIZE {
@@ -268,7 +289,7 @@ impl MulSender {
         }
 
         // We now return all values.
-        
+
         let data_to_receiver = MulDataToReceiver {
             tau_tilde,
             tau_hat,
@@ -282,7 +303,6 @@ impl MulSender {
 }
 
 impl MulReceiver {
-
     // INITIALIZE
 
     // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
@@ -301,7 +321,13 @@ impl MulReceiver {
         (ot_sender, proof, nonce)
     }
 
-    pub fn init_phase2(ot_sender: &OTSender, session_id: &[u8], seed: &Seed, enc_proofs: &Vec<EncProof>, nonce: &Scalar) -> Result<MulReceiver, ErrorOT> {
+    pub fn init_phase2(
+        ot_sender: &OTSender,
+        session_id: &[u8],
+        seed: &Seed,
+        enc_proofs: &Vec<EncProof>,
+        nonce: &Scalar,
+    ) -> Result<MulReceiver, ErrorOT> {
         let ote_receiver = OTEReceiver::init_phase2(ot_sender, session_id, seed, enc_proofs)?;
 
         // We compute the public gadget vector from the nonce, in the same way as in
@@ -331,9 +357,11 @@ impl MulReceiver {
 
     // Input: Only the session id.
     // Output: First of protocol's outputs, data to keep for next phase and data to the sender.
-    // (Recall that the receiver gets the random factor from the multiplication as output.) 
-    pub fn run_phase1(&self, session_id: &[u8]) -> (Scalar, MulDataToKeepReceiver, OTEDataToSender) {
-
+    // (Recall that the receiver gets the random factor from the multiplication as output.)
+    pub fn run_phase1(
+        &self,
+        session_id: &[u8],
+    ) -> (Scalar, MulDataToKeepReceiver, OTEDataToSender) {
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - We sample the choice bits and compute the pad b_tilde.
@@ -360,19 +388,24 @@ impl MulReceiver {
         // cannot get the output immediately. This will only be computed
         // at the beginning of the next phase for the receiver.
 
-        let (extended_seeds, data_to_sender) = self.ote_receiver.run_phase1(session_id, &choice_bits);
+        let (extended_seeds, data_to_sender) =
+            self.ote_receiver.run_phase1(session_id, &choice_bits);
 
         // Step 4 - We compute the shared random values.
 
         // We use data_to_sender as a transcript from Step 3.
-        let transcript = [data_to_sender.u.concat(), data_to_sender.verify_x.to_vec(), data_to_sender.verify_t.concat()].concat();
+        let transcript = [
+            data_to_sender.u.concat(),
+            data_to_sender.verify_x.to_vec(),
+            data_to_sender.verify_t.concat(),
+        ]
+        .concat();
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L);
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
-            
             // We compute the salts according to i and the varible.
             let salt_tilde = [&(1usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
             let salt_hat = [&(2usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
@@ -399,8 +432,12 @@ impl MulReceiver {
 
     // Input: Data from previous phase and data from sender.
     // Output: Second of protocol's outputs.
-    pub fn run_phase2(&self, session_id: &[u8], data_kept: &MulDataToKeepReceiver, data_received: &MulDataToReceiver) -> Result<Vec<Scalar>,ErrorMul> {
-
+    pub fn run_phase2(
+        &self,
+        session_id: &[u8],
+        data_kept: &MulDataToKeepReceiver,
+        data_received: &MulDataToReceiver,
+    ) -> Result<Vec<Scalar>, ErrorMul> {
         // Step 3 (Conclusion) - We conclude the OT protocol.
 
         // The sender applied the protocol 2*L times with our data,
@@ -410,15 +447,25 @@ impl MulReceiver {
         let mut z_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         let mut z_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         for i in 0..L {
-            let output_tilde = self.ote_receiver.run_phase2(session_id, &data_kept.choice_bits, &data_kept.extended_seeds, &data_received.tau_tilde[i]);
-            let output_hat = self.ote_receiver.run_phase2(session_id, &data_kept.choice_bits, &data_kept.extended_seeds, &data_received.tau_hat[i]);
+            let output_tilde = self.ote_receiver.run_phase2(
+                session_id,
+                &data_kept.choice_bits,
+                &data_kept.extended_seeds,
+                &data_received.tau_tilde[i],
+            );
+            let output_hat = self.ote_receiver.run_phase2(
+                session_id,
+                &data_kept.choice_bits,
+                &data_kept.extended_seeds,
+                &data_received.tau_hat[i],
+            );
 
             z_tilde.push(output_tilde);
             z_hat.push(output_hat);
         }
 
         // Step 6 - We verify if the data sent by the sender is consistent.
-        
+
         // We use Section 5.1 in DKLs23 for an optimization of the
         // protocol in DKLs19.
 
@@ -428,13 +475,12 @@ impl MulReceiver {
         // The variable below saves each row of r in bytes.
         let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L);
         for i in 0..L {
-
             // We compute the i-th row of the matrix r in bytes.
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
             for j in 0..BATCH_SIZE {
-
                 // The entry depends on the choice bits.
-                let mut entry = (-(&data_kept.chi_tilde[i] * &z_tilde[i][j])) - (&data_kept.chi_hat[i] * &z_hat[i][j]);
+                let mut entry = (-(&data_kept.chi_tilde[i] * &z_tilde[i][j]))
+                    - (&data_kept.chi_hat[i] * &z_hat[i][j]);
                 if data_kept.choice_bits[j] {
                     entry = entry + &data_received.verify_u[i];
                 }
@@ -452,7 +498,9 @@ impl MulReceiver {
 
         // We compare the values.
         if data_received.verify_r != expected_verify_r {
-            return Err(ErrorMul::new("Sender cheated in multiplication protocol: Consistency check failed!"));
+            return Err(ErrorMul::new(
+                "Sender cheated in multiplication protocol: Consistency check failed!",
+            ));
         }
 
         // INPUT AND ADJUSTMENT
@@ -469,7 +517,7 @@ impl MulReceiver {
             for j in 0..BATCH_SIZE {
                 summation = summation + (&self.public_gadget[j] * &z_tilde[i][j]);
             }
-            let final_sum = (&data_kept.b * &data_received.gamma_sender[i]) + summation; 
+            let final_sum = (&data_kept.b * &data_received.gamma_sender[i]) + summation;
             output.push(final_sum);
         }
 
@@ -487,7 +535,7 @@ mod tests {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
         // INITIALIZATION
-        
+
         // Phase 1 - Receiver
         let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&session_id);
 
@@ -500,27 +548,35 @@ mod tests {
         let seed = ot_receiver.seed;
 
         // Phase 2 - Receiver
-        let result_receiver = MulReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs, &nonce);
+        let result_receiver =
+            MulReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs, &nonce);
         let mul_receiver: MulReceiver;
         match result_receiver {
             Ok(r) => {
                 mul_receiver = r;
-            },
+            }
             Err(error) => {
                 panic!("Two-party multiplication error: {:?}", error.description);
-            },
+            }
         }
 
         // Phase 2 - Sender
-        let result_sender = MulSender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof, &nonce);
+        let result_sender = MulSender::init_phase2(
+            &ot_receiver,
+            &session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+            &nonce,
+        );
         let mul_sender: MulSender;
         match result_sender {
             Ok(s) => {
                 mul_sender = s;
-            },
+            }
             Err(error) => {
                 panic!("Two-party multiplication error: {:?}", error.description);
-            },
+            }
         }
 
         // PROTOCOL
@@ -547,23 +603,24 @@ mod tests {
             Ok((output, data)) => {
                 sender_output = output;
                 data_to_receiver = data;
-            },
+            }
             Err(error) => {
                 panic!("Two-party multiplication error: {:?}", error.description);
-            },
+            }
         }
 
         // Communication round 2
         // Sender transmits data_to_receiver.
 
         // Phase 2 - Receiver
-        let receiver_result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        let receiver_result =
+            mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
 
         let receiver_output: Vec<Scalar>;
         match receiver_result {
             Ok(output) => {
                 receiver_output = output;
-            },
+            }
             Err(error) => {
                 panic!("Two-party multiplication error: {:?}", error.description);
             }
@@ -572,7 +629,7 @@ mod tests {
         // Verification that the protocol did what it should do.
         for i in 0..L {
             // The sum of the outputs should be equal to the product of the
-            // sender's chosen scalar and the receiver's random scalar. 
+            // sender's chosen scalar and the receiver's random scalar.
             let sum = &sender_output[i] + &receiver_output[i];
             assert_eq!(sum, &sender_input[i] * &receiver_random);
         }
