@@ -1,17 +1,17 @@
+use k256::elliptic_curve::{ops::Reduce, Field};
 /// This file implements some protocols for zero-knowledge proofs over the
 /// curve secp256k1.
-/// 
+///
 /// The main protocol is for proofs of discrete logarithms. It is used during
 /// key generation in the DKLs23 protocol (https://eprint.iacr.org/2023/765.pdf).
-/// 
+///
 /// For the base OTs in the OT extension, we use the endemic protocol of Zhou et al.
 /// (see Section 3 of https://eprint.iacr.org/2023/765.pdf). Thus, we also include
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
-
-use k256::{Scalar, AffinePoint, ProjectivePoint, U256};
-use k256::elliptic_curve::{Field, ops::Reduce};
+use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::*;
 
@@ -32,14 +32,13 @@ pub const T: usize = 32;
 // that would not make much sense if this interactive proof were used alone.
 
 // Schnorr's protocol (interactive).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InteractiveDLogProof {
     pub challenge: Vec<u8>,
     pub challenge_response: Scalar,
 }
 
 impl InteractiveDLogProof {
-
     // Step 1 - Sample the random commitments.
     pub fn prove_step1() -> (Scalar, AffinePoint) {
         let scalar_rand_commitment = Scalar::random(rand::thread_rng());
@@ -50,12 +49,15 @@ impl InteractiveDLogProof {
 
     // Step 2 - Compute the response for a given challenge.
     // Here, scalar is the witness for the proof.
-    pub fn prove_step2(scalar: &Scalar, scalar_rand_commitment: &Scalar, challenge: &[u8]) -> InteractiveDLogProof {
-
+    pub fn prove_step2(
+        scalar: &Scalar,
+        scalar_rand_commitment: &Scalar,
+        challenge: &[u8],
+    ) -> InteractiveDLogProof {
         // For convenience, we are using a challenge in bytes.
         // We convert it back to a scalar.
         // The challenge will have T bits, so we first extend it to 256 bits.
-        let mut extended = vec![0u8; 32 - T/8];
+        let mut extended = vec![0u8; 32 - T / 8];
         extended.extend_from_slice(challenge);
 
         let challenge_scalar = Scalar::reduce(U256::from_be_slice(&extended));
@@ -64,7 +66,7 @@ impl InteractiveDLogProof {
         let challenge_response = scalar_rand_commitment - &(challenge_scalar * scalar);
 
         InteractiveDLogProof {
-            challenge: challenge.to_vec(),   // We save the challenge for the next protocol.
+            challenge: challenge.to_vec(), // We save the challenge for the next protocol.
             challenge_response,
         }
     }
@@ -77,25 +79,25 @@ impl InteractiveDLogProof {
     // next protocol, it will come from the prover, so we decided to save it
     // inside the struct.
     pub fn verify(&self, point: &AffinePoint, point_rand_commitment: &AffinePoint) -> bool {
-
         // For convenience, we are using a challenge in bytes.
         // We convert it back to a scalar.
         // The challenge will have T bits, so we first extend it to 256 bits.
-        let mut extended = vec![0u8; 32 - T/8];
+        let mut extended = vec![0u8; 32 - T / 8];
         extended.extend_from_slice(&self.challenge);
 
         let challenge_scalar = Scalar::reduce(U256::from_be_slice(&extended));
 
         // We compare the values that should agree.
-        let point_verify = ((AffinePoint::GENERATOR * &self.challenge_response) + (*point * &challenge_scalar)).to_affine();
+        let point_verify = ((AffinePoint::GENERATOR * &self.challenge_response)
+            + (*point * &challenge_scalar))
+            .to_affine();
 
         point_verify == *point_rand_commitment
     }
-
 }
 
 // Schnorr's protocol (non-interactive via randomized Fischlin transform).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DLogProof {
     pub point: AffinePoint,
     pub rand_commitments: Vec<AffinePoint>,
@@ -103,7 +105,6 @@ pub struct DLogProof {
 }
 
 impl DLogProof {
-
     // Non-interactive version of the previous proof.
     //
     // In order to do so, we employ the "randomized Fischlin transform" described
@@ -121,7 +122,6 @@ impl DLogProof {
     // With lamdba = 256, we chose r = 64 and l = 4 (higher values of l were too slow).
     // In this case, the constant t from the paper is equal to 32.
     pub fn prove(scalar: &Scalar, session_id: &[u8]) -> DLogProof {
-        
         // We execute Step 1 r times.
         let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R);
         let mut states: Vec<Scalar> = Vec::with_capacity(R);
@@ -133,14 +133,18 @@ impl DLogProof {
         }
 
         // We save this vector in bytes.
-        let rc_as_bytes = rand_commitments.clone().into_iter().map(|x| point_to_bytes(&x)).collect::<Vec<Vec<u8>>>().concat();
+        let rc_as_bytes = rand_commitments
+            .clone()
+            .into_iter()
+            .map(|x| point_to_bytes(&x))
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
 
         // Now, there is a "proof of work".
         // We have to find the good challenges.
-        let mut first_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity(R/2);
-        let mut last_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity(R/2);
-        for i in 0..(R/2) {
-
+        let mut first_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity(R / 2);
+        let mut last_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity(R / 2);
+        for i in 0..(R / 2) {
             // We will find different challenges until one of them works.
             // Since both hashes to be computed are of 2l bits, we expect
             // them to coincide after 2^{2l} tries (assuming everything is
@@ -151,9 +155,8 @@ impl DLogProof {
             let mut flag = false;
             let mut first_counter = 0u16;
             while first_counter < u16::MAX && !flag {
-
                 // We sample an array of T bits = T/8 bytes.
-                let first_challenge = rand::thread_rng().gen::<[u8; T/8]>();
+                let first_challenge = rand::thread_rng().gen::<[u8; T / 8]>();
 
                 // If this challenge was already sampled, we should go back.
                 // However, with some tests, we saw that it is time consuming
@@ -168,31 +171,46 @@ impl DLogProof {
                 // a lot of repetitions.
 
                 // We execute Step 2 at index i.
-                let first_proof = InteractiveDLogProof::prove_step2(scalar, &states[i], &first_challenge);
+                let first_proof =
+                    InteractiveDLogProof::prove_step2(scalar, &states[i], &first_challenge);
 
                 // Let's take the first hash here.
-                let first_msg = [&rc_as_bytes[..], &i.to_be_bytes(), &first_challenge, &scalar_to_bytes(&first_proof.challenge_response)].concat();
+                let first_msg = [
+                    &rc_as_bytes[..],
+                    &i.to_be_bytes(),
+                    &first_challenge,
+                    &scalar_to_bytes(&first_proof.challenge_response),
+                ]
+                .concat();
                 // The random oracle has to return an array of 2l bits = l/4 bytes, so we take a slice.
-                let first_hash = &hash(&first_msg, session_id)[0..(L/4)];
+                let first_hash = &hash(&first_msg, session_id)[0..(L / 4)];
 
                 // Now comes the search for the next challenge.
                 let mut second_counter = 0u16;
                 while second_counter < u16::MAX {
-
                     // We sample another array. Same considerations as before.
-                    let second_challenge = rand::thread_rng().gen::<[u8; T/8]>();
+                    let second_challenge = rand::thread_rng().gen::<[u8; T / 8]>();
                     //if used_second_challenges.contains(&second_challenge) { continue; }
 
                     // We execute Step 2 at index i + R/2.
-                    let second_proof = InteractiveDLogProof::prove_step2(scalar, &states[i + (R/2)], &second_challenge);
+                    let second_proof = InteractiveDLogProof::prove_step2(
+                        scalar,
+                        &states[i + (R / 2)],
+                        &second_challenge,
+                    );
 
                     // Second hash now.
-                    let second_msg = [&rc_as_bytes[..], &(i + (R/2)).to_be_bytes(), &second_challenge, &scalar_to_bytes(&second_proof.challenge_response)].concat();
-                    let second_hash = &hash(&second_msg, session_id)[0..(L/4)];
+                    let second_msg = [
+                        &rc_as_bytes[..],
+                        &(i + (R / 2)).to_be_bytes(),
+                        &second_challenge,
+                        &scalar_to_bytes(&second_proof.challenge_response),
+                    ]
+                    .concat();
+                    let second_hash = &hash(&second_msg, session_id)[0..(L / 4)];
 
                     // If the hashes are equal, we are successful and we can break both loops.
                     if *first_hash == *second_hash {
-
                         // We save the successful results.
                         first_proofs.push(first_proof);
                         last_proofs.push(second_proof);
@@ -200,7 +218,7 @@ impl DLogProof {
                         // We update the flag to break the outer loop.
                         flag = true;
 
-                        break; 
+                        break;
                     }
 
                     // If we were not successful, we try again.
@@ -209,7 +227,7 @@ impl DLogProof {
 
                 // If we were not successful, we try again.
                 first_counter += 1;
-            } 
+            }
         }
 
         // We put together the vectors.
@@ -227,7 +245,6 @@ impl DLogProof {
 
     //Verification of a proof of discrete logarithm. Note that the point to be verified is in proof.
     pub fn verify(proof: &DLogProof, session_id: &[u8]) -> bool {
-
         // We first verify that all vectors have the correct length.
         // If the prover is very unlucky, there is the possibility that
         // he doesn't return all the needed proofs.
@@ -236,16 +253,33 @@ impl DLogProof {
         }
 
         // We save this vector in bytes.
-        let rc_as_bytes = proof.rand_commitments.clone().into_iter().map(|x| point_to_bytes(&x)).collect::<Vec<Vec<u8>>>().concat();
+        let rc_as_bytes = proof
+            .rand_commitments
+            .clone()
+            .into_iter()
+            .map(|x| point_to_bytes(&x))
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
 
-        for i in 0..(R/2) {
-
+        for i in 0..(R / 2) {
             // We compare the hashes
-            let first_msg = [&rc_as_bytes[..], &i.to_be_bytes(), &proof.proofs[i].challenge, &scalar_to_bytes(&proof.proofs[i].challenge_response)].concat();
-            let first_hash = &hash(&first_msg, session_id)[0..(L/4)];
+            let first_msg = [
+                &rc_as_bytes[..],
+                &i.to_be_bytes(),
+                &proof.proofs[i].challenge,
+                &scalar_to_bytes(&proof.proofs[i].challenge_response),
+            ]
+            .concat();
+            let first_hash = &hash(&first_msg, session_id)[0..(L / 4)];
 
-            let second_msg = [&rc_as_bytes[..], &(i + (R/2)).to_be_bytes(), &proof.proofs[i + (R/2)].challenge, &scalar_to_bytes(&proof.proofs[i + (R/2)].challenge_response)].concat();
-            let second_hash = &hash(&second_msg, session_id)[0..(L/4)];
+            let second_msg = [
+                &rc_as_bytes[..],
+                &(i + (R / 2)).to_be_bytes(),
+                &proof.proofs[i + (R / 2)].challenge,
+                &scalar_to_bytes(&proof.proofs[i + (R / 2)].challenge_response),
+            ]
+            .concat();
+            let second_hash = &hash(&second_msg, session_id)[0..(L / 4)];
 
             if *first_hash != *second_hash {
                 return false;
@@ -253,8 +287,9 @@ impl DLogProof {
 
             // We verify both proofs.
             let verification_1 = proof.proofs[i].verify(&proof.point, &proof.rand_commitments[i]);
-            let verification_2 = proof.proofs[i + (R/2)].verify(&proof.point, &proof.rand_commitments[i + (R/2)]);
-            
+            let verification_2 = proof.proofs[i + (R / 2)]
+                .verify(&proof.point, &proof.rand_commitments[i + (R / 2)]);
+
             if !verification_1 || !verification_2 {
                 return false;
             }
@@ -270,11 +305,35 @@ impl DLogProof {
 
         //Computes the commitment (it's the hash of DLogProof in bytes).
         let point_as_bytes = point_to_bytes(&proof.point);
-        let rc_as_bytes = proof.rand_commitments.clone().into_iter().map(|x| point_to_bytes(&x)).collect::<Vec<Vec<u8>>>().concat();
-        let challenges_as_bytes = proof.proofs.clone().into_iter().map(|x| x.challenge).collect::<Vec<Vec<u8>>>().concat();
-        let responses_as_bytes = proof.proofs.clone().into_iter().map(|x| scalar_to_bytes(&x.challenge_response)).collect::<Vec<Vec<u8>>>().concat();
+        let rc_as_bytes = proof
+            .rand_commitments
+            .clone()
+            .into_iter()
+            .map(|x| point_to_bytes(&x))
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
+        let challenges_as_bytes = proof
+            .proofs
+            .clone()
+            .into_iter()
+            .map(|x| x.challenge)
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
+        let responses_as_bytes = proof
+            .proofs
+            .clone()
+            .into_iter()
+            .map(|x| scalar_to_bytes(&x.challenge_response))
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
 
-        let msg_for_commitment = [point_as_bytes, rc_as_bytes, challenges_as_bytes, responses_as_bytes].concat();
+        let msg_for_commitment = [
+            point_as_bytes,
+            rc_as_bytes,
+            challenges_as_bytes,
+            responses_as_bytes,
+        ]
+        .concat();
         let commitment = hash(&msg_for_commitment, session_id);
 
         (proof, commitment)
@@ -282,19 +341,41 @@ impl DLogProof {
 
     //Verify a proof checking the commitment
     pub fn decommit_verify(proof: &DLogProof, commitment: &HashOutput, session_id: &[u8]) -> bool {
-
         //Computes the expected commitment
         let point_as_bytes = point_to_bytes(&proof.point);
-        let rc_as_bytes = proof.rand_commitments.clone().into_iter().map(|x| point_to_bytes(&x)).collect::<Vec<Vec<u8>>>().concat();
-        let challenges_as_bytes = proof.proofs.clone().into_iter().map(|x| x.challenge).collect::<Vec<Vec<u8>>>().concat();
-        let responses_as_bytes = proof.proofs.clone().into_iter().map(|x| scalar_to_bytes(&x.challenge_response)).collect::<Vec<Vec<u8>>>().concat();
+        let rc_as_bytes = proof
+            .rand_commitments
+            .clone()
+            .into_iter()
+            .map(|x| point_to_bytes(&x))
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
+        let challenges_as_bytes = proof
+            .proofs
+            .clone()
+            .into_iter()
+            .map(|x| x.challenge)
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
+        let responses_as_bytes = proof
+            .proofs
+            .clone()
+            .into_iter()
+            .map(|x| scalar_to_bytes(&x.challenge_response))
+            .collect::<Vec<Vec<u8>>>()
+            .concat();
 
-        let msg_for_commitment = [point_as_bytes, rc_as_bytes, challenges_as_bytes, responses_as_bytes].concat();
+        let msg_for_commitment = [
+            point_as_bytes,
+            rc_as_bytes,
+            challenges_as_bytes,
+            responses_as_bytes,
+        ]
+        .concat();
         let expected_commitment = hash(&msg_for_commitment, session_id);
 
         (*commitment == expected_commitment) && Self::verify(proof, session_id)
     }
-
 }
 
 // ENCRYPTION PROOF
@@ -304,7 +385,7 @@ impl DLogProof {
 //
 // This implementation follows their paper (https://eprint.iacr.org/2022/1525.pdf):
 // see page 17 and Appendix B.
-// 
+//
 //
 // IMPORTANT: As specified in page 30 of DKLs23 (https://eprint.iacr.org/2023/765.pdf),
 // we instantiate the protocols above over the same elliptic curve group
@@ -319,8 +400,8 @@ pub struct RandomCommitments {
 
 #[derive(Debug, Clone)]
 pub struct CPProof {
-    pub base_g: AffinePoint,   // Parameters for the proof.
-    pub base_h: AffinePoint,   // In the encryption proof, base_g = generator.
+    pub base_g: AffinePoint, // Parameters for the proof.
+    pub base_h: AffinePoint, // In the encryption proof, base_g = generator.
     pub point_u: AffinePoint,
     pub point_v: AffinePoint,
 
@@ -328,7 +409,6 @@ pub struct CPProof {
 }
 
 impl CPProof {
-
     // We need a proof that scalar * base_g = point_u and scalar * base_h = point_v.
     // As we will see later, the challenge will not be calculated only with the data
     // we now have. Thus, we have to write the interactive version here for the moment.
@@ -352,8 +432,13 @@ impl CPProof {
 
     // Step 2 - Compute the response for a given challenge.
     // Here, scalar is the witness for the proof.
-    pub fn prove_step2(base_g: &AffinePoint, base_h: &AffinePoint, scalar: &Scalar, scalar_rand_commitment: &Scalar, challenge: &Scalar) -> CPProof {
-
+    pub fn prove_step2(
+        base_g: &AffinePoint,
+        base_h: &AffinePoint,
+        scalar: &Scalar,
+        scalar_rand_commitment: &Scalar,
+        challenge: &Scalar,
+    ) -> CPProof {
         // We get u and v.
         let point_u = (*base_g * scalar).to_affine();
         let point_v = (*base_h * scalar).to_affine();
@@ -374,10 +459,11 @@ impl CPProof {
     // Verification of a proof. Note that the data to be verified is in the variable proof.
     // The verifier must know the challenge (in the interactive version, he chooses it).
     pub fn verify(&self, rand_commitments: &RandomCommitments, challenge: &Scalar) -> bool {
-
         // We compare the values that should agree.
-        let point_verify_g = ((self.base_g * &self.challenge_response) + (self.point_u * challenge)).to_affine();
-        let point_verify_h = ((self.base_h * &self.challenge_response) + (self.point_v * challenge)).to_affine();
+        let point_verify_g =
+            ((self.base_g * &self.challenge_response) + (self.point_u * challenge)).to_affine();
+        let point_verify_h =
+            ((self.base_h * &self.challenge_response) + (self.point_v * challenge)).to_affine();
 
         (point_verify_g == rand_commitments.rc_g) && (point_verify_h == rand_commitments.rc_h)
     }
@@ -386,15 +472,21 @@ impl CPProof {
     // a witness. The only way to do this is to sample the challenge ourselves and use it
     // to compute the other values. We then return the challenge used, the commitments
     // and the corresponding proof.
-    pub fn simulate(base_g: &AffinePoint, base_h: &AffinePoint, point_u: &AffinePoint, point_v: &AffinePoint) -> (RandomCommitments, Scalar, CPProof){
-
+    pub fn simulate(
+        base_g: &AffinePoint,
+        base_h: &AffinePoint,
+        point_u: &AffinePoint,
+        point_v: &AffinePoint,
+    ) -> (RandomCommitments, Scalar, CPProof) {
         // We sample the challenge and the response first.
         let challenge = Scalar::random(rand::thread_rng());
         let challenge_response = Scalar::random(rand::thread_rng());
 
         // Now we compute the "random" commitments that work for this challenge.
-        let point_rand_commitment_g = ((*base_g * &challenge_response) + (*point_u * &challenge)).to_affine();
-        let point_rand_commitment_h = ((*base_h * &challenge_response) + (*point_v * &challenge)).to_affine();
+        let point_rand_commitment_g =
+            ((*base_g * &challenge_response) + (*point_u * &challenge)).to_affine();
+        let point_rand_commitment_h =
+            ((*base_h * &challenge_response) + (*point_v * &challenge)).to_affine();
 
         let rand_commitments = RandomCommitments {
             rc_g: point_rand_commitment_g,
@@ -412,14 +504,13 @@ impl CPProof {
 
         (rand_commitments, challenge, proof)
     }
-
 }
 
 // The actual proof for the OT protocol.
 #[derive(Debug, Clone)]
 pub struct EncProof {
-    pub proof0: CPProof,    // EncProof is a proof that proof0 or proof1
-    pub proof1: CPProof,    // really proves what it says.
+    pub proof0: CPProof, // EncProof is a proof that proof0 or proof1
+    pub proof1: CPProof, // really proves what it says.
 
     pub commitments0: RandomCommitments,
     pub commitments1: RandomCommitments,
@@ -429,9 +520,7 @@ pub struct EncProof {
 }
 
 impl EncProof {
-
     pub fn prove(session_id: &[u8], base_h: &AffinePoint, scalar: &Scalar, bit: bool) -> EncProof {
-        
         // PRELIMINARIES
 
         // g is the generator in this case.
@@ -439,19 +528,24 @@ impl EncProof {
 
         // We compute u and v from Section 3 in the paper.
         // Be careful: these are not point_u and point_v from CPProof.
-       
-       // u is independent of the bit chosen.
+
+        // u is independent of the bit chosen.
         let u = (*base_h * scalar).to_affine();
-        
+
         // v = h*bit + g*scalar.
         // The other possible value for v will be used in a simulated proof.
         // See below for a better explanation.
         let (v, fake_v) = if bit {
-            (((base_g * scalar) + base_h).to_affine(), ((base_g * scalar) + base_h).to_affine())
+            (
+                ((base_g * scalar) + base_h).to_affine(),
+                ((base_g * scalar) + base_h).to_affine(),
+            )
         } else {
-            ((base_g * scalar).to_affine(), ((base_g * scalar) - base_h).to_affine())
+            (
+                (base_g * scalar).to_affine(),
+                ((base_g * scalar) - base_h).to_affine(),
+            )
         };
-
 
         // STEP 1
         // We start our real proof and simulate the fake proof.
@@ -468,7 +562,8 @@ impl EncProof {
         let (real_scalar_commitment, real_commitments) = CPProof::prove_step1(&base_g, base_h);
 
         // Fake proof.
-        let (fake_commitments, fake_challenge, fake_proof) = CPProof::simulate(&base_g, base_h, &fake_v, &u);
+        let (fake_commitments, fake_challenge, fake_proof) =
+            CPProof::simulate(&base_g, base_h, &fake_v, &u);
 
         // STEP 2
         // Fiat-Shamir: We compute the "total" challenge based on the
@@ -489,9 +584,27 @@ impl EncProof {
         // For the message, we first put the commitments for the first proof
         // since the verifier does not know which proof is the real one.
         let msg_for_challenge = if bit {
-            [base_h_as_bytes, u_as_bytes, v_as_bytes, f_rc_g_as_bytes, f_rc_h_as_bytes, r_rc_g_as_bytes, r_rc_h_as_bytes].concat()
+            [
+                base_h_as_bytes,
+                u_as_bytes,
+                v_as_bytes,
+                f_rc_g_as_bytes,
+                f_rc_h_as_bytes,
+                r_rc_g_as_bytes,
+                r_rc_h_as_bytes,
+            ]
+            .concat()
         } else {
-            [base_h_as_bytes, u_as_bytes, v_as_bytes, r_rc_g_as_bytes, r_rc_h_as_bytes, f_rc_g_as_bytes, f_rc_h_as_bytes].concat()
+            [
+                base_h_as_bytes,
+                u_as_bytes,
+                v_as_bytes,
+                r_rc_g_as_bytes,
+                r_rc_h_as_bytes,
+                f_rc_g_as_bytes,
+                f_rc_h_as_bytes,
+            ]
+            .concat()
         };
 
         let challenge = hash_as_scalar(&msg_for_challenge, session_id);
@@ -509,7 +622,13 @@ impl EncProof {
 
         let real_challenge = &challenge - &fake_challenge;
 
-        let real_proof = CPProof::prove_step2(&base_g, base_h, scalar, &real_scalar_commitment, &real_challenge);
+        let real_proof = CPProof::prove_step2(
+            &base_g,
+            base_h,
+            scalar,
+            &real_scalar_commitment,
+            &real_challenge,
+        );
 
         // RETURN
 
@@ -541,13 +660,13 @@ impl EncProof {
     }
 
     pub fn verify(&self, session_id: &[u8]) -> bool {
-
         // We check if the proofs are compatible.
         if (self.proof0.base_g != AffinePoint::GENERATOR)
         || (self.proof0.base_g != self.proof1.base_g)
         || (self.proof0.base_h != self.proof1.base_h)
         || (self.proof0.point_v != self.proof1.point_v) // This is u from Section 3 in the paper.
-        || (self.proof0.point_u != (ProjectivePoint::from(self.proof1.point_u) + self.proof1.base_h).to_affine())    // proof0 contains v and proof1 contains v-h.
+        || (self.proof0.point_u != (ProjectivePoint::from(self.proof1.point_u) + self.proof1.base_h).to_affine())
+        // proof0 contains v and proof1 contains v-h.
         {
             return false;
         }
@@ -556,7 +675,7 @@ impl EncProof {
 
         let base_h_as_bytes = point_to_bytes(&self.proof0.base_h);
 
-        // u and v are respectively point_v and point_u from the proof0. 
+        // u and v are respectively point_v and point_u from the proof0.
         let u_as_bytes = point_to_bytes(&self.proof0.point_v);
         let v_as_bytes = point_to_bytes(&self.proof0.point_u);
 
@@ -566,7 +685,16 @@ impl EncProof {
         let rc1_g_as_bytes = point_to_bytes(&self.commitments1.rc_g);
         let rc1_h_as_bytes = point_to_bytes(&self.commitments1.rc_h);
 
-        let msg_for_challenge = [base_h_as_bytes, u_as_bytes, v_as_bytes, rc0_g_as_bytes, rc0_h_as_bytes, rc1_g_as_bytes, rc1_h_as_bytes].concat();
+        let msg_for_challenge = [
+            base_h_as_bytes,
+            u_as_bytes,
+            v_as_bytes,
+            rc0_g_as_bytes,
+            rc0_h_as_bytes,
+            rc1_g_as_bytes,
+            rc1_h_as_bytes,
+        ]
+        .concat();
         let expected_challenge = hash_as_scalar(&msg_for_challenge, session_id);
 
         // The challenge should be the sum of the challenges used in the proofs.
@@ -575,14 +703,14 @@ impl EncProof {
         }
 
         // Finally, we check if both proofs are valid.
-        self.proof0.verify(&self.commitments0, &self.challenge0) && self.proof1.verify(&self.commitments1, &self.challenge1)
+        self.proof0.verify(&self.commitments0, &self.challenge0)
+            && self.proof1.verify(&self.commitments1, &self.challenge1)
     }
 
     // For convenience and to avoid confusion with the change of order.
     pub fn get_u_and_v(&self) -> (AffinePoint, AffinePoint) {
         (self.proof0.point_v.clone(), self.proof0.point_u.clone())
     }
-
 }
 
 #[cfg(test)]
@@ -604,7 +732,8 @@ mod tests {
         let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let mut proof = DLogProof::prove(&scalar, &session_id);
-        proof.proofs[0].challenge_response = &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
+        proof.proofs[0].challenge_response =
+            &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::verify(&proof, &session_id)));
     }
 
@@ -621,7 +750,8 @@ mod tests {
         let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let (mut proof, commitment) = DLogProof::prove_commit(&scalar, &session_id);
-        proof.proofs[0].challenge_response = &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
+        proof.proofs[0].challenge_response =
+            &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::decommit_verify(&proof, &commitment, &session_id)));
     }
 
@@ -630,7 +760,11 @@ mod tests {
         let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let (proof, mut commitment) = DLogProof::prove_commit(&scalar, &session_id);
-        if commitment[0] == 0 { commitment[0] = 1; } else { commitment[0] -= 1; } //Changing the commitment
+        if commitment[0] == 0 {
+            commitment[0] = 1;
+        } else {
+            commitment[0] -= 1;
+        } //Changing the commitment
         assert!(!(DLogProof::decommit_verify(&proof, &commitment, &session_id)));
     }
 
@@ -653,7 +787,13 @@ mod tests {
         let challenge = Scalar::random(rand::thread_rng());
 
         // Prover - Step 2.
-        let proof = CPProof::prove_step2(&base_g, &base_h, &scalar, &scalar_rand_commitment, &challenge);
+        let proof = CPProof::prove_step2(
+            &base_g,
+            &base_h,
+            &scalar,
+            &scalar_rand_commitment,
+            &challenge,
+        );
 
         // Verifier verifies the proof.
         let verification = proof.verify(&rand_commitments, &challenge);
@@ -675,7 +815,8 @@ mod tests {
         let point_v = (generator * log_point_v).to_affine();
 
         // Simulation.
-        let (rand_commitments, challenge, proof) = CPProof::simulate(&base_g, &base_h, &point_u, &point_v);
+        let (rand_commitments, challenge, proof) =
+            CPProof::simulate(&base_g, &base_h, &point_u, &point_v);
 
         let verification = proof.verify(&rand_commitments, &challenge);
 
@@ -686,7 +827,6 @@ mod tests {
 
     #[test]
     fn test_enc_proof() {
-
         // We sample the initial values.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
@@ -705,5 +845,4 @@ mod tests {
 
         assert!(verification);
     }
-
 }

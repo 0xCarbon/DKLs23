@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use k256::{Scalar, AffinePoint};
+use k256::{AffinePoint, Scalar};
+use serde::{Deserialize, Serialize};
 
-use crate::utilities::multiplication::{MulSender, MulReceiver};
-use crate::utilities::zero_sharings::ZeroShare;
 use crate::protocols::derivation::DerivationData;
+use crate::utilities::multiplication::{MulReceiver, MulSender};
+use crate::utilities::zero_sharings::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
@@ -12,10 +13,10 @@ pub mod re_key;
 pub mod refresh;
 pub mod signing;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Parameters {
-    pub threshold: usize,     //t
-    pub share_count: usize,   //n
+    pub threshold: usize,   //t
+    pub share_count: usize, //n
 }
 
 // This struct represents a party after key generation ready to sign a message.
@@ -25,21 +26,32 @@ pub struct Party {
     pub party_index: usize,
     pub session_id: Vec<u8>,
 
-    pub poly_point: Scalar,  // It behaves as the secrect key share
-    pub pk: AffinePoint,           // Public key
+    pub poly_point: Scalar, // It behaves as the secrect key share
+    pub pk: AffinePoint,    // Public key
 
-    pub zero_share: ZeroShare,          // Used for computing shares of zero during signing.
+    pub zero_share: ZeroShare, // Used for computing shares of zero during signing.
 
-    pub mul_senders: HashMap<usize, MulSender>,     // Initializations for two-party multiplication.
-    pub mul_receivers: HashMap<usize,MulReceiver>,  // The key in the HashMap represents the other party.
+    pub mul_senders: HashMap<usize, MulSender>, // Initializations for two-party multiplication.
+    pub mul_receivers: HashMap<usize, MulReceiver>, // The key in the HashMap represents the other party.
 
-    pub derivation_data: DerivationData,    // Data for BIP-32 derivation.
+    pub derivation_data: DerivationData, // Data for BIP-32 derivation.
 
-    pub eth_address: String,    // Ethereum address calculated from the public key.
+    pub eth_address: String, // Ethereum address calculated from the public key.
 }
 
 impl Party {
-    pub fn new(parameters: Parameters, party_index: usize, session_id: Vec<u8>, poly_point: Scalar, pk: AffinePoint, zero_share: ZeroShare, mul_senders: HashMap<usize, MulSender>, mul_receivers: HashMap<usize,MulReceiver>, derivation_data: DerivationData, eth_address: String) -> Party {
+    pub fn new(
+        parameters: Parameters,
+        party_index: usize,
+        session_id: Vec<u8>,
+        poly_point: Scalar,
+        pk: AffinePoint,
+        zero_share: ZeroShare,
+        mul_senders: HashMap<usize, MulSender>,
+        mul_receivers: HashMap<usize, MulReceiver>,
+        derivation_data: DerivationData,
+        eth_address: String,
+    ) -> Party {
         Party {
             parameters,
             party_index,
@@ -60,7 +72,7 @@ impl Party {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct Abort {
     pub index: usize,
     pub description: String,
@@ -68,7 +80,7 @@ pub struct Abort {
 
 impl Abort {
     pub fn new(index: usize, description: &str) -> Abort {
-        Abort { 
+        Abort {
             index,
             description: String::from(description),
         }
@@ -84,6 +96,9 @@ pub struct PartiesMessage {
 
 impl PartiesMessage {
     pub fn reverse(&self) -> PartiesMessage {
-        PartiesMessage { sender: self.receiver, receiver: self.sender }
+        PartiesMessage {
+            sender: self.receiver,
+            receiver: self.sender,
+        }
     }
 }
