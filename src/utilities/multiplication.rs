@@ -227,8 +227,8 @@ impl MulSender {
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
             // We compute the salts according to i and the varible.
-            let salt_tilde = [&(1usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-            let salt_hat = [&(2usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
+            let salt_tilde = [&(1u8).to_be_bytes(), &(i as u8).to_be_bytes(), session_id].concat();
+            let salt_hat = [&(2u8).to_be_bytes(), &(i as u8).to_be_bytes(), session_id].concat();
 
             chi_tilde.push(hash_as_scalar(&transcript, &salt_tilde));
             chi_hat.push(hash_as_scalar(&transcript, &salt_hat));
@@ -407,8 +407,8 @@ impl MulReceiver {
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
             // We compute the salts according to i and the varible.
-            let salt_tilde = [&(1usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-            let salt_hat = [&(2usize).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
+            let salt_tilde = [&(1u8).to_be_bytes(), &(i as u8).to_be_bytes(), session_id].concat();
+            let salt_hat = [&(2u8).to_be_bytes(), &(i as u8).to_be_bytes(), session_id].concat();
 
             chi_tilde.push(hash_as_scalar(&transcript, &salt_tilde));
             chi_hat.push(hash_as_scalar(&transcript, &salt_hat));

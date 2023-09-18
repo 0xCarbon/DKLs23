@@ -129,7 +129,7 @@ impl OTSender {
         let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             // We use different ids for different iterations.
-            let current_sid = [&i.to_be_bytes(), session_id].concat();
+            let current_sid = [&(i as u16).to_be_bytes(), session_id].concat();
 
             let (m0, m1) = self.run_phase2(&current_sid, seed, &enc_proofs[i])?;
 
@@ -185,7 +185,7 @@ impl OTReceiver {
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             // We use different ids for different iterations.
-            let current_sid = [&i.to_be_bytes(), session_id].concat();
+            let current_sid = [&(i as u16).to_be_bytes(), session_id].concat();
 
             let (r, proof) = self.run_phase1(&current_sid, bits[i]);
 
@@ -255,7 +255,7 @@ impl OTReceiver {
         let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             // We use different ids for different iterations.
-            let current_sid = [&i.to_be_bytes(), session_id].concat();
+            let current_sid = [&(i as u16).to_be_bytes(), session_id].concat();
 
             let mb = self.run_phase2_step2(&current_sid, &vec_r[i], &z);
 

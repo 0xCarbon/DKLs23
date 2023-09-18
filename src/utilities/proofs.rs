@@ -1,4 +1,3 @@
-use k256::elliptic_curve::{ops::Reduce, Field};
 /// This file implements some protocols for zero-knowledge proofs over the
 /// curve secp256k1.
 ///
@@ -10,8 +9,10 @@ use k256::elliptic_curve::{ops::Reduce, Field};
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
+use k256::elliptic_curve::{ops::Reduce, Field};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::utilities::hashes::*;
 
@@ -177,7 +178,7 @@ impl DLogProof {
                 // Let's take the first hash here.
                 let first_msg = [
                     &rc_as_bytes[..],
-                    &i.to_be_bytes(),
+                    &(i as u8).to_be_bytes(),
                     &first_challenge,
                     &scalar_to_bytes(&first_proof.challenge_response),
                 ]
@@ -202,7 +203,7 @@ impl DLogProof {
                     // Second hash now.
                     let second_msg = [
                         &rc_as_bytes[..],
-                        &(i + (R / 2)).to_be_bytes(),
+                        &((i + (R / 2)) as u8).to_be_bytes(),
                         &second_challenge,
                         &scalar_to_bytes(&second_proof.challenge_response),
                     ]
@@ -252,20 +253,29 @@ impl DLogProof {
             return false;
         }
 
-        // We save this vector in bytes.
-        let rc_as_bytes = proof
+        // We transform the random commitments into bytes.
+        let vec_rc_as_bytes = proof
             .rand_commitments
             .clone()
             .into_iter()
             .map(|x| point_to_bytes(&x))
-            .collect::<Vec<Vec<u8>>>()
-            .concat();
+            .collect::<Vec<Vec<u8>>>();
+
+        // All the proofs should be different (otherwise, it would be easier to forge a proof).
+        // Here we compare the random commitments using a HashSet.
+        let mut without_repetitions: HashSet<Vec<u8>> = HashSet::with_capacity(R);
+        if !vec_rc_as_bytes.clone().into_iter().all(move |x| without_repetitions.insert(x)) {
+            return false;
+        }
+
+        // We concatenate the vector of random commitments.
+        let rc_as_bytes = vec_rc_as_bytes.concat();
 
         for i in 0..(R / 2) {
             // We compare the hashes
             let first_msg = [
                 &rc_as_bytes[..],
-                &i.to_be_bytes(),
+                &(i as u8).to_be_bytes(),
                 &proof.proofs[i].challenge,
                 &scalar_to_bytes(&proof.proofs[i].challenge_response),
             ]
@@ -274,7 +284,7 @@ impl DLogProof {
 
             let second_msg = [
                 &rc_as_bytes[..],
-                &(i + (R / 2)).to_be_bytes(),
+                &((i + (R / 2)) as u8).to_be_bytes(),
                 &proof.proofs[i + (R / 2)].challenge,
                 &scalar_to_bytes(&proof.proofs[i + (R / 2)].challenge_response),
             ]

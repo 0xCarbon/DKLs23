@@ -112,10 +112,10 @@ impl OTESender {
 
             // The PRG will given by concatenating "chunks" of hash outputs.
             // The reason for this is that we need more than 256 bits.
-            let mut count = 0usize;
+            let mut count = 0u8;
             while prg.len() < EXTENDED_BATCH_SIZE / 8 {
                 // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let salt = [&(i as u8).to_be_bytes(), &count.to_be_bytes(), session_id].concat();
                 count = count + 1;
 
                 let chunk = hash(&self.seeds[i], &salt);
@@ -156,8 +156,8 @@ impl OTESender {
         // We can generate them with a hash.
 
         // This time, we are hashing the same message twice, so we put the tags 1 and 2 in the salt.
-        let salt1 = [&(1usize).to_be_bytes(), session_id].concat();
-        let salt2 = [&(2usize).to_be_bytes(), session_id].concat();
+        let salt1 = [&(1u8).to_be_bytes(), session_id].concat();
+        let salt2 = [&(2u8).to_be_bytes(), session_id].concat();
 
         // We concatenate the rows of the matrix u.
         let msg = data.u.concat();
@@ -242,7 +242,7 @@ impl OTESender {
                 transposed_qj_plus_correlation[i] = transposed_q[j][i] ^ compressed_correlation[i];
             }
 
-            let salt = [&j.to_be_bytes(), session_id].concat();
+            let salt = [&(j as u16).to_be_bytes(), session_id].concat();
 
             v0.push(hash_as_scalar(&transposed_q[j], &salt));
             v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
@@ -344,10 +344,10 @@ impl OTEReceiver {
 
             // The PRG will given by concatenating "chunks" of hash outputs.
             // The reason for this is that we need more than 256 bits.
-            let mut count = 0usize;
+            let mut count = 0u8;
             while prg0.len() < EXTENDED_BATCH_SIZE / 8 {
                 // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let salt = [&(i as u8).to_be_bytes(), &count.to_be_bytes(), session_id].concat();
                 count = count + 1;
 
                 let chunk0 = hash(&self.seeds0[i], &salt);
@@ -394,8 +394,8 @@ impl OTEReceiver {
         // We can generate them with a hash.
 
         // This time, we are hashing the same message twice, so we put the tags 1 and 2 in the salt.
-        let salt1 = [&(1usize).to_be_bytes(), session_id].concat();
-        let salt2 = [&(2usize).to_be_bytes(), session_id].concat();
+        let salt1 = [&(1u8).to_be_bytes(), session_id].concat();
+        let salt2 = [&(2u8).to_be_bytes(), session_id].concat();
 
         // We concatenate the rows of the matrix u.
         let msg = u.concat();
@@ -474,7 +474,7 @@ impl OTEReceiver {
 
         let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         for j in 0..BATCH_SIZE {
-            let salt = [&j.to_be_bytes(), session_id].concat();
+            let salt = [&(j as u16).to_be_bytes(), session_id].concat();
             v.push(hash_as_scalar(&transposed_t[j], &salt));
         }
 

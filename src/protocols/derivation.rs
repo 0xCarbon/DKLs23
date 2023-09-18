@@ -94,6 +94,12 @@ impl DerivationData {
             return Err(ErrorDerivation::new("We are already at maximum depth!"));
         }
 
+        if child_number >= 0x80000000 {
+            return Err(ErrorDerivation::new(
+                "Child index should be between 0 and 2^31 - 1!",
+            ));
+        }
+
         let (tweak, new_chain_code, parent_fingerprint) = self.child_tweak(child_number)?;
 
         // If every party shifts their poly_point by the same tweak,

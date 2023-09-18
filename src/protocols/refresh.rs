@@ -180,7 +180,7 @@ impl Party {
 
             // We first compute a new session id.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
-            let mul_sid_receiver = [&self.party_index.to_be_bytes(), &i.to_be_bytes(), refresh_sid].concat();
+            let mul_sid_receiver = [&(self.party_index as u8).to_be_bytes(), &(i as u8).to_be_bytes(), refresh_sid].concat();
 
             let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&mul_sid_receiver);
 
@@ -189,7 +189,7 @@ impl Party {
 
             // New session id as above.
             // Note that the indexes are now in the opposite order.
-            let mul_sid_sender = [&i.to_be_bytes(), &self.party_index.to_be_bytes(), refresh_sid].concat();
+            let mul_sid_sender = [&(i as u8).to_be_bytes(), &(self.party_index as u8).to_be_bytes(), refresh_sid].concat();
 
             let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(&mul_sid_sender);
 
@@ -294,7 +294,7 @@ impl Party {
 
                 // We retrieve the id used for multiplication. Note that the first party
                 // is the receiver and the second, the sender.
-                let mul_sid_receiver = [&my_index.to_be_bytes(), &their_index.to_be_bytes(), refresh_sid].concat();
+                let mul_sid_receiver = [&(my_index as u8).to_be_bytes(), &(their_index as u8).to_be_bytes(), refresh_sid].concat();
 
                 let receiver_result = MulReceiver::init_phase2(&message_kept.ot_sender, &mul_sid_receiver, &message_received.seed, &message_received.enc_proofs, &message_kept.nonce);
                 
@@ -313,7 +313,7 @@ impl Party {
 
                 // We retrieve the id used for multiplication. Note that the first party
                 // is the receiver and the second, the sender.
-                let mul_sid_sender = [&their_index.to_be_bytes(), &my_index.to_be_bytes(), refresh_sid].concat();
+                let mul_sid_sender = [&(their_index as u8).to_be_bytes(), &(my_index as u8).to_be_bytes(), refresh_sid].concat();
 
                 let sender_result = MulSender::init_phase2(&message_kept.ot_receiver, &mul_sid_sender, message_kept.correlation.clone(), &message_kept.vec_r, &message_received.dlog_proof, &message_received.nonce);
                 
@@ -532,9 +532,9 @@ impl Party {
                 // Then, we apply the trick described in the paper.
                 
                 // Sender
-                let salt_r0 = [&(0usize).to_be_bytes(), &i.to_be_bytes(), &self.party_index.to_be_bytes(), &their_index.to_be_bytes(), refresh_sid].concat();
-                let salt_r1 = [&(1usize).to_be_bytes(), &i.to_be_bytes(), &self.party_index.to_be_bytes(), &their_index.to_be_bytes(), refresh_sid].concat();
-                let salt_b = [&(2usize).to_be_bytes(), &i.to_be_bytes(), &self.party_index.to_be_bytes(), &their_index.to_be_bytes(), refresh_sid].concat();
+                let salt_r0 = [&(0u8).to_be_bytes(), &(i as u8).to_be_bytes(), &(self.party_index as u8).to_be_bytes(), &(their_index as u8).to_be_bytes(), refresh_sid].concat();
+                let salt_r1 = [&(1u8).to_be_bytes(), &(i as u8).to_be_bytes(), &(self.party_index as u8).to_be_bytes(), &(their_index as u8).to_be_bytes(), refresh_sid].concat();
+                let salt_b = [&(2u8).to_be_bytes(), &(i as u8).to_be_bytes(), &(self.party_index as u8).to_be_bytes(), &(their_index as u8).to_be_bytes(), refresh_sid].concat();
 
                 let r0_prime = hash(&seed, &salt_r0);
                 let r1_prime = hash(&seed, &salt_r1);
@@ -553,9 +553,9 @@ impl Party {
                 new_ote_sender.seeds[i] = r_double_prime; 
 
                 // Receiver
-                let salt_r0 = [&(0usize).to_be_bytes(), &i.to_be_bytes(), &their_index.to_be_bytes(), &self.party_index.to_be_bytes(), refresh_sid].concat();
-                let salt_r1 = [&(1usize).to_be_bytes(), &i.to_be_bytes(), &their_index.to_be_bytes(), &self.party_index.to_be_bytes(), refresh_sid].concat();
-                let salt_b = [&(2usize).to_be_bytes(), &i.to_be_bytes(), &their_index.to_be_bytes(), &self.party_index.to_be_bytes(), refresh_sid].concat();
+                let salt_r0 = [&(0u8).to_be_bytes(), &(i as u8).to_be_bytes(), &(their_index as u8).to_be_bytes(), &(self.party_index as u8).to_be_bytes(), refresh_sid].concat();
+                let salt_r1 = [&(1u8).to_be_bytes(), &(i as u8).to_be_bytes(), &(their_index as u8).to_be_bytes(), &(self.party_index as u8).to_be_bytes(), refresh_sid].concat();
+                let salt_b = [&(2u8).to_be_bytes(), &(i as u8).to_be_bytes(), &(their_index as u8).to_be_bytes(), &(self.party_index as u8).to_be_bytes(), refresh_sid].concat();
 
                 let r0_prime = hash(&seed, &salt_r0);
                 let r1_prime = hash(&seed, &salt_r1);

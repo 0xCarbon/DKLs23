@@ -134,7 +134,7 @@ impl Party {
             // First, let us compute a session id for it.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             // We also use both the sign id and the DKG id.
-            let mul_sid = [self.party_index.to_be_bytes().to_vec(), counterparty.to_be_bytes().to_vec(), self.session_id.clone(), data.sign_id.clone()].concat();
+            let mul_sid = [(self.party_index as u8).to_be_bytes().to_vec(), (*counterparty as u8).to_be_bytes().to_vec(), self.session_id.clone(), data.sign_id.clone()].concat();
 
             // We run the first phase.
             let (chi, mul_keep, mul_transmit) = self.mul_receivers.get(counterparty).unwrap().run_phase1(&mul_sid);
@@ -215,7 +215,7 @@ impl Party {
 
             // Let us retrieve the session id for multiplication.
             // Note that the roles are now reversed.
-            let mul_sid = [counterparty.to_be_bytes().to_vec(), self.party_index.to_be_bytes().to_vec(), self.session_id.clone(), data.sign_id.clone()].concat();
+            let mul_sid = [(counterparty as u8).to_be_bytes().to_vec(), (self.party_index as u8).to_be_bytes().to_vec(), self.session_id.clone(), data.sign_id.clone()].concat();
 
             let mul_result = self.mul_senders.get(&counterparty).unwrap().run(&mul_sid, &input, &message.mul_transmit);
             
@@ -306,7 +306,7 @@ impl Party {
 
             // Let us retrieve the session id for multiplication.
             // Note that we reverse the roles again.
-            let mul_sid = [self.party_index.to_be_bytes().to_vec(), counterparty.to_be_bytes().to_vec(), self.session_id.clone(), data.sign_id.clone()].concat();
+            let mul_sid = [(self.party_index as u8).to_be_bytes().to_vec(), (counterparty as u8).to_be_bytes().to_vec(), self.session_id.clone(), data.sign_id.clone()].concat();
 
             let mul_result = self.mul_receivers.get(&counterparty).unwrap().run_phase2(&mul_sid, &current_kept.mul_keep, &message.mul_transmit);
 
