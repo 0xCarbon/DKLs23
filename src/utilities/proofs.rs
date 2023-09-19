@@ -594,6 +594,7 @@ impl EncProof {
         // Fiat-Shamir: We compute the "total" challenge based on the
         // values we want to prove and on the commitments above.
 
+        let base_g_as_bytes = point_to_bytes(&base_g);
         let base_h_as_bytes = point_to_bytes(base_h);
         let u_as_bytes = point_to_bytes(&u);
         let v_as_bytes = point_to_bytes(&v);
@@ -610,6 +611,7 @@ impl EncProof {
         // since the verifier does not know which proof is the real one.
         let msg_for_challenge = if bit {
             [
+                base_g_as_bytes,
                 base_h_as_bytes,
                 u_as_bytes,
                 v_as_bytes,
@@ -621,6 +623,7 @@ impl EncProof {
             .concat()
         } else {
             [
+                base_g_as_bytes,
                 base_h_as_bytes,
                 u_as_bytes,
                 v_as_bytes,
@@ -698,6 +701,7 @@ impl EncProof {
 
         // Reconstructing the challenge.
 
+        let base_g_as_bytes = point_to_bytes(&self.proof0.base_g);
         let base_h_as_bytes = point_to_bytes(&self.proof0.base_h);
 
         // u and v are respectively point_v and point_u from the proof0.
@@ -711,6 +715,7 @@ impl EncProof {
         let rc1_h_as_bytes = point_to_bytes(&self.commitments1.rc_h);
 
         let msg_for_challenge = [
+            base_g_as_bytes,
             base_h_as_bytes,
             u_as_bytes,
             v_as_bytes,
