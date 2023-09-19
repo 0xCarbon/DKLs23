@@ -225,7 +225,7 @@ impl OTReceiver {
             ));
         }
 
-        let z = dlog_proof.point.clone();
+        let z = dlog_proof.point;
 
         Ok(z)
     }
@@ -238,10 +238,10 @@ impl OTReceiver {
         let value_for_mb = (*z * r).to_affine();
 
         let msg_for_mb = ["S".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
-        let mb = hash(&msg_for_mb, session_id);
+        
 
         // We could return the bit as in the paper, but the receiver has this information.
-        mb
+        hash(&msg_for_mb, session_id)
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).

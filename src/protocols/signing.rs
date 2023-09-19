@@ -189,8 +189,8 @@ impl Party {
         let mut l_numerator = Scalar::ONE;
         let mut l_denominator = Scalar::ONE;
         for counterparty in &data.counterparties {
-            l_numerator = l_numerator * Scalar::from(*counterparty as u64);
-            l_denominator = l_denominator * (Scalar::from(*counterparty as u64) - Scalar::from(self.party_index as u64));
+            l_numerator *= Scalar::from(*counterparty as u64);
+            l_denominator *= Scalar::from(*counterparty as u64) - Scalar::from(self.party_index as u64);
         }
         let l = l_numerator * (l_denominator.invert().unwrap());
 
@@ -199,7 +199,7 @@ impl Party {
         let public_share = (AffinePoint::GENERATOR * &key_share).to_affine();
         
         // This is the input for the multiplication protocol.
-        let input = vec![unique_kept.instance_key.clone(), key_share.clone()];
+        let input = vec![unique_kept.instance_key, key_share];
 
         // Now, we compute the variables related to each counter party. 
         let mut keep: HashMap<usize,KeepPhase2to3> = HashMap::with_capacity(self.parameters.threshold - 1);
@@ -227,8 +227,8 @@ impl Party {
                     return Err(Abort::new(self.party_index, &format!("Two-party multiplication protocol failed because of Party {}: {:?}", counterparty, error.description)));
                 },
                 Ok((c_values, data_to_receiver)) => {
-                    c_u = c_values[0].clone();
-                    c_v = c_values[1].clone();
+                    c_u = c_values[0];
+                    c_v = c_values[1];
                     mul_transmit = data_to_receiver;
                 },
             }
@@ -244,7 +244,7 @@ impl Party {
                 c_v,
                 commitment: message.commitment,
                 mul_keep: current_kept.mul_keep.clone(),
-                chi: current_kept.chi.clone(),
+                chi: current_kept.chi,
             });
             transmit.push( TransmitPhase2to3 {
                 parties: PartiesMessage { sender: self.party_index, receiver: counterparty },
@@ -252,9 +252,9 @@ impl Party {
                 gamma_u,
                 gamma_v,
                 psi,
-                public_share: public_share.clone(),
+                public_share,
                 // Decommit 
-                instance_point: unique_kept.instance_point.clone(),
+                instance_point: unique_kept.instance_point,
                 salt: current_kept.salt.clone(),
                 // Multiply
                 mul_transmit,
@@ -263,9 +263,9 @@ impl Party {
 
         // Common values to keep for the next phase.
         let unique_keep = UniqueKeep2to3 {
-            instance_key: unique_kept.instance_key.clone(),
-            instance_point: unique_kept.instance_point.clone(),
-            inversion_mask: unique_kept.inversion_mask.clone(),
+            instance_key: unique_kept.instance_key,
+            instance_point: unique_kept.instance_point,
+            inversion_mask: unique_kept.inversion_mask,
             key_share,
             public_share,
         };
@@ -281,10 +281,10 @@ impl Party {
         // Steps 8 and 9
 
         // The following values will represent the sums calculated in this step.
-        let mut expected_public_key = unique_kept.public_share.clone();
-        let mut total_instance_point = unique_kept.instance_point.clone();
+        let mut expected_public_key = unique_kept.public_share;
+        let mut total_instance_point = unique_kept.instance_point;
 
-        let mut first_sum_u_v = unique_kept.inversion_mask.clone();
+        let mut first_sum_u_v = unique_kept.inversion_mask;
 
         let mut second_sum_u = Scalar::ZERO;
         let mut second_sum_v = Scalar::ZERO;
@@ -317,8 +317,8 @@ impl Party {
                     return Err(Abort::new(self.party_index, &format!("Two-party multiplication protocol failed because of Party {}: {:?}", counterparty, error.description)));
                 },
                 Ok(d_values) => {
-                    d_u = d_values[0].clone();
-                    d_v = d_values[1].clone();
+                    d_u = d_values[0];
+                    d_v = d_values[1];
                 },
             }
 
@@ -341,7 +341,7 @@ impl Party {
             expected_public_key = (ProjectivePoint::from(expected_public_key) + message.public_share).to_affine();
             total_instance_point = (ProjectivePoint::from(total_instance_point) + message.instance_point).to_affine();
 
-            first_sum_u_v = first_sum_u_v + &message.psi;
+            first_sum_u_v += &message.psi;
 
             second_sum_u = second_sum_u + &current_kept.c_u + d_u;
             second_sum_v = second_sum_v + &current_kept.c_v + d_v;
@@ -388,8 +388,8 @@ impl Party {
         let mut numerator = Scalar::ZERO;
         let mut denominator = Scalar::ZERO;
         for message in received {
-            numerator = numerator + &message.w;
-            denominator = denominator + &message.u;
+            numerator += &message.w;
+            denominator += &message.u;
         }
 
         let signature_as_scalar = numerator * (denominator.invert().unwrap());
@@ -725,7 +725,7 @@ mod tests {
         // Let us retrieve the total instance/ephemeral key.
         let mut total_instance_key = Scalar::ZERO;
         for (_,kept) in unique_kept_1to2 {
-            total_instance_key = total_instance_key + kept.instance_key;
+            total_instance_key += kept.instance_key;
         }
 
         // We compare the total "instance point" with the parties' calculations.
@@ -784,7 +784,7 @@ mod tests {
         let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
-                poly_fragments[j].push(row_i[j].clone());
+                poly_fragments[j].push(row_i[j]);
             }
         }
 
@@ -896,7 +896,7 @@ mod tests {
         }
 
         // We check if the public keys and chain codes are the same.
-        let expected_pk = parties[0].pk.clone();
+        let expected_pk = parties[0].pk;
         let expected_chain_code = parties[0].derivation_data.chain_code;
         for party in &parties {
             assert_eq!(expected_pk, party.pk);

@@ -92,9 +92,9 @@ impl MulSender {
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
-        let mut counter = nonce.clone();
+        let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
-            counter = counter + Scalar::ONE;
+            counter += Scalar::ONE;
             public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
         }
 
@@ -150,8 +150,8 @@ impl MulSender {
         let mut correlation_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         let mut correlation_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L);
         for i in 0..L {
-            let correlation_tilde_i = vec![a_tilde[i].clone(); BATCH_SIZE];
-            let correlation_hat_i = vec![a_hat[i].clone(); BATCH_SIZE];
+            let correlation_tilde_i = vec![a_tilde[i]; BATCH_SIZE];
+            let correlation_hat_i = vec![a_hat[i]; BATCH_SIZE];
 
             correlation_tilde.push(correlation_tilde_i);
             correlation_hat.push(correlation_hat_i);
@@ -283,7 +283,7 @@ impl MulSender {
         for i in 0..L {
             let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
-                summation = summation + (&self.public_gadget[j] * &z_tilde[i][j]);
+                summation += &self.public_gadget[j] * &z_tilde[i][j];
             }
             output.push(summation);
         }
@@ -333,9 +333,9 @@ impl MulReceiver {
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
-        let mut counter = nonce.clone();
+        let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
-            counter = counter + Scalar::ONE;
+            counter += Scalar::ONE;
             public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
         }
 
@@ -375,7 +375,7 @@ impl MulReceiver {
         for i in 0..BATCH_SIZE {
             let current_bit: bool = rand::random();
             if current_bit {
-                b = b + &self.public_gadget[i];
+                b += &self.public_gadget[i];
             }
             choice_bits.push(current_bit);
         }
@@ -420,7 +420,7 @@ impl MulReceiver {
         // We now return all values.
 
         let data_to_keep = MulDataToKeepReceiver {
-            b: b.clone(),
+            b,
             choice_bits,
             extended_seeds,
             chi_tilde,
@@ -482,7 +482,7 @@ impl MulReceiver {
                 let mut entry = (-(&data_kept.chi_tilde[i] * &z_tilde[i][j]))
                     - (&data_kept.chi_hat[i] * &z_hat[i][j]);
                 if data_kept.choice_bits[j] {
-                    entry = entry + &data_received.verify_u[i];
+                    entry += &data_received.verify_u[i];
                 }
 
                 let entry_as_bytes = scalar_to_bytes(&entry);
@@ -515,7 +515,7 @@ impl MulReceiver {
         for i in 0..L {
             let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
-                summation = summation + (&self.public_gadget[j] * &z_tilde[i][j]);
+                summation += &self.public_gadget[j] * &z_tilde[i][j];
             }
             let final_sum = (&data_kept.b * &data_received.gamma_sender[i]) + summation;
             output.push(final_sum);

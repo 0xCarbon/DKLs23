@@ -116,7 +116,7 @@ impl OTESender {
             while prg.len() < EXTENDED_BATCH_SIZE / 8 {
                 // To change the "random oracle", we include the index and a counter into the salt.
                 let salt = [&(i as u8).to_be_bytes(), &count.to_be_bytes(), session_id].concat();
-                count = count + 1;
+                count += 1;
 
                 let chunk = hash(&self.seeds[i], &salt);
 
@@ -222,7 +222,7 @@ impl OTESender {
         let mut compressed_correlation: Vec<u8> = Vec::with_capacity(KAPPA / 8);
         for i in 0..KAPPA / 8 {
             compressed_correlation.push(
-                ((self.correlation[i * 8 + 0] as u8) << 0)
+                (self.correlation[i * 8] as u8)
                     | ((self.correlation[i * 8 + 1] as u8) << 1)
                     | ((self.correlation[i * 8 + 2] as u8) << 2)
                     | ((self.correlation[i * 8 + 3] as u8) << 3)
@@ -323,7 +323,7 @@ impl OTEReceiver {
         let mut compressed_extended_bits: Vec<u8> = Vec::with_capacity(EXTENDED_BATCH_SIZE / 8);
         for i in 0..EXTENDED_BATCH_SIZE / 8 {
             compressed_extended_bits.push(
-                ((extended_choice_bits[i * 8 + 0] as u8) << 0)
+                (extended_choice_bits[i * 8] as u8)
                     | ((extended_choice_bits[i * 8 + 1] as u8) << 1)
                     | ((extended_choice_bits[i * 8 + 2] as u8) << 2)
                     | ((extended_choice_bits[i * 8 + 3] as u8) << 3)
@@ -348,7 +348,7 @@ impl OTEReceiver {
             while prg0.len() < EXTENDED_BATCH_SIZE / 8 {
                 // To change the "random oracle", we include the index and a counter into the salt.
                 let salt = [&(i as u8).to_be_bytes(), &count.to_be_bytes(), session_id].concat();
-                count = count + 1;
+                count += 1;
 
                 let chunk0 = hash(&self.seeds0[i], &salt);
                 let chunk1 = hash(&self.seeds1[i], &salt);
@@ -651,7 +651,7 @@ mod tests {
             let initial = rand::thread_rng().gen::<FieldElement>();
 
             //Raising an element to the power 2^208 must not change it.
-            let mut result = initial.clone();
+            let mut result = initial;
             for _ in 0..OT_SECURITY {
                 result = field_mul(&result, &result);
             }

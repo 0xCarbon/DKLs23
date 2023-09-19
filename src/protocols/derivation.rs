@@ -116,7 +116,7 @@ impl DerivationData {
 
         Ok(DerivationData {
             depth: self.depth + 1,
-            child_number: child_number,
+            child_number,
             parent_fingerprint,
             poly_point: new_poly_point,
             pk: new_pk,
@@ -151,8 +151,8 @@ impl Party {
             party_index: self.party_index,
             session_id: self.session_id.clone(),
 
-            poly_point: new_derivation_data.poly_point.clone(),
-            pk: new_derivation_data.pk.clone(),
+            poly_point: new_derivation_data.poly_point,
+            pk: new_derivation_data.pk,
 
             zero_share: self.zero_share.clone(),
 
@@ -177,8 +177,8 @@ impl Party {
             party_index: self.party_index,
             session_id: self.session_id.clone(),
 
-            poly_point: new_derivation_data.poly_point.clone(),
-            pk: new_derivation_data.pk.clone(),
+            poly_point: new_derivation_data.poly_point,
+            pk: new_derivation_data.pk,
 
             zero_share: self.zero_share.clone(),
 

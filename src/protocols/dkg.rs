@@ -212,7 +212,7 @@ pub fn dkg_step5(
                 ));
             }
         }
-        commited_points.push(party_j.proof.point.clone());
+        commited_points.push(party_j.proof.point);
     }
 
     // Initializes what will be the public key.
@@ -230,9 +230,8 @@ pub fn dkg_step5(
             let mut lj_denominator = Scalar::ONE;
             for k in i..=(i + parameters.threshold - 1) {
                 if k != j {
-                    lj_numerator = lj_numerator * Scalar::from(k as u64);
-                    lj_denominator =
-                        lj_denominator * (Scalar::from(k as u64) - Scalar::from(j as u64));
+                    lj_numerator *= Scalar::from(k as u64);
+                    lj_denominator *= Scalar::from(k as u64) - Scalar::from(j as u64);
                 }
             }
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
@@ -276,9 +275,9 @@ pub fn dkg_step5(
 pub fn dkg_phase1(data: &SessionData) -> Vec<Scalar> {
     // DKG
     let secret_polynomial = dkg_step1(&data.parameters);
-    let evaluations = dkg_step2(&data.parameters, secret_polynomial);
+    
 
-    evaluations
+    dkg_step2(&data.parameters, secret_polynomial)
 }
 
 // Communication round 1
@@ -455,7 +454,7 @@ pub fn dkg_phase3(
 
             // Us = Receiver
             dlog_proof,
-            nonce: nonce.clone(),
+            nonce,
 
             // Us = Sender
             enc_proofs,
@@ -701,7 +700,7 @@ pub fn dkg_phase4(
         // We XOR this auxiliary chain code to the final result.
         let current_aux_chain_code = bip_received_phase3.get(&i).unwrap().aux_chain_code;
         for j in 0..32 {
-            chain_code[j] = chain_code[j] ^ current_aux_chain_code[j];
+            chain_code[j] ^= current_aux_chain_code[j];
         }
     }
 
@@ -711,8 +710,8 @@ pub fn dkg_phase4(
         depth: 0,
         child_number: 0, // These three values are initialized as zero for the master node.
         parent_fingerprint: [0; 4],
-        poly_point: poly_point.clone(),
-        pk: pk.clone(),
+        poly_point: *poly_point,
+        pk,
         chain_code,
     };
 
@@ -723,7 +722,7 @@ pub fn dkg_phase4(
         party_index: data.party_index,
         session_id: data.session_id.clone(),
 
-        poly_point: poly_point.clone(),
+        poly_point: *poly_point,
         pk,
 
         zero_share,
@@ -798,8 +797,8 @@ mod tests {
         assert_eq!(p2_phase1.len(), 2);
 
         // Communication round 1
-        let p1_poly_fragments = vec![p1_phase1[0].clone(), p2_phase1[0].clone()];
-        let p2_poly_fragments = vec![p1_phase1[1].clone(), p2_phase1[1].clone()];
+        let p1_poly_fragments = vec![p1_phase1[0], p2_phase1[0]];
+        let p2_poly_fragments = vec![p1_phase1[1], p2_phase1[1]];
 
         // Phase 2 (Step 3)
         let p1_phase2 = dkg_step3(1, &session_id, &p1_poly_fragments);
@@ -847,7 +846,7 @@ mod tests {
             vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in phase1 {
             for j in 0..parameters.share_count {
-                poly_fragments[j].push(row_i[j].clone());
+                poly_fragments[j].push(row_i[j]);
             }
         }
 
@@ -1102,7 +1101,7 @@ mod tests {
             vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
-                poly_fragments[j].push(row_i[j].clone());
+                poly_fragments[j].push(row_i[j]);
             }
         }
 
@@ -1237,7 +1236,7 @@ mod tests {
         }
 
         // We check if the public keys and chain codes are the same.
-        let expected_pk = parties[0].pk.clone();
+        let expected_pk = parties[0].pk;
         let expected_chain_code = parties[0].derivation_data.chain_code;
         for party in &parties {
             assert_eq!(expected_pk, party.pk);

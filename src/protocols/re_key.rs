@@ -35,7 +35,7 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
     // We will compute "poly_point" for each party with this polynomial
     // via Shamir's secret sharing.
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold);
-    polynomial.push(secret_key.clone());
+    polynomial.push(*secret_key);
     for _ in 1..parameters.threshold {
         polynomial.push(Scalar::random(rand::thread_rng()));
     }
@@ -117,9 +117,9 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
             for i in 0..ot_extension::KAPPA {
                 let current_bit: bool = rand::random();
                 if current_bit {
-                    seeds.push(seeds1[i].clone());
+                    seeds.push(seeds1[i]);
                 } else {
-                    seeds.push(seeds0[i].clone());
+                    seeds.push(seeds0[i]);
                 }
                 correlation.push(current_bit);
             }
@@ -186,9 +186,9 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
             depth: 0,
             child_number: 0,            // These three values are initialized as zero for the master node.
             parent_fingerprint: [0;4],
-            poly_point: poly_point.clone(),
-            pk: pk.clone(),
-            chain_code: chain_code.clone(),
+            poly_point,
+            pk,
+            chain_code,
         };
 
         parties.push(Party {
@@ -196,7 +196,7 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
             party_index: index,
             session_id: session_id.to_vec(),
             poly_point,
-            pk: pk.clone(),
+            pk,
             zero_share: zero_shares[index - 1].clone(),
             mul_senders: all_mul_senders[index - 1].clone(),
             mul_receivers: all_mul_receivers[index - 1].clone(),

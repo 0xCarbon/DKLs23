@@ -472,8 +472,8 @@ impl CPProof {
         let challenge_response = scalar_rand_commitment - &(challenge * scalar);
 
         CPProof {
-            base_g: base_g.clone(),
-            base_h: base_h.clone(),
+            base_g: *base_g,
+            base_h: *base_h,
             point_u,
             point_v,
 
@@ -519,10 +519,10 @@ impl CPProof {
         };
 
         let proof = CPProof {
-            base_g: base_g.clone(),
-            base_h: base_h.clone(),
-            point_u: point_u.clone(),
-            point_v: point_v.clone(),
+            base_g: *base_g,
+            base_h: *base_h,
+            point_u: *point_u,
+            point_v: *point_v,
 
             challenge_response,
         };
@@ -734,7 +734,7 @@ impl EncProof {
 
     // For convenience and to avoid confusion with the change of order.
     pub fn get_u_and_v(&self) -> (AffinePoint, AffinePoint) {
-        (self.proof0.point_v.clone(), self.proof0.point_u.clone())
+        (self.proof0.point_v, self.proof0.point_u)
     }
 }
 

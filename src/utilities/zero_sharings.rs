@@ -98,9 +98,9 @@ impl ZeroShare {
 
             //This sign guarantees that the shares from different parties add up to zero.
             if seed_pair.lowest_index {
-                share = share - fragment;
+                share -= fragment;
             } else {
-                share = share + fragment;
+                share += fragment;
             }
         }
         share

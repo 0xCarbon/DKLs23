@@ -100,9 +100,9 @@ impl Party {
         for _ in 1..self.parameters.threshold {
             secret_polynomial.push(Scalar::random(rand::thread_rng()));
         }
-        let evaluations = dkg_step2(&self.parameters, secret_polynomial);
+        
 
-        evaluations
+        dkg_step2(&self.parameters, secret_polynomial)
     }
 
     pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>) {
@@ -200,7 +200,7 @@ impl Party {
 
                 // Us = Receiver
                 dlog_proof,
-                nonce: nonce.clone(),
+                nonce,
 
                 // Us = Sender
                 enc_proofs,
@@ -339,7 +339,7 @@ impl Party {
             child_number: self.derivation_data.child_number,
             parent_fingerprint: self.derivation_data.parent_fingerprint,
             poly_point: &self.poly_point + correction_value,  // We update poly_point.
-            pk: self.pk.clone(),
+            pk: self.pk,
             chain_code: self.derivation_data.chain_code,
         };
 
@@ -349,7 +349,7 @@ impl Party {
             session_id: refresh_sid.to_vec(),  // We replace the old session id by the new one.
     
             poly_point: &self.poly_point + correction_value,  // We update poly_point.
-            pk: self.pk.clone(),
+            pk: self.pk,
     
             zero_share,
     
@@ -397,9 +397,9 @@ impl Party {
         for _ in 1..self.parameters.threshold {
             secret_polynomial.push(Scalar::random(rand::thread_rng()));
         }
-        let evaluations = dkg_step2(&self.parameters, secret_polynomial);
+        
 
-        evaluations
+        dkg_step2(&self.parameters, secret_polynomial)
     }
 
     pub fn refresh_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment, HashMap<usize,KeepRefreshPhase2to3>, Vec<TransmitRefreshPhase2to4>) {
@@ -598,7 +598,7 @@ impl Party {
             child_number: self.derivation_data.child_number,
             parent_fingerprint: self.derivation_data.parent_fingerprint,
             poly_point: &self.poly_point + correction_value,  // We update poly_point.
-            pk: self.pk.clone(),
+            pk: self.pk,
             chain_code: self.derivation_data.chain_code,
         };
 
@@ -609,7 +609,7 @@ impl Party {
             session_id: refresh_sid.to_vec(),  // We replace the old session id by the new one.
     
             poly_point: &self.poly_point + correction_value,  // We update poly_point.
-            pk: self.pk.clone(),
+            pk: self.pk,
     
             zero_share,
     
@@ -668,7 +668,7 @@ mod tests {
         let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
-                poly_fragments[j].push(row_i[j].clone());
+                poly_fragments[j].push(row_i[j]);
             }
         }
 
@@ -920,7 +920,7 @@ mod tests {
         let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(parameters.share_count); parameters.share_count];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
-                poly_fragments[j].push(row_i[j].clone());
+                poly_fragments[j].push(row_i[j]);
             }
         }
 
