@@ -176,6 +176,12 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
             power_of_index *= Scalar::from(index as u64);
         }
 
+        // Remark: There is a very tiny probability that poly_point is trivial.
+        // However, the person that will receive this data should apply the
+        // refresh protocol to guarantee their key share is really secret.
+        // This reduces the probability even more, so we are not going to
+        // introduce an "Abort" case here.
+
         let derivation_data = DerivationData {
             depth: 0,
             child_number: 0,            // These three values are initialized as zero for the master node.

@@ -527,10 +527,22 @@ pub fn dkg_phase4(
 
     // The public key cannot be the point at infinity.
     // This is pratically impossible, but easy to check.
-    if pk == AffinePoint::IDENTITY {
+    // We also verify that pk is not the generator point, because
+    // otherwise it would be trivial to find the "total" secret key.
+    if pk == AffinePoint::IDENTITY || pk == AffinePoint::GENERATOR {
         return Err(Abort::new(
             data.party_index,
             "Initialization failed because the resulting public key was trivial! (Very improbable)",
+        ));
+    }
+
+    // Our key share (that is, poly_point), should not be trivial.
+    // Note that the other parties can deduce the triviality from
+    // the corresponding proof in proofs_commitments.
+    if *poly_point == Scalar::ZERO || *poly_point == Scalar::ONE {
+        return Err(Abort::new(
+            data.party_index,
+            "Initialization failed because the resulting key share was trivial! (Very improbable)",
         ));
     }
 

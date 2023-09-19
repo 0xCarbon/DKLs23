@@ -51,7 +51,12 @@ impl OTSender {
     // the sender can reuse the secret s and the proof of discrete
     // logarithm. Thus, we isolate this part from the rest for efficiency.
     pub fn init(session_id: &[u8]) -> OTSender {
-        let s = Scalar::random(rand::thread_rng());
+        
+        // We sample a nonzero random scalar.
+        let mut s = Scalar::ZERO;
+        while s == Scalar::ZERO {
+            s = Scalar::random(rand::thread_rng());
+        }
 
         // In the paper, different protocols use different random oracles.
         // Thus, we will add a unique string to the session id here.

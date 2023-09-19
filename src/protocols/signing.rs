@@ -352,6 +352,14 @@ impl Party {
             return Err(Abort::new(self.party_index, "Consistency check for public key reconstruction failed!"));
         }
 
+        // We introduce another consitency check: the total instance point
+        // should not be the point at infinity (this is not specified on
+        // DKLs23 but actually on ECDSA itself). In any case, the probability
+        // of this happening is very low.
+        if total_instance_point == AffinePoint::IDENTITY {
+            return Err(Abort::new(self.party_index, "Total instance point was trivial! (Very improbable)"));
+        } 
+
         // We compute u_i, v_i and w_i from the paper.
         let u = (&unique_kept.instance_key * &first_sum_u_v) + second_sum_u;
         let v = (&unique_kept.key_share * &first_sum_u_v) + second_sum_v;

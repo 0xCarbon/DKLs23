@@ -42,7 +42,13 @@ pub struct InteractiveDLogProof {
 impl InteractiveDLogProof {
     // Step 1 - Sample the random commitments.
     pub fn prove_step1() -> (Scalar, AffinePoint) {
-        let scalar_rand_commitment = Scalar::random(rand::thread_rng());
+
+        // We sample a nonzero random scalar.
+        let mut scalar_rand_commitment = Scalar::ZERO;
+        while scalar_rand_commitment == Scalar::ZERO {
+            scalar_rand_commitment = Scalar::random(rand::thread_rng());
+        }
+
         let point_rand_commitment = (AffinePoint::GENERATOR * &scalar_rand_commitment).to_affine();
 
         (scalar_rand_commitment, point_rand_commitment)
@@ -177,6 +183,7 @@ impl DLogProof {
 
                 // Let's take the first hash here.
                 let first_msg = [
+                    &point_to_bytes(&AffinePoint::GENERATOR),
                     &rc_as_bytes[..],
                     &(i as u8).to_be_bytes(),
                     &first_challenge,
@@ -202,6 +209,7 @@ impl DLogProof {
 
                     // Second hash now.
                     let second_msg = [
+                        &point_to_bytes(&AffinePoint::GENERATOR),
                         &rc_as_bytes[..],
                         &((i + (R / 2)) as u8).to_be_bytes(),
                         &second_challenge,
@@ -274,6 +282,7 @@ impl DLogProof {
         for i in 0..(R / 2) {
             // We compare the hashes
             let first_msg = [
+                &point_to_bytes(&AffinePoint::GENERATOR),
                 &rc_as_bytes[..],
                 &(i as u8).to_be_bytes(),
                 &proof.proofs[i].challenge,
@@ -283,6 +292,7 @@ impl DLogProof {
             let first_hash = &hash(&first_msg, session_id)[0..(L / 4)];
 
             let second_msg = [
+                &point_to_bytes(&AffinePoint::GENERATOR),
                 &rc_as_bytes[..],
                 &((i + (R / 2)) as u8).to_be_bytes(),
                 &proof.proofs[i + (R / 2)].challenge,
@@ -427,7 +437,12 @@ impl CPProof {
 
     // Step 1 - Sample the random commitments.
     pub fn prove_step1(base_g: &AffinePoint, base_h: &AffinePoint) -> (Scalar, RandomCommitments) {
-        let scalar_rand_commitment = Scalar::random(rand::thread_rng());
+        
+        // We sample a nonzero random scalar.
+        let mut scalar_rand_commitment = Scalar::ZERO;
+        while scalar_rand_commitment == Scalar::ZERO {
+            scalar_rand_commitment = Scalar::random(rand::thread_rng());
+        }
 
         let point_rand_commitment_g = (*base_g * &scalar_rand_commitment).to_affine();
         let point_rand_commitment_h = (*base_h * &scalar_rand_commitment).to_affine();
