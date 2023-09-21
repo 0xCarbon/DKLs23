@@ -1,11 +1,11 @@
 /// This file implements a key derivation mechanism for threshold wallets
-/// based on BIP-32 (https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki).
+/// based on BIP-32 (<https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>).
 /// Each party can derive their key share individually so that the secret
 /// key reconstructed corresponds to the derivation (via BIP-32) of the
 /// original secret key.
 ///
 /// We follow mainly this repository:
-/// // https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs.
+/// <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
 ///
 /// ATTENTION: Since no party has the full secret key, it is not convenient
 /// to do hardened derivation. Thus, we only implement normal derivation.
@@ -24,13 +24,14 @@ pub type ChainCode = [u8; 32];
 
 // A struct for errors in this file.
 #[derive(Clone)]
-pub struct ErrorDerivation {
+pub struct ErrorDeriv {
     pub description: String,
 }
 
-impl ErrorDerivation {
-    pub fn new(description: &str) -> ErrorDerivation {
-        ErrorDerivation {
+impl ErrorDeriv {
+    #[must_use]
+    pub fn new(description: &str) -> ErrorDeriv {
+        ErrorDeriv {
             description: String::from(description),
         }
     }
@@ -43,7 +44,7 @@ impl ErrorDerivation {
 // missing is the one for the network, but it can be easily
 // inferred from context.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct DerivationData {
+pub struct DerivData {
     pub depth: u8,
     pub child_number: u32,
     pub parent_fingerprint: Fingerprint,
@@ -52,13 +53,17 @@ pub struct DerivationData {
     pub chain_code: ChainCode,
 }
 
-impl DerivationData {
-    // Adaptation of function ckd_pub_tweak from the repository:
-    // https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs.
+impl DerivData {
+    /// Adaptation of function `ckd_pub_tweak` from the repository:
+    /// <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
+    /// 
+    /// # Errors
+    /// 
+    /// Will return `Err` if the HMAC result is too big (very unlikely).
     pub fn child_tweak(
         &self,
         child_number: u32,
-    ) -> Result<(Scalar, ChainCode, Fingerprint), ErrorDerivation> {
+    ) -> Result<(Scalar, ChainCode, Fingerprint), ErrorDeriv> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
 
         let pk_as_bytes = serialize_point_compressed(&self.pk);
@@ -69,7 +74,7 @@ impl DerivationData {
 
         let number_for_tweak = U256::from_be_slice(&hmac_result[..32]);
         if number_for_tweak.ge(&Secp256k1::ORDER) {
-            return Err(ErrorDerivation::new(
+            return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
             ));
         }
@@ -89,13 +94,18 @@ impl DerivationData {
         Ok((tweak, chain_code, fingerprint))
     }
 
-    pub fn derive_child(&self, child_number: u32) -> Result<DerivationData, ErrorDerivation> {
+    /// # Errors
+    /// 
+    /// Will return `Err` if depth is already at the maximum value,
+    /// if the child number is invalid or if `child_tweak` fails.
+    /// It will also fail if the new public key is invalid (very unlikely).
+    pub fn derive_child(&self, child_number: u32) -> Result<DerivData, ErrorDeriv> {
         if self.depth == 255 {
-            return Err(ErrorDerivation::new("We are already at maximum depth!"));
+            return Err(ErrorDeriv::new("We are already at maximum depth!"));
         }
 
-        if child_number >= 0x80000000 {
-            return Err(ErrorDerivation::new(
+        if child_number >= 0x8000_0000 {
+            return Err(ErrorDeriv::new(
                 "Child index should be between 0 and 2^31 - 1!",
             ));
         }
@@ -105,16 +115,16 @@ impl DerivationData {
         // If every party shifts their poly_point by the same tweak,
         // the resulting secret key also shifts by the same amount.
         // Note that the tweak depends only on public data.
-        let new_poly_point = &self.poly_point + &tweak;
-        let new_pk = ((AffinePoint::GENERATOR * &tweak) + self.pk).to_affine();
+        let new_poly_point = self.poly_point + tweak;
+        let new_pk = ((AffinePoint::GENERATOR * tweak) + self.pk).to_affine();
 
         if new_pk == AffinePoint::IDENTITY {
-            return Err(ErrorDerivation::new(
+            return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
             ));
         }
 
-        Ok(DerivationData {
+        Ok(DerivData {
             depth: self.depth + 1,
             child_number,
             parent_fingerprint,
@@ -124,7 +134,10 @@ impl DerivationData {
         })
     }
 
-    pub fn derive_from_path(&self, path: &str) -> Result<DerivationData, ErrorDerivation> {
+    /// # Errors
+    /// 
+    /// Will return `Err` if the path is invalid or if `derive_child` fails.
+    pub fn derive_from_path(&self, path: &str) -> Result<DerivData, ErrorDeriv> {
         let path_parsed = parse_path(path)?;
 
         let mut final_data = self.clone();
@@ -139,7 +152,11 @@ impl DerivationData {
 // We implement the derivation functions for Party as well.
 
 impl Party {
-    pub fn derive_child(&self, child_number: u32) -> Result<Party, ErrorDerivation> {
+    
+    /// # Errors
+    /// 
+    /// Will return `Err` if the `DerivData::derive_child` fails.
+    pub fn derive_child(&self, child_number: u32) -> Result<Party, ErrorDeriv> {
         let new_derivation_data = self.derivation_data.derive_child(child_number)?;
 
         // We don't change information relating other parties,
@@ -165,7 +182,10 @@ impl Party {
         })
     }
 
-    pub fn derive_from_path(&self, path: &str) -> Result<Party, ErrorDerivation> {
+    /// # Errors
+    /// 
+    /// Will return `Err` if the `DerivData::derive_from_path` fails.
+    pub fn derive_from_path(&self, path: &str) -> Result<Party, ErrorDeriv> {
         let new_derivation_data = self.derivation_data.derive_from_path(path)?;
 
         // We don't change information relating other parties,
@@ -193,6 +213,7 @@ impl Party {
 }
 
 // This function serializes an affine point on the elliptic curve into compressed form.
+#[must_use]
 pub fn serialize_point_compressed(point: &AffinePoint) -> Vec<u8> {
     let x_as_bytes = point.x().as_slice().to_vec();
     let prefix = if point.y_is_odd().into() {
@@ -206,24 +227,31 @@ pub fn serialize_point_compressed(point: &AffinePoint) -> Vec<u8> {
 
 // We take a path as in BIP-32 (for normal derivation),
 // and transform it into a vector of child numbers.
-pub fn parse_path(path: &str) -> Result<Vec<u32>, ErrorDerivation> {
+/// # Errors
+/// 
+/// Will return `Err` if the path is not valid.
+/// 
+/// # Panics
+/// 
+/// Could panic if you input an empty string slice.
+pub fn parse_path(path: &str) -> Result<Vec<u32>, ErrorDeriv> {
     let mut parts = path.split('/');
 
-    if parts.next().unwrap() != "m" {
-        return Err(ErrorDerivation::new("Invalid path format!"));
+    if parts.next().expect("There will always be a first value!") != "m" {
+        return Err(ErrorDeriv::new("Invalid path format!"));
     }
 
     let path_parsed: Vec<u32> = parts
-        .map(|x| str::parse::<u32>(x).map_err(|_| ErrorDerivation::new("Invalid path format!")))
+        .map(|x| str::parse::<u32>(x).map_err(|_| ErrorDeriv::new("Invalid path format!")))
         .collect::<Result<_, _>>()?;
 
     if path_parsed.len() > 255 {
-        return Err(ErrorDerivation::new("The path is too long!"));
+        return Err(ErrorDeriv::new("The path is too long!"));
     }
 
     for index in &path_parsed {
-        if *index >= 0x80000000 {
-            return Err(ErrorDerivation::new(
+        if *index >= 0x8000_0000 {
+            return Err(ErrorDeriv::new(
                 "Child index should be between 0 and 2^31 - 1!",
             ));
         }
@@ -262,7 +290,7 @@ mod tests {
                 .try_into()
                 .unwrap();
 
-        let data = DerivationData {
+        let data = DerivData {
             depth: 0,
             child_number: 0,
             parent_fingerprint: [0u8; 4],
@@ -318,9 +346,9 @@ mod tests {
 
         let path = "m/0/1/2/3";
 
-        let mut derived_parties: Vec<Party> = Vec::with_capacity(parameters.share_count);
+        let mut derived_parties: Vec<Party> = Vec::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            let result = parties[i].derive_from_path(path);
+            let result = parties[i as usize].derive_from_path(path);
             match result {
                 Err(error) => {
                     panic!("Error for Party {}: {:?}", i, error.description);
@@ -339,10 +367,10 @@ mod tests {
         let message_to_sign = "Message to sign!".as_bytes();
 
         // For simplicity, we are testing only the first parties.
-        let executing_parties: Vec<usize> = Vec::from_iter(1..=parameters.threshold);
+        let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
 
         // Each party prepares their data for this signing session.
-        let mut all_data: HashMap<usize, SignData> = HashMap::with_capacity(parameters.threshold);
+        let mut all_data: HashMap<u8, SignData> = HashMap::with_capacity(parameters.threshold.into());
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -359,15 +387,15 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: HashMap<usize, UniqueKeep1to2> =
-            HashMap::with_capacity(parameters.threshold);
-        let mut kept_1to2: HashMap<usize, HashMap<usize, KeepPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold);
-        let mut transmit_1to2: HashMap<usize, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold);
+        let mut unique_kept_1to2: HashMap<u8, UniqueKeep1to2> =
+            HashMap::with_capacity(parameters.threshold.into());
+        let mut kept_1to2: HashMap<u8, HashMap<u8, KeepPhase1to2>> =
+            HashMap::with_capacity(parameters.threshold.into());
+        let mut transmit_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
+            HashMap::with_capacity(parameters.threshold.into());
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) =
-                parties[party_index - 1].sign_phase1(all_data.get(&party_index).unwrap());
+                parties[(party_index - 1) as usize].sign_phase1(all_data.get(&party_index).unwrap());
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -375,10 +403,10 @@ mod tests {
         }
 
         // Communication round 1
-        let mut received_1to2: HashMap<usize, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold);
+        let mut received_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
+            HashMap::with_capacity(parameters.threshold.into());
         for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase1to2> = Vec::with_capacity(parameters.threshold - 1);
+            let mut new_row: Vec<TransmitPhase1to2> = Vec::with_capacity((parameters.threshold - 1).into());
             for (_, messages) in &transmit_1to2 {
                 for message in messages {
                     // Check if this message should be sent to us.
@@ -391,14 +419,14 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: HashMap<usize, UniqueKeep2to3> =
-            HashMap::with_capacity(parameters.threshold);
-        let mut kept_2to3: HashMap<usize, HashMap<usize, KeepPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold);
-        let mut transmit_2to3: HashMap<usize, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold);
+        let mut unique_kept_2to3: HashMap<u8, UniqueKeep2to3> =
+            HashMap::with_capacity(parameters.threshold.into());
+        let mut kept_2to3: HashMap<u8, HashMap<u8, KeepPhase2to3>> =
+            HashMap::with_capacity(parameters.threshold.into());
+        let mut transmit_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
+            HashMap::with_capacity(parameters.threshold.into());
         for party_index in executing_parties.clone() {
-            let result = parties[party_index - 1].sign_phase2(
+            let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
@@ -417,10 +445,10 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: HashMap<usize, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold);
+        let mut received_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
+            HashMap::with_capacity(parameters.threshold.into());
         for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase2to3> = Vec::with_capacity(parameters.threshold - 1);
+            let mut new_row: Vec<TransmitPhase2to3> = Vec::with_capacity((parameters.threshold - 1).into());
             for (_, messages) in &transmit_2to3 {
                 for message in messages {
                     // Check if this message should be sent to us.
@@ -433,10 +461,10 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold);
-        let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold);
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold.into());
+        let mut broadcast_3to4: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold.into());
         for party_index in executing_parties.clone() {
-            let result = parties[party_index - 1].sign_phase3(
+            let result = parties[(party_index - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_2to3.get(&party_index).unwrap(),
                 kept_2to3.get(&party_index).unwrap(),
@@ -456,7 +484,7 @@ mod tests {
         // We verify all parties got the same x coordinate.
         let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
-            assert_eq!(x_coord, x_coords[i]);
+            assert_eq!(x_coord, x_coords[i as usize]);
         }
 
         // Communication round 3
@@ -464,7 +492,7 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[some_index - 1].sign_phase4(
+        let result = parties[(some_index - 1) as usize].sign_phase4(
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,

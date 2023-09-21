@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 //Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
-pub type Seed = [u8; SECURITY];
+pub type Seed = [u8; SECURITY as usize];
 
 //This struct represents the common seed a pair of parties shares.
 //The variable "lowest_index" verifies if the party that owns this
@@ -19,7 +19,7 @@ pub type Seed = [u8; SECURITY];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeedPair {
     pub lowest_index: bool,
-    pub index_counterparty: usize,
+    pub index_counterparty: u8,
     pub seed: Seed,
 }
 
@@ -34,6 +34,7 @@ impl ZeroShare {
     /// INITIALIZATION
 
     /// Each party sends a different seed to every other party using the commitment functionality
+    #[must_use]
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
         let seed = rand::thread_rng().gen::<Seed>(); //This function doesn't work for higher SECURITY.
         let (commitment, salt) = commits::commit(&seed);
@@ -41,21 +42,23 @@ impl ZeroShare {
     }
 
     /// Each party verify the seeds with the commitments
+    #[must_use]
     pub fn verify_seed(seed: &Seed, commitment: &HashOutput, salt: &[u8]) -> bool {
         commits::verify_commitment(seed, commitment, salt)
     }
 
     /// For each pair, we create a common seed.
+    #[must_use]
     pub fn generate_seed_pair(
-        index_party: usize,
-        index_counterparty: usize,
+        index_party: u8,
+        index_counterparty: u8,
         seed_party: &Seed,
         seed_counterparty: &Seed,
     ) -> SeedPair {
         //Instead of adding the seeds, as suggested in DKLs23, we apply the XOR operation.
-        let mut seed: Seed = [0u8; SECURITY];
+        let mut seed: Seed = [0u8; SECURITY as usize];
         for i in 0..SECURITY {
-            seed[i] = seed_party[i] ^ seed_counterparty[i];
+            seed[i as usize] = seed_party[i as usize] ^ seed_counterparty[i as usize];
         }
 
         // We save if we are the party with lowest index.
@@ -70,6 +73,7 @@ impl ZeroShare {
     }
 
     /// Having all the seed pairs, we can finish the initialization procedure.
+    #[must_use]
     pub fn initialize(seeds: Vec<SeedPair>) -> ZeroShare {
         ZeroShare { seeds }
     }
@@ -80,7 +84,8 @@ impl ZeroShare {
     /// for the "random number generator". This is achieved by using the current session id.
     /// Moreover, not all parties need to participate in this step, so we need to provide a
     /// list of counterparties.
-    pub fn compute(&self, counterparties: &[usize], session_id: &[u8]) -> Scalar {
+    #[must_use]
+    pub fn compute(&self, counterparties: &[u8], session_id: &[u8]) -> Scalar {
         let mut share = Scalar::ZERO;
         let seeds = self.seeds.clone();
         for seed_pair in seeds {
@@ -109,13 +114,13 @@ mod tests {
 
     #[test]
     fn test_zero_sharing() {
-        let number_parties = 8; //This number can be changed. If so, change executing_parties below.
+        let number_parties: u8 = 8; //This number can be changed. If so, change executing_parties below.
 
         //Parties generate the initial seeds and the commitments.
-        let mut step1: Vec<Vec<(Seed, HashOutput, Vec<u8>)>> = Vec::with_capacity(number_parties);
+        let mut step1: Vec<Vec<(Seed, HashOutput, Vec<u8>)>> = Vec::with_capacity(number_parties.into());
         for _ in 0..number_parties {
             let mut step1_party_i: Vec<(Seed, HashOutput, Vec<u8>)> =
-                Vec::with_capacity(number_parties);
+                Vec::with_capacity(number_parties.into());
             for _ in 0..number_parties {
                 //Each party should skip his own iteration, but we ignore this now for simplicity.
                 step1_party_i.push(ZeroShare::generate_seed_with_commitment());
@@ -128,21 +133,21 @@ mod tests {
 
         for i in 0..number_parties {
             for j in 0..number_parties {
-                let (seed, commitment, salt) = step1[i][j].clone();
+                let (seed, commitment, salt) = step1[i as usize][j as usize].clone();
                 assert!(ZeroShare::verify_seed(&seed, &commitment, &salt));
             }
         }
 
         //Each party creates his "seed pairs" and finishes the initialization.
-        let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(number_parties);
+        let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(number_parties.into());
         for i in 0..number_parties {
-            let mut seeds: Vec<SeedPair> = Vec::with_capacity(number_parties - 1);
+            let mut seeds: Vec<SeedPair> = Vec::with_capacity((number_parties - 1).into());
             for j in 0..number_parties {
                 if i == j {
                     continue;
                 } //Now each party skip his iteration.
-                let (seed_party, _, _) = step1[i][j];
-                let (seed_counterparty, _, _) = step1[j][i];
+                let (seed_party, _, _) = step1[i as usize][j as usize];
+                let (seed_counterparty, _, _) = step1[j as usize][i as usize];
                 //We add 1 below because indexes for parties start at 1 and not 0.
                 seeds.push(ZeroShare::generate_seed_pair(
                     i + 1,
@@ -156,14 +161,14 @@ mod tests {
 
         //We can finally execute the functionality.
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let executing_parties: Vec<usize> = vec![1, 3, 5, 7, 8]; //These are the parties running the protocol.
+        let executing_parties: Vec<u8> = vec![1, 3, 5, 7, 8]; //These are the parties running the protocol.
         let mut shares: Vec<Scalar> = Vec::with_capacity(executing_parties.len());
         for party in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party);
             //Compute the share (there is a -1 because indexes for parties start at 1).
-            let share = zero_shares[party - 1].compute(&counterparties, &session_id);
+            let share = zero_shares[(party as usize) - 1].compute(&counterparties, &session_id);
             shares.push(share);
         }
 

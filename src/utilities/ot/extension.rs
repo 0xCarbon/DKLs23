@@ -25,13 +25,13 @@ use crate::utilities::ot::ErrorOT;
 
 // You should not change these numbers!
 // If you do, some parts of the code must be changed.
-pub const KAPPA: usize = RAW_SECURITY;
-pub const OT_SECURITY: usize = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
-pub const BATCH_SIZE: usize = RAW_SECURITY + 2 * STAT_SECURITY;
-pub const EXTENDED_BATCH_SIZE: usize = BATCH_SIZE + OT_SECURITY;
+pub const KAPPA: u16 = RAW_SECURITY;
+pub const OT_SECURITY: u16 = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
+pub const BATCH_SIZE: u16 = RAW_SECURITY + 2 * STAT_SECURITY;
+pub const EXTENDED_BATCH_SIZE: u16 = BATCH_SIZE + OT_SECURITY;
 
-pub type PRGOutput = [u8; EXTENDED_BATCH_SIZE / 8]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
-pub type FieldElement = [u8; OT_SECURITY / 8]; //The same for OT_SECURITY
+pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
+pub type FieldElement = [u8; (OT_SECURITY / 8) as usize]; //The same for OT_SECURITY
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OTESender {
@@ -62,11 +62,12 @@ impl OTESender {
     // Attention: The roles are reversed during this part!
     // Hence, a sender in the extension initializes as a receiver in the base OT.
 
+    #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
         let ot_receiver = OTReceiver::init();
 
         // The choice bits are sampled randomly.
-        let mut correlation: Vec<bool> = Vec::with_capacity(KAPPA);
+        let mut correlation: Vec<bool> = Vec::with_capacity(KAPPA.into());
         for _ in 0..KAPPA {
             correlation.push(rand::random());
         }
@@ -76,6 +77,9 @@ impl OTESender {
         (ot_receiver, correlation, vec_r, enc_proofs)
     }
 
+    /// # Errors
+    /// 
+    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_receiver: &OTReceiver,
         session_id: &[u8],
@@ -94,6 +98,9 @@ impl OTESender {
 
     // Input: Correlation for the points (as in Functionality 3 of DKLs19) and values transmitted by the receiver.
     // Output: Protocol's output and a value to be sent to the receiver.
+    /// # Errors
+    /// 
+    /// Will return  `Err` if the consistency check using the receiver values fails.
     pub fn run(
         &self,
         session_id: &[u8],
@@ -106,26 +113,26 @@ impl OTESender {
 
         // Step 2 - Extend the seed with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
-        let mut extended_seeds: Vec<PRGOutput> = Vec::with_capacity(KAPPA);
+        let mut extended_seeds: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
-            let mut prg: Vec<u8> = Vec::with_capacity(EXTENDED_BATCH_SIZE / 8); //It may use more capacity.
+            let mut prg: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8).into()); //It may use more capacity.
 
             // The PRG will given by concatenating "chunks" of hash outputs.
             // The reason for this is that we need more than 256 bits.
-            let mut count = 0u8;
-            while prg.len() < EXTENDED_BATCH_SIZE / 8 {
+            let mut count = 0u16;
+            while prg.len() < (EXTENDED_BATCH_SIZE / 8).into() {
                 // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&(i as u8).to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
                 count += 1;
 
-                let chunk = hash(&self.seeds[i], &salt);
+                let chunk = hash(&self.seeds[i as usize], &salt);
 
                 prg.extend_from_slice(&chunk);
             }
 
             // We remove extra bytes
-            let mut prg_output = [0; EXTENDED_BATCH_SIZE / 8];
-            prg_output.clone_from_slice(&prg[0..EXTENDED_BATCH_SIZE / 8]);
+            let mut prg_output = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
+            prg_output.clone_from_slice(&prg[0..(EXTENDED_BATCH_SIZE / 8) as usize]);
 
             extended_seeds.push(prg_output);
         }
@@ -134,11 +141,11 @@ impl OTESender {
 
         // Step 4 - Compute the q from Fig. 10 in KOS.
         // It is computed with the matrix u sent by the receiver.
-        let mut q: Vec<PRGOutput> = Vec::with_capacity(KAPPA);
+        let mut q: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
-            let mut q_i = [0; EXTENDED_BATCH_SIZE / 8];
+            let mut q_i = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
-                q_i[j] = (u8::from(self.correlation[i]) * data.u[i][j]) ^ extended_seeds[i][j];
+                q_i[j as usize] = (u8::from(self.correlation[i as usize]) * data.u[i as usize][j as usize]) ^ extended_seeds[i as usize][j as usize];
             }
             q.push(q_i);
         }
@@ -163,37 +170,37 @@ impl OTESender {
         let msg = data.u.concat();
 
         // We apply the hash and remove extra bytes.
-        let mut chi1 = [0u8; OT_SECURITY / 8];
-        let mut chi2 = [0u8; OT_SECURITY / 8];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..OT_SECURITY / 8]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..OT_SECURITY / 8]);
+        let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
+        let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
+        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
+        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
 
         // Step 2 - No action for the sender.
 
         // Step 3 - Verify the values sent by the receiver against our data.
         // We start by computing the verifying vector q (as in KOS, Fig. 10).
-        let mut verify_q: Vec<FieldElement> = Vec::with_capacity(KAPPA);
+        let mut verify_q: Vec<FieldElement> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
             // The summation sign on the protocol is just the sum of the following two terms:
-            let prod_qi_1 = field_mul(&q[i][0..OT_SECURITY / 8], &chi1);
-            let prod_qi_2 = field_mul(&q[i][(OT_SECURITY / 8)..(2 * OT_SECURITY / 8)], &chi2);
+            let prod_qi_1 = field_mul(&q[i as usize][0..(OT_SECURITY / 8) as usize], &chi1);
+            let prod_qi_2 = field_mul(&q[i as usize][((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)], &chi2);
 
             //We sum the terms to get q_i.
-            let mut verify_qi = [0u8; OT_SECURITY / 8];
+            let mut verify_qi = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
-                verify_qi[k] = prod_qi_1[k] ^ prod_qi_2[k] ^ q[i][(2 * OT_SECURITY / 8) + k];
+                verify_qi[k as usize] = prod_qi_1[k as usize] ^ prod_qi_2[k as usize] ^ q[i as usize][((2 * OT_SECURITY / 8) + k) as usize];
             }
 
             verify_q.push(verify_qi);
         }
 
         // We compute the same thing with the receiver's information.
-        let mut verify_sender: Vec<FieldElement> = Vec::with_capacity(KAPPA);
+        let mut verify_sender: Vec<FieldElement> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
-            let mut verify_sender_i = [0u8; OT_SECURITY / 8];
+            let mut verify_sender_i = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
-                verify_sender_i[k] =
-                    data.verify_t[i][k] ^ (u8::from(self.correlation[i]) * data.verify_x[k]);
+                verify_sender_i[k as usize] =
+                    data.verify_t[i as usize][k as usize] ^ (u8::from(self.correlation[i as usize]) * data.verify_x[k as usize]);
             }
 
             verify_sender.push(verify_sender_i);
@@ -219,32 +226,32 @@ impl OTESender {
 
         // For convenience, we write the correlation in "compressed form" as an array of u8.
         // We interpreted the correlation as a little-endian representation of a number.
-        let mut compressed_correlation: Vec<u8> = Vec::with_capacity(KAPPA / 8);
+        let mut compressed_correlation: Vec<u8> = Vec::with_capacity((KAPPA / 8) as usize);
         for i in 0..KAPPA / 8 {
             compressed_correlation.push(
-                u8::from(self.correlation[i * 8])
-                    | (u8::from(self.correlation[i * 8 + 1]) << 1)
-                    | (u8::from(self.correlation[i * 8 + 2]) << 2)
-                    | (u8::from(self.correlation[i * 8 + 3]) << 3)
-                    | (u8::from(self.correlation[i * 8 + 4]) << 4)
-                    | (u8::from(self.correlation[i * 8 + 5]) << 5)
-                    | (u8::from(self.correlation[i * 8 + 6]) << 6)
-                    | (u8::from(self.correlation[i * 8 + 7]) << 7),
+                u8::from(self.correlation[(i * 8) as usize])
+                    | (u8::from(self.correlation[(i * 8 + 1) as usize]) << 1)
+                    | (u8::from(self.correlation[(i * 8 + 2) as usize]) << 2)
+                    | (u8::from(self.correlation[(i * 8 + 3) as usize]) << 3)
+                    | (u8::from(self.correlation[(i * 8 + 4) as usize]) << 4)
+                    | (u8::from(self.correlation[(i * 8 + 5) as usize]) << 5)
+                    | (u8::from(self.correlation[(i * 8 + 6) as usize]) << 6)
+                    | (u8::from(self.correlation[(i * 8 + 7) as usize]) << 7),
             );
         }
 
-        let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
-        let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
+        let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
+        let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
         for j in 0..BATCH_SIZE {
             // For v1, we compute transposed_q[j] ^ correlation.
-            let mut transposed_qj_plus_correlation = [0u8; KAPPA / 8];
+            let mut transposed_qj_plus_correlation = [0u8; (KAPPA / 8) as usize];
             for i in 0..KAPPA / 8 {
-                transposed_qj_plus_correlation[i] = transposed_q[j][i] ^ compressed_correlation[i];
+                transposed_qj_plus_correlation[i as usize] = transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
             }
 
-            let salt = [&(j as u16).to_be_bytes(), session_id].concat();
+            let salt = [&j.to_be_bytes(), session_id].concat();
 
-            v0.push(hash_as_scalar(&transposed_q[j], &salt));
+            v0.push(hash_as_scalar(&transposed_q[j as usize], &salt));
             v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
         }
 
@@ -256,9 +263,9 @@ impl OTESender {
         // Step 1 - We compute t_A and tau, as in the paper.
         // Note that t_A is just the message v0 we computed above.
 
-        let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
+        let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
         for j in 0..BATCH_SIZE {
-            let tau_j = v1[j] - v0[j] + input_correlation[j];
+            let tau_j = v1[j as usize] - v0[j as usize] + input_correlation[j as usize];
             tau.push(tau_j);
         }
 
@@ -279,6 +286,7 @@ impl OTEReceiver {
     // Attention: The roles are reversed during this part!
     // Hence, a receiver in the extension initializes as a sender in the base OT.
 
+    #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof) {
         let ot_sender = OTSender::init(session_id);
 
@@ -287,6 +295,9 @@ impl OTEReceiver {
         (ot_sender, dlog_proof)
     }
 
+    /// # Errors
+    /// 
+    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_sender: &OTSender,
         session_id: &[u8],
@@ -304,6 +315,7 @@ impl OTEReceiver {
 
     // Input: Choice bits.
     // Output: Extended seeds (used in the next phase) and values to be sent to the sender.
+    #[must_use]
     pub fn run_phase1(
         &self,
         session_id: &[u8],
@@ -312,7 +324,7 @@ impl OTEReceiver {
         // EXTEND
 
         // Step 1 - Extend the choice bits by adding random noise.
-        let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY);
+        let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY.into());
         for _ in 0..OT_SECURITY {
             random_choice_bits.push(rand::random());
         }
@@ -320,48 +332,48 @@ impl OTEReceiver {
 
         // For convenience, we also keep the choice bits in "compressed form" as an array of u8.
         // We interpreted extended_choice_bits as a little-endian representation of a number.
-        let mut compressed_extended_bits: Vec<u8> = Vec::with_capacity(EXTENDED_BATCH_SIZE / 8);
+        let mut compressed_extended_bits: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8).into());
         for i in 0..EXTENDED_BATCH_SIZE / 8 {
             compressed_extended_bits.push(
-                u8::from(extended_choice_bits[i * 8])
-                    | (u8::from(extended_choice_bits[i * 8 + 1]) << 1)
-                    | (u8::from(extended_choice_bits[i * 8 + 2]) << 2)
-                    | (u8::from(extended_choice_bits[i * 8 + 3]) << 3)
-                    | (u8::from(extended_choice_bits[i * 8 + 4]) << 4)
-                    | (u8::from(extended_choice_bits[i * 8 + 5]) << 5)
-                    | (u8::from(extended_choice_bits[i * 8 + 6]) << 6)
-                    | (u8::from(extended_choice_bits[i * 8 + 7]) << 7),
+                u8::from(extended_choice_bits[(i * 8) as usize])
+                    | (u8::from(extended_choice_bits[(i * 8 + 1) as usize]) << 1)
+                    | (u8::from(extended_choice_bits[(i * 8 + 2) as usize]) << 2)
+                    | (u8::from(extended_choice_bits[(i * 8 + 3) as usize]) << 3)
+                    | (u8::from(extended_choice_bits[(i * 8 + 4) as usize]) << 4)
+                    | (u8::from(extended_choice_bits[(i * 8 + 5) as usize]) << 5)
+                    | (u8::from(extended_choice_bits[(i * 8 + 6) as usize]) << 6)
+                    | (u8::from(extended_choice_bits[(i * 8 + 7) as usize]) << 7),
             );
         }
 
         // Step 2 - Extend the seeds with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
-        let mut extended_seeds0: Vec<PRGOutput> = Vec::with_capacity(KAPPA);
-        let mut extended_seeds1: Vec<PRGOutput> = Vec::with_capacity(KAPPA);
+        let mut extended_seeds0: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
+        let mut extended_seeds1: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
-            let mut prg0: Vec<u8> = Vec::with_capacity(EXTENDED_BATCH_SIZE / 8); //It may use more capacity.
-            let mut prg1: Vec<u8> = Vec::with_capacity(EXTENDED_BATCH_SIZE / 8);
+            let mut prg0: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8) as usize); //It may use more capacity.
+            let mut prg1: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8) as usize);
 
             // The PRG will given by concatenating "chunks" of hash outputs.
             // The reason for this is that we need more than 256 bits.
-            let mut count = 0u8;
-            while prg0.len() < EXTENDED_BATCH_SIZE / 8 {
+            let mut count = 0u16;
+            while prg0.len() < (EXTENDED_BATCH_SIZE / 8).into() {
                 // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&(i as u8).to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
                 count += 1;
 
-                let chunk0 = hash(&self.seeds0[i], &salt);
-                let chunk1 = hash(&self.seeds1[i], &salt);
+                let chunk0 = hash(&self.seeds0[i as usize], &salt);
+                let chunk1 = hash(&self.seeds1[i as usize], &salt);
 
                 prg0.extend_from_slice(&chunk0);
                 prg1.extend_from_slice(&chunk1);
             }
 
             // We remove extra bytes
-            let mut prg0_output = [0; EXTENDED_BATCH_SIZE / 8];
-            let mut prg1_output = [0; EXTENDED_BATCH_SIZE / 8];
-            prg0_output.clone_from_slice(&prg0[0..EXTENDED_BATCH_SIZE / 8]);
-            prg1_output.clone_from_slice(&prg1[0..EXTENDED_BATCH_SIZE / 8]);
+            let mut prg0_output = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
+            let mut prg1_output = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
+            prg0_output.clone_from_slice(&prg0[0..(EXTENDED_BATCH_SIZE / 8) as usize]);
+            prg1_output.clone_from_slice(&prg1[0..(EXTENDED_BATCH_SIZE / 8) as usize]);
 
             extended_seeds0.push(prg0_output);
             extended_seeds1.push(prg1_output);
@@ -369,12 +381,12 @@ impl OTEReceiver {
 
         // Step 3 - Compute the matrix u from Fig. 10 in KOS.
         // This matrix will be sent to the sender.
-        let mut u: Vec<PRGOutput> = Vec::with_capacity(KAPPA);
+        let mut u: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
-            let mut u_i = [0; EXTENDED_BATCH_SIZE / 8];
+            let mut u_i = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
-                u_i[j] =
-                    extended_seeds0[i][j] ^ extended_seeds1[i][j] ^ compressed_extended_bits[j];
+                u_i[j as usize] =
+                    extended_seeds0[i as usize][j as usize] ^ extended_seeds1[i as usize][j as usize] ^ compressed_extended_bits[j as usize];
             }
             u.push(u_i);
         }
@@ -401,41 +413,41 @@ impl OTEReceiver {
         let msg = u.concat();
 
         // We apply the hash and remove extra bytes.
-        let mut chi1 = [0u8; OT_SECURITY / 8];
-        let mut chi2 = [0u8; OT_SECURITY / 8];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..OT_SECURITY / 8]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..OT_SECURITY / 8]);
+        let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
+        let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
+        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
+        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
 
         // Step 2 - We compute the verification values to the sender.
 
         // The summation sign on the protocol is just the sum of the following two terms:
-        let prod_x_1 = field_mul(&compressed_extended_bits[0..OT_SECURITY / 8], &chi1);
+        let prod_x_1 = field_mul(&compressed_extended_bits[0..(OT_SECURITY / 8) as usize], &chi1);
         let prod_x_2 = field_mul(
-            &compressed_extended_bits[(OT_SECURITY / 8)..(2 * OT_SECURITY / 8)],
+            &compressed_extended_bits[((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
             &chi2,
         );
 
         // We sum the terms to get x.
-        let mut verify_x = [0u8; OT_SECURITY / 8];
+        let mut verify_x = [0u8; (OT_SECURITY / 8) as usize];
         for k in 0..OT_SECURITY / 8 {
-            verify_x[k] =
-                prod_x_1[k] ^ prod_x_2[k] ^ compressed_extended_bits[(2 * OT_SECURITY / 8) + k];
+            verify_x[k as usize] =
+                prod_x_1[k as usize] ^ prod_x_2[k as usize] ^ compressed_extended_bits[((2 * OT_SECURITY / 8) + k) as usize];
         }
 
-        let mut verify_t: Vec<FieldElement> = Vec::with_capacity(KAPPA);
+        let mut verify_t: Vec<FieldElement> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
             // The summation sign on the protocol is just the sum of the following two terms:
-            let prod_ti_1 = field_mul(&extended_seeds0[i][0..OT_SECURITY / 8], &chi1);
+            let prod_ti_1 = field_mul(&extended_seeds0[i as usize][0..(OT_SECURITY / 8) as usize], &chi1);
             let prod_ti_2 = field_mul(
-                &extended_seeds0[i][(OT_SECURITY / 8)..(2 * OT_SECURITY / 8)],
+                &extended_seeds0[i as usize][((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
                 &chi2,
             );
 
             //We sum the terms to get t_i.
-            let mut verify_ti = [0u8; OT_SECURITY / 8];
+            let mut verify_ti = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
-                verify_ti[k] =
-                    prod_ti_1[k] ^ prod_ti_2[k] ^ extended_seeds0[i][(2 * OT_SECURITY / 8) + k];
+                verify_ti[k as usize] =
+                    prod_ti_1[k as usize] ^ prod_ti_2[k as usize] ^ extended_seeds0[i as usize][((2 * OT_SECURITY / 8) + k) as usize];
             }
 
             verify_t.push(verify_ti);
@@ -456,6 +468,7 @@ impl OTEReceiver {
 
     // Input: Previous inputs and value tau sent by the sender.
     // Output: Protocol's output.
+    #[must_use]
     pub fn run_phase2(
         &self,
         session_id: &[u8],
@@ -472,10 +485,10 @@ impl OTEReceiver {
         // Step 2 - We compute the final message. For the final part, it will be better
         // if we compute it in the form Scalar<Secp256k1>.
 
-        let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
+        let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
         for j in 0..BATCH_SIZE {
-            let salt = [&(j as u16).to_be_bytes(), session_id].concat();
-            v.push(hash_as_scalar(&transposed_t[j], &salt));
+            let salt = [&j.to_be_bytes(), session_id].concat();
+            v.push(hash_as_scalar(&transposed_t[j as usize], &salt));
         }
 
         // Step 3 - No action for the receiver.
@@ -489,11 +502,11 @@ impl OTEReceiver {
 
         // Step 2 - We compute t_B as in the paper. We use the value tau sent by the sender.
 
-        let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
+        let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
         for j in 0..BATCH_SIZE {
-            let mut t_b_j = -&v[j];
-            if choice_bits[j] {
-                t_b_j = tau[j] + t_b_j;
+            let mut t_b_j = -&v[j as usize];
+            if choice_bits[j as usize] {
+                t_b_j = tau[j as usize] + t_b_j;
             }
             t_b.push(t_b_j);
         }
@@ -516,9 +529,10 @@ impl OTEReceiver {
 ///
 /// This code was essentially copied from the function `transposeBooleanMatrix` here:
 /// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
+#[must_use]
 pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
     // We initialize the output as a zero matrix.
-    let mut output: Vec<HashOutput> = vec![[0u8; KAPPA / 8]; BATCH_SIZE];
+    let mut output: Vec<HashOutput> = vec![[0u8; (KAPPA / 8) as usize]; BATCH_SIZE as usize];
 
     for row_byte in 0..KAPPA / 8 {
         for row_bit_within_byte in 0..8 {
@@ -534,7 +548,7 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
                     // In every row, the columns are packed in bytes.
                     // We access the row_bit-th row, then the column_byte-th byte,
                     // and then we extract the desired bit.
-                    let entry = (input[row_bit][column_byte] >> column_bit_within_byte) & 0x01;
+                    let entry = (input[row_bit as usize][column_byte as usize] >> column_bit_within_byte) & 0x01;
 
                     // If we see output as a matrix of booleans, we want to
                     // write output[column_bit][row_bit] = entry;
@@ -542,7 +556,7 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
                     // Hence, we access the column_bit-th row, then the row_byte-th byte,
                     // and finally we put our bit in the correct place.
                     let shifted_entry = entry << row_bit_within_byte;
-                    output[column_bit][row_byte] |= shifted_entry;
+                    output[column_bit as usize][row_byte as usize] |= shifted_entry;
                 }
             }
         }
@@ -558,31 +572,36 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
 /// It is based on Algorithm 2.34 ("Right-to-left comb method for polynomial multiplication")
 /// and Figure 2.9 (for reduction modulo the irreducible polynomial) of the book
 /// Guide to Elliptic Curve Cryptography by Hankerson, Menezes and Vanstone.
+/// 
+/// # Panics
+/// 
+/// Will panic if `left` or `right` doesn't have the correct size, that is `OT_SECURITY` = 208 bits.
+#[must_use]
 pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
     
     // Constants W and t from Section 2.3 in the book.
-    const W: usize = 64;
-    const T: usize = 4;
+    const W: u8 = 64;
+    const T: u8 = 4;
     
-    assert!((left.len() == OT_SECURITY / 8) && (right.len() == OT_SECURITY / 8), "Binary field multiplication: Entries don't have the correct length!");
+    assert!((left.len() == (OT_SECURITY / 8).into()) && (right.len() == (OT_SECURITY / 8).into()), "Binary field multiplication: Entries don't have the correct length!");
 
-    let mut a = [0u64; T];
-    let mut b = [0u64; T + 1]; //b has extra space because it will be shifted.
-    let mut c = [0u64; 2 * T];
+    let mut a = [0u64; T as usize];
+    let mut b = [0u64; (T + 1) as usize]; //b has extra space because it will be shifted.
+    let mut c = [0u64; (2 * T) as usize];
 
     // Conversion of [u8; 26] to [u64; 4].
     for i in 0..OT_SECURITY / 8 {
-        a[i >> 3] |= u64::from(left[i]) << ((i & 0x07) << 3);
-        b[i >> 3] |= u64::from(right[i]) << ((i & 0x07) << 3);
+        a[(i >> 3) as usize] |= u64::from(left[i as usize]) << ((i & 0x07) << 3);
+        b[(i >> 3) as usize] |= u64::from(right[i as usize]) << ((i & 0x07) << 3);
     }
 
     // Algorithm 2.34 (page 49)
     for k in 0..W {
         for j in 0..T {
             //If the k-th bit of a[j] is 1, we add b to c (with the correct shift).
-            if (a[j] >> k) % 2 == 1 {
+            if (a[j as usize] >> k) % 2 == 1 {
                 for i in 0..=T {
-                    c[j + i] ^= b[i];
+                    c[(j + i) as usize] ^= b[i as usize];
                 }
             }
         }
@@ -590,7 +609,7 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
         // We shift b one digit to the left (not necessary in the last iteration)
         if k != W - 1 {
             for i in (1..=T).rev() {
-                b[i] = b[i] << 1 | b[i - 1] >> 63;
+                b[i as usize] = b[i as usize] << 1 | b[(i - 1) as usize] >> 63;
             }
         }
         b[0] <<= 1;
@@ -603,7 +622,7 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
     // We adapt the idea presented on page 54.
 
     for i in (T..(2 * T)).rev() {
-        let t = c[i];
+        let t = c[i as usize];
 
         // The current block is reduced. Note that 208 = 3*64 + 16.
         // Hence, we skip 3 blocks and in the fourth block we put 16
@@ -613,26 +632,26 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
         // for X^208. Note that the difference between consecutive
         // numbers below is the same as the differences in the sequence
         // (9,3,1,0), which are the exponents in the monomials.
-        c[i - 4] ^= (t << 57) ^ (t << 51) ^ (t << 49) ^ (t << 48);
-        c[i - 3] ^= (t >> 7) ^ (t >> 13) ^ (t >> 15) ^ (t >> 16);
+        c[(i - 4) as usize] ^= (t << 57) ^ (t << 51) ^ (t << 49) ^ (t << 48);
+        c[(i - 3) as usize] ^= (t >> 7) ^ (t >> 13) ^ (t >> 15) ^ (t >> 16);
 
         // Erase the block that was reduced.
-        c[i] = 0;
+        c[i as usize] = 0;
     }
     // The block c[T-1] doesn't need to be reduced in its entirety,
     // only its first 64 - 16 = 48 bits.
-    let t = c[T - 1] >> 16;
+    let t = c[(T - 1) as usize] >> 16;
     c[0] ^= (t << 9) ^ (t << 3) ^ (t << 1) ^ t;
 
     // We save only the last 16 bits (note that 0xFFFF = 0b11...11 with 16 one's).
-    c[T - 1] &= 0xFFFF;
+    c[(T - 1) as usize] &= 0xFFFF;
 
     // At this point, c is the product of a and b in the finite field.
 
     // We convert the result to the original format.
-    let mut result = [0u8; OT_SECURITY / 8];
+    let mut result = [0u8; (OT_SECURITY / 8) as usize];
     for i in 0..OT_SECURITY / 8 {
-        result[i] = (c[i >> 3] >> ((i & 0x07) << 3)) as u8;
+        result[i as usize] = u8::try_from((c[(i >> 3) as usize] >> ((i & 0x07) << 3)) & 0xFF).expect("This value fits into an u8!");
     }
 
     result
@@ -702,8 +721,8 @@ mod tests {
         // PROTOCOL
 
         // Sampling the choices.
-        let mut sender_input_correlation: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
-        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE);
+        let mut sender_input_correlation: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
+        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE.into());
         for _ in 0..BATCH_SIZE {
             sender_input_correlation.push(Scalar::random(rand::thread_rng()));
             receiver_choice_bits.push(rand::random());
@@ -741,9 +760,9 @@ mod tests {
         for i in 0..BATCH_SIZE {
             //Depending on the choice the receiver made, the sum of the outputs should
             //be equal to 0 or to the correlation the sender chose.
-            let sum = &sender_output[i] + &receiver_output[i];
-            if receiver_choice_bits[i] {
-                assert_eq!(sum, sender_input_correlation[i]);
+            let sum = &sender_output[i as usize] + &receiver_output[i as usize];
+            if receiver_choice_bits[i as usize] {
+                assert_eq!(sum, sender_input_correlation[i as usize]);
             } else {
                 assert_eq!(sum, Scalar::ZERO);
             }

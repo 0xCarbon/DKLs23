@@ -20,31 +20,36 @@ use k256::elliptic_curve::{bigint::Encoding, group::GroupEncoding, ops::Reduce};
 use crate::SECURITY;
 
 // We are using SHA-256, so the hash values have 256 bits
-pub type HashOutput = [u8;SECURITY];
+pub type HashOutput = [u8;SECURITY as usize];
 
 // From bytes to bytes
+#[must_use]
 pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
     let concatenation = [salt,msg].concat();
     sha256::Hash::hash(&concatenation).to_byte_array()
 }
 
 // From bytes to U256
+#[must_use]
 pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> U256 {
     let as_bytes = hash(msg, salt);
     U256::from_be_bytes(as_bytes)
 }
 
 // From bytes to a scalar (it takes the integer and reduces it modulo the order of the curve)
+#[must_use]
 pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
     let as_int = hash_as_int(msg, salt);
     Scalar::reduce(as_int)
 }
 
 // k256 does not convert Scalar and AffinePoint directly to bytes. We add this for convenience.
+#[must_use]
 pub fn scalar_to_bytes(scalar: &Scalar) -> Vec<u8> {
     scalar.to_bytes().as_slice().to_vec()
 }
 
+#[must_use]
 pub fn point_to_bytes(point: &AffinePoint) -> Vec<u8> {
     point.to_bytes().as_slice().to_vec()
 }

@@ -6,8 +6,8 @@ pub mod utilities;
 
 //Computational security parameter lambda_c from DKLs23.
 //We take it to be the same as the parameter kappa.
-pub const RAW_SECURITY: usize = 256;
-pub const SECURITY: usize = 32; //Used for arrays of bytes (32*8 = 256 bits).
+pub const RAW_SECURITY: u16 = 256;
+pub const SECURITY: u16 = 32; //Used for arrays of bytes (32*8 = 256 bits).
 
 //Statistical security parameter lambda_s from DKLs23.
-pub const STAT_SECURITY: usize = 80;
+pub const STAT_SECURITY: u16 = 80;

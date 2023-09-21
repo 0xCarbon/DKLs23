@@ -28,7 +28,7 @@ pub struct OTSender {
 
 // Receiver after initialization.
 
-pub type Seed = [u8; SECURITY];
+pub type Seed = [u8; SECURITY as usize];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OTReceiver {
@@ -50,6 +50,7 @@ impl OTSender {
     // Initialization - According to first paragraph on page 18,
     // the sender can reuse the secret s and the proof of discrete
     // logarithm. Thus, we isolate this part from the rest for efficiency.
+    #[must_use]
     pub fn init(session_id: &[u8]) -> OTSender {
         
         // We sample a nonzero random scalar.
@@ -68,6 +69,7 @@ impl OTSender {
 
     // Phase 1 - The sender transmits z = s * generator and the proof
     // of discrete logarithm. Note that z is contained in the proof.
+    #[must_use]
     pub fn run_phase1(&self) -> DLogProof {
         self.proof.clone()
     }
@@ -79,6 +81,9 @@ impl OTSender {
     // He receives the receiver's seed and encryption proof (which contains u and v).
 
     // Phase 2 - We verify the receiver's data and compute the output.
+    /// # Errors
+    /// 
+    /// Will return `Err` if the proof of discrete logarithm fails.
     pub fn run_phase2(
         &self,
         session_id: &[u8],
@@ -122,21 +127,24 @@ impl OTSender {
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
+    /// # Errors
+    /// 
+    /// Will return `Err` if one of the executions fails.
     pub fn run_phase2_batch(
         &self,
         session_id: &[u8],
         seed: &Seed,
         enc_proofs: &[EncProof],
     ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
-        let batch_size = enc_proofs.len();
+        let batch_size = u16::try_from(enc_proofs.len()).expect("The batch sizes used always fit into an u16!");
 
-        let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size);
-        let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size);
+        let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
+        let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
         for i in 0..batch_size {
             // We use different ids for different iterations.
-            let current_sid = [&(i as u16).to_be_bytes(), session_id].concat();
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
 
-            let (m0, m1) = self.run_phase2(&current_sid, seed, &enc_proofs[i])?;
+            let (m0, m1) = self.run_phase2(&current_sid, seed, &enc_proofs[i as usize])?;
 
             vec_m0.push(m0);
             vec_m1.push(m1);
@@ -150,6 +158,7 @@ impl OTReceiver {
     // Initialization - According to first paragraph on page 18,
     // the sender can reuse the seed. Thus, we isolate this part
     // from the rest for efficiency.
+    #[must_use]
     pub fn init() -> OTReceiver {
         let seed = rand::thread_rng().gen::<Seed>();
 
@@ -157,6 +166,7 @@ impl OTReceiver {
     }
 
     // Phase 1 - We sample the secret values and provide proof.
+    #[must_use]
     pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
         // We sample the secret scalar r.
         let r = Scalar::random(rand::thread_rng());
@@ -179,20 +189,21 @@ impl OTReceiver {
     }
 
     // Phase 1 batch version: used for multiple executions (e.g. OT extension).
+    #[must_use]
     pub fn run_phase1_batch(
         &self,
         session_id: &[u8],
         bits: &[bool],
     ) -> (Vec<Scalar>, Vec<EncProof>) {
-        let batch_size = bits.len();
+        let batch_size = u16::try_from(bits.len()).expect("The batch sizes used always fit into an u16!");
 
-        let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size);
-        let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size);
+        let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size.into());
+        let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size.into());
         for i in 0..batch_size {
             // We use different ids for different iterations.
-            let current_sid = [&(i as u16).to_be_bytes(), session_id].concat();
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
 
-            let (r, proof) = self.run_phase1(&current_sid, bits[i]);
+            let (r, proof) = self.run_phase1(&current_sid, bits[i as usize]);
 
             vec_r.push(r);
             vec_proof.push(proof);
@@ -210,6 +221,9 @@ impl OTReceiver {
     // first depends only on the initialization values and can be done
     // once, while the second is different for each iteration.
 
+    /// # Errors
+    /// 
+    /// Will return `Err` if the proof of discrete logarithm fails.
     pub fn run_phase2_step1(
         &self,
         session_id: &[u8],
@@ -230,6 +244,7 @@ impl OTReceiver {
         Ok(z)
     }
 
+    #[must_use]
     pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
         // We compute the message.
         // As before, instead of an identifier for the sender,
@@ -245,6 +260,9 @@ impl OTReceiver {
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
+    /// # Errors
+    /// 
+    /// Will return `Err` if one of the executions fails.
     pub fn run_phase2_batch(
         &self,
         session_id: &[u8],
@@ -255,14 +273,14 @@ impl OTReceiver {
         let z = self.run_phase2_step1(session_id, dlog_proof)?;
 
         // Step 2
-        let batch_size = vec_r.len();
+        let batch_size = u16::try_from(vec_r.len()).expect("The batch sizes used always fit into an u16!");
 
-        let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size);
+        let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
         for i in 0..batch_size {
             // We use different ids for different iterations.
-            let current_sid = [&(i as u16).to_be_bytes(), session_id].concat();
+            let current_sid = [&i.to_be_bytes(), session_id].concat();
 
-            let mb = self.run_phase2_step2(&current_sid, &vec_r[i], &z);
+            let mb = self.run_phase2_step2(&current_sid, &vec_r[i as usize], &z);
 
             vec_mb.push(mb);
         }

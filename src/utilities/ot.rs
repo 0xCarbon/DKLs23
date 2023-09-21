@@ -7,6 +7,7 @@ pub struct ErrorOT {
 }
 
 impl ErrorOT {
+    #[must_use]
     pub fn new(description: &str) -> ErrorOT {
         ErrorOT {
             description: String::from(description),
