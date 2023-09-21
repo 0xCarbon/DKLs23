@@ -1,9 +1,9 @@
-use crate::utilities::commits;
-/// This file implements the zero-sharing sampling functionality from the DKLs23 protocol
+/// This file implements the zero-sharing sampling functionality from the `DKLs23` protocol
 /// (this is Functionality 3.4 on page 7 of their paper).
 ///
 /// The implementation follows the suggestion yhey give using the commitment functionality.
-use crate::utilities::hashes::*;
+use crate::utilities::commits;
+use crate::utilities::hashes::{HashOutput, hash_as_scalar};
 
 use k256::Scalar;
 use rand::Rng;
@@ -58,13 +58,9 @@ impl ZeroShare {
             seed[i] = seed_party[i] ^ seed_counterparty[i];
         }
 
-        let lowest_index: bool;
-        if index_party <= index_counterparty {
-            //The case where index_party == index_couterparty shouldn't occur in practice.
-            lowest_index = true;
-        } else {
-            lowest_index = false;
-        }
+        // We save if we are the party with lowest index.
+        //The case where index_party == index_couterparty shouldn't occur in practice.
+        let lowest_index = index_party <= index_counterparty;
 
         SeedPair {
             lowest_index,
@@ -84,7 +80,7 @@ impl ZeroShare {
     /// for the "random number generator". This is achieved by using the current session id.
     /// Moreover, not all parties need to participate in this step, so we need to provide a
     /// list of counterparties.
-    pub fn compute(&self, counterparties: &Vec<usize>, session_id: &[u8]) -> Scalar {
+    pub fn compute(&self, counterparties: &[usize], session_id: &[u8]) -> Scalar {
         let mut share = Scalar::ZERO;
         let seeds = self.seeds.clone();
         for seed_pair in seeds {

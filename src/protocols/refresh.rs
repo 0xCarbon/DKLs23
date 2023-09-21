@@ -25,7 +25,7 @@ use k256::elliptic_curve::Field;
 
 use crate::utilities::hashes::*;
 use crate::utilities::multiplication::{MulSender, MulReceiver};
-use crate::utilities::ot::ot_extension;
+use crate::utilities::ot;
 use crate::utilities::zero_sharings::{self, ZeroShare};
 
 use crate::protocols::{Party, Abort, PartiesMessage};
@@ -105,7 +105,7 @@ impl Party {
         dkg_step2(&self.parameters, secret_polynomial)
     }
 
-    pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>) {
+    pub fn refresh_complete_phase2(&self, refresh_sid: &[u8], poly_fragments: &[Scalar]) -> (Scalar, ProofCommitment, HashMap<usize,KeepInitZeroSharePhase2to3>, Vec<TransmitInitZeroSharePhase2to4>) {
         
         // We run Phase 2 in DKG, but we omit the derivation part.
         // Note that "poly_point" is now called "correction_value".
@@ -225,7 +225,7 @@ impl Party {
         (zero_keep, zero_transmit, mul_keep, mul_transmit)
     }
 
-    pub fn refresh_complete_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar, proofs_commitments: &Vec<ProofCommitment>, zero_kept: &HashMap<usize,KeepInitZeroSharePhase3to4>, zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to4>, zero_received_phase3: &Vec<TransmitInitZeroSharePhase3to4>, mul_kept: &HashMap<usize,KeepInitMulPhase3to4>, mul_received: &Vec<TransmitInitMulPhase3to4>) -> Result<Party,Abort> {
+    pub fn refresh_complete_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar, proofs_commitments: &[ProofCommitment], zero_kept: &HashMap<usize,KeepInitZeroSharePhase3to4>, zero_received_phase2: &[TransmitInitZeroSharePhase2to4], zero_received_phase3: &[TransmitInitZeroSharePhase3to4], mul_kept: &HashMap<usize,KeepInitMulPhase3to4>, mul_received: &[TransmitInitMulPhase3to4]) -> Result<Party,Abort> {
         
         // We run Phase 4, but now we don't check if the resulting public key is zero.
         // Actually, we have to do the opposite: it must be the zero point!
@@ -402,7 +402,7 @@ impl Party {
         dkg_step2(&self.parameters, secret_polynomial)
     }
 
-    pub fn refresh_phase2(&self, refresh_sid: &[u8], poly_fragments: &Vec<Scalar>) -> (Scalar, ProofCommitment, HashMap<usize,KeepRefreshPhase2to3>, Vec<TransmitRefreshPhase2to4>) {
+    pub fn refresh_phase2(&self, refresh_sid: &[u8], poly_fragments: &[Scalar]) -> (Scalar, ProofCommitment, HashMap<usize,KeepRefreshPhase2to3>, Vec<TransmitRefreshPhase2to4>) {
         
         // We run Phase 2 in DKG, but we omit the derivation part.
         // Note that "poly_point" is now called "correction_value".
@@ -461,7 +461,7 @@ impl Party {
         (keep, transmit)
     }
 
-    pub fn refresh_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar, proofs_commitments: &Vec<ProofCommitment>, kept: &HashMap<usize,KeepRefreshPhase3to4>, received_phase2: &Vec<TransmitRefreshPhase2to4>, received_phase3: &Vec<TransmitRefreshPhase3to4>) -> Result<Party,Abort> {
+    pub fn refresh_phase4(&self, refresh_sid: &[u8], correction_value: &Scalar, proofs_commitments: &[ProofCommitment], kept: &HashMap<usize,KeepRefreshPhase3to4>, received_phase2: &[TransmitRefreshPhase2to4], received_phase3: &[TransmitRefreshPhase3to4]) -> Result<Party,Abort> {
         
         // We run Phase 4, but now we don't check if the resulting public key is zero.
         // Actually, we have to do the opposite: it must be the zero point!
@@ -523,7 +523,7 @@ impl Party {
             let mut new_ote_sender = mul_sender.ote_sender.clone();
             let mut new_ote_receiver = mul_receiver.ote_receiver.clone();
 
-            for i in 0..(ot_extension::KAPPA) {
+            for i in 0..(ot::extension::KAPPA) {
                 
                 // We expand the seed into r0_prime, r1_prime and b_prime, as in the paper.
                 // There will be two sets of constants: one for the sender and one

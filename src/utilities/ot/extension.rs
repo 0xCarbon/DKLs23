@@ -1,26 +1,26 @@
 /// This file implements an Oblivious Transfer Extension (OTE) that realizes
-/// Functionality 3 in DKLs19 (https://eprint.iacr.org/2019/523.pdf). It is
+/// Functionality 3 in `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>). It is
 /// used for the multiplication protocol (see multiplication.rs).
 ///
-/// As DKLs23 suggested, we use Roy's SoftSpokenOT (https://eprint.iacr.org/2022/192.pdf).
+/// As `DKLs23` suggested, we use Roy's `SoftSpokenOT` (<https://eprint.iacr.org/2022/192.pdf>).
 /// However, we do not follow this paper directly. Instead, we use the KOS paper
-/// available at https://eprint.iacr.org/2015/546.pdf. In the corrected version,
+/// available at <https://eprint.iacr.org/2015/546.pdf>. In the corrected version,
 /// they present an alternative for their original protocol (which was used by DKLs,
-/// but was not as secure as expected) using SoftSpokenOT (see Fig. 10 in KOS).
+/// but was not as secure as expected) using `SoftSpokenOT` (see Fig. 10 in KOS).
 ///
-/// In order to reduce the round count, we apply the Fiat-Shamir heuristic, as DKLs23
+/// In order to reduce the round count, we apply the Fiat-Shamir heuristic, as `DKLs23`
 /// instructs. We also include an additional phase in the protocol given by KOS. It
-/// comes from Protocol 9 of the DKLs18 paper (https://eprint.iacr.org/2018/499.pdf).
+/// comes from Protocol 9 of the `DKLs18` paper (<https://eprint.iacr.org/2018/499.pdf>).
 /// It is needed to transform the outputs to the desired form.
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
-use crate::utilities::hashes::*;
+use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar};
 use crate::utilities::proofs::{DLogProof, EncProof};
 
-use crate::utilities::ot::ot_base::*;
+use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::ErrorOT;
 
 // You should not change these numbers!
@@ -80,7 +80,7 @@ impl OTESender {
         ot_receiver: &OTReceiver,
         session_id: &[u8],
         correlation: Vec<bool>,
-        vec_r: &Vec<Scalar>,
+        vec_r: &[Scalar],
         dlog_proof: &DLogProof,
     ) -> Result<OTESender, ErrorOT> {
         // The outputs from the base OT become the sender's seeds.
@@ -97,7 +97,7 @@ impl OTESender {
     pub fn run(
         &self,
         session_id: &[u8],
-        input_correlation: &Vec<Scalar>,
+        input_correlation: &[Scalar],
         data: &OTEDataToSender,
     ) -> Result<(Vec<Scalar>, Vec<Scalar>), ErrorOT> {
         // EXTEND
@@ -138,7 +138,7 @@ impl OTESender {
         for i in 0..KAPPA {
             let mut q_i = [0; EXTENDED_BATCH_SIZE / 8];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
-                q_i[j] = ((self.correlation[i] as u8) * data.u[i][j]) ^ extended_seeds[i][j];
+                q_i[j] = (u8::from(self.correlation[i]) * data.u[i][j]) ^ extended_seeds[i][j];
             }
             q.push(q_i);
         }
@@ -193,7 +193,7 @@ impl OTESender {
             let mut verify_sender_i = [0u8; OT_SECURITY / 8];
             for k in 0..OT_SECURITY / 8 {
                 verify_sender_i[k] =
-                    data.verify_t[i][k] ^ ((self.correlation[i] as u8) * data.verify_x[k]);
+                    data.verify_t[i][k] ^ (u8::from(self.correlation[i]) * data.verify_x[k]);
             }
 
             verify_sender.push(verify_sender_i);
@@ -222,14 +222,14 @@ impl OTESender {
         let mut compressed_correlation: Vec<u8> = Vec::with_capacity(KAPPA / 8);
         for i in 0..KAPPA / 8 {
             compressed_correlation.push(
-                (self.correlation[i * 8] as u8)
-                    | ((self.correlation[i * 8 + 1] as u8) << 1)
-                    | ((self.correlation[i * 8 + 2] as u8) << 2)
-                    | ((self.correlation[i * 8 + 3] as u8) << 3)
-                    | ((self.correlation[i * 8 + 4] as u8) << 4)
-                    | ((self.correlation[i * 8 + 5] as u8) << 5)
-                    | ((self.correlation[i * 8 + 6] as u8) << 6)
-                    | ((self.correlation[i * 8 + 7] as u8) << 7),
+                u8::from(self.correlation[i * 8])
+                    | (u8::from(self.correlation[i * 8 + 1]) << 1)
+                    | (u8::from(self.correlation[i * 8 + 2]) << 2)
+                    | (u8::from(self.correlation[i * 8 + 3]) << 3)
+                    | (u8::from(self.correlation[i * 8 + 4]) << 4)
+                    | (u8::from(self.correlation[i * 8 + 5]) << 5)
+                    | (u8::from(self.correlation[i * 8 + 6]) << 6)
+                    | (u8::from(self.correlation[i * 8 + 7]) << 7),
             );
         }
 
@@ -258,7 +258,7 @@ impl OTESender {
 
         let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE);
         for j in 0..BATCH_SIZE {
-            let tau_j = &v1[j] - &v0[j] + &input_correlation[j];
+            let tau_j = v1[j] - v0[j] + input_correlation[j];
             tau.push(tau_j);
         }
 
@@ -291,7 +291,7 @@ impl OTEReceiver {
         ot_sender: &OTSender,
         session_id: &[u8],
         seed: &Seed,
-        enc_proofs: &Vec<EncProof>,
+        enc_proofs: &[EncProof],
     ) -> Result<OTEReceiver, ErrorOT> {
         // The outputs from the base OT become the receiver's seeds.
         let (seeds0, seeds1) = ot_sender.run_phase2_batch(session_id, seed, enc_proofs)?;
@@ -307,7 +307,7 @@ impl OTEReceiver {
     pub fn run_phase1(
         &self,
         session_id: &[u8],
-        choice_bits: &Vec<bool>,
+        choice_bits: &[bool],
     ) -> (Vec<PRGOutput>, OTEDataToSender) {
         // EXTEND
 
@@ -316,21 +316,21 @@ impl OTEReceiver {
         for _ in 0..OT_SECURITY {
             random_choice_bits.push(rand::random());
         }
-        let extended_choice_bits = [choice_bits.clone(), random_choice_bits].concat();
+        let extended_choice_bits = [choice_bits, &random_choice_bits].concat();
 
         // For convenience, we also keep the choice bits in "compressed form" as an array of u8.
         // We interpreted extended_choice_bits as a little-endian representation of a number.
         let mut compressed_extended_bits: Vec<u8> = Vec::with_capacity(EXTENDED_BATCH_SIZE / 8);
         for i in 0..EXTENDED_BATCH_SIZE / 8 {
             compressed_extended_bits.push(
-                (extended_choice_bits[i * 8] as u8)
-                    | ((extended_choice_bits[i * 8 + 1] as u8) << 1)
-                    | ((extended_choice_bits[i * 8 + 2] as u8) << 2)
-                    | ((extended_choice_bits[i * 8 + 3] as u8) << 3)
-                    | ((extended_choice_bits[i * 8 + 4] as u8) << 4)
-                    | ((extended_choice_bits[i * 8 + 5] as u8) << 5)
-                    | ((extended_choice_bits[i * 8 + 6] as u8) << 6)
-                    | ((extended_choice_bits[i * 8 + 7] as u8) << 7),
+                u8::from(extended_choice_bits[i * 8])
+                    | (u8::from(extended_choice_bits[i * 8 + 1]) << 1)
+                    | (u8::from(extended_choice_bits[i * 8 + 2]) << 2)
+                    | (u8::from(extended_choice_bits[i * 8 + 3]) << 3)
+                    | (u8::from(extended_choice_bits[i * 8 + 4]) << 4)
+                    | (u8::from(extended_choice_bits[i * 8 + 5]) << 5)
+                    | (u8::from(extended_choice_bits[i * 8 + 6]) << 6)
+                    | (u8::from(extended_choice_bits[i * 8 + 7]) << 7),
             );
         }
 
@@ -459,9 +459,9 @@ impl OTEReceiver {
     pub fn run_phase2(
         &self,
         session_id: &[u8],
-        choice_bits: &Vec<bool>,
-        extended_seeds: &Vec<PRGOutput>,
-        tau: &Vec<Scalar>,
+        choice_bits: &[bool],
+        extended_seeds: &[PRGOutput],
+        tau: &[Scalar],
     ) -> Vec<Scalar> {
         // TRANSPOSE AND RANDOMIZE
 
@@ -493,7 +493,7 @@ impl OTEReceiver {
         for j in 0..BATCH_SIZE {
             let mut t_b_j = -&v[j];
             if choice_bits[j] {
-                t_b_j = &tau[j] + &t_b_j;
+                t_b_j = tau[j] + t_b_j;
             }
             t_b.push(t_b_j);
         }
@@ -505,18 +505,18 @@ impl OTEReceiver {
 
 // EXTRA FUNCTIONS
 
-/// This function receives a KAPPA by EXTENDED_BATCH_SIZE matrix of booleans,
-/// takes the first BATCH_SIZE columns and compute the transpose matrix, which
-/// has BATCH_SIZE rows and KAPPA columns.
+/// This function receives a `KAPPA` by `EXTENDED_BATCH_SIZE` matrix of booleans,
+/// takes the first `BATCH_SIZE` columns and compute the transpose matrix, which
+/// has `BATCH_SIZE` rows and `KAPPA` columns.
 ///
 /// The only problem is that the rows in the input and output are grouped in
 /// bytes, so we have to take some care. For this conversion, we think of
 /// the rows as a little-endian representation of a number. For example, the row
 /// [1110000010100000] corresponds to [7, 5] in bytes (and not [224,160]).
 ///
-/// This code was essentially copied from the function "transposeBooleanMatrix" here:
-/// https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go.
-pub fn cut_and_transpose(input: &Vec<PRGOutput>) -> Vec<HashOutput> {
+/// This code was essentially copied from the function `transposeBooleanMatrix` here:
+/// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
+pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
     // We initialize the output as a zero matrix.
     let mut output: Vec<HashOutput> = vec![[0u8; KAPPA / 8]; BATCH_SIZE];
 
@@ -553,19 +553,18 @@ pub fn cut_and_transpose(input: &Vec<PRGOutput>) -> Vec<HashOutput> {
 
 /// This function implements multiplication in the finite field of order 2^208.
 ///
-/// We follow https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go.
+/// We follow <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
 ///
 /// It is based on Algorithm 2.34 ("Right-to-left comb method for polynomial multiplication")
 /// and Figure 2.9 (for reduction modulo the irreducible polynomial) of the book
 /// Guide to Elliptic Curve Cryptography by Hankerson, Menezes and Vanstone.
 pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
-    if (left.len() != OT_SECURITY / 8) || (right.len() != OT_SECURITY / 8) {
-        panic!("Binary field multiplication: Entries don't have the correct length!");
-    }
-
+    
     // Constants W and t from Section 2.3 in the book.
     const W: usize = 64;
     const T: usize = 4;
+    
+    assert!((left.len() == OT_SECURITY / 8) && (right.len() == OT_SECURITY / 8), "Binary field multiplication: Entries don't have the correct length!");
 
     let mut a = [0u64; T];
     let mut b = [0u64; T + 1]; //b has extra space because it will be shifted.
@@ -573,8 +572,8 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
 
     // Conversion of [u8; 26] to [u64; 4].
     for i in 0..OT_SECURITY / 8 {
-        a[i >> 3] |= (left[i] as u64) << ((i & 0x07) << 3);
-        b[i >> 3] |= (right[i] as u64) << ((i & 0x07) << 3);
+        a[i >> 3] |= u64::from(left[i]) << ((i & 0x07) << 3);
+        b[i >> 3] |= u64::from(right[i]) << ((i & 0x07) << 3);
     }
 
     // Algorithm 2.34 (page 49)
@@ -582,7 +581,7 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
         for j in 0..T {
             //If the k-th bit of a[j] is 1, we add b to c (with the correct shift).
             if (a[j] >> k) % 2 == 1 {
-                for i in 0..(T + 1) {
+                for i in 0..=T {
                     c[j + i] ^= b[i];
                 }
             }

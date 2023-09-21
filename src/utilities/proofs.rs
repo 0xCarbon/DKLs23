@@ -2,10 +2,10 @@
 /// curve secp256k1.
 ///
 /// The main protocol is for proofs of discrete logarithms. It is used during
-/// key generation in the DKLs23 protocol (https://eprint.iacr.org/2023/765.pdf).
+/// key generation in the `DKLs23` protocol (<https://eprint.iacr.org/2023/765.pdf>).
 ///
 /// For the base OTs in the OT extension, we use the endemic protocol of Zhou et al.
-/// (see Section 3 of https://eprint.iacr.org/2023/765.pdf). Thus, we also include
+/// (see Section 3 of <https://eprint.iacr.org/2023/765.pdf>). Thus, we also include
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
@@ -14,7 +14,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::utilities::hashes::*;
+use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, point_to_bytes, scalar_to_bytes};
 
 // Constants for the randomized Fischlin transform.
 pub const R: usize = 64;
@@ -49,7 +49,7 @@ impl InteractiveDLogProof {
             scalar_rand_commitment = Scalar::random(rand::thread_rng());
         }
 
-        let point_rand_commitment = (AffinePoint::GENERATOR * &scalar_rand_commitment).to_affine();
+        let point_rand_commitment = (AffinePoint::GENERATOR * scalar_rand_commitment).to_affine();
 
         (scalar_rand_commitment, point_rand_commitment)
     }
@@ -95,8 +95,8 @@ impl InteractiveDLogProof {
         let challenge_scalar = Scalar::reduce(U256::from_be_slice(&extended));
 
         // We compare the values that should agree.
-        let point_verify = ((AffinePoint::GENERATOR * &self.challenge_response)
-            + (*point * &challenge_scalar))
+        let point_verify = ((AffinePoint::GENERATOR * self.challenge_response)
+            + (*point * challenge_scalar))
             .to_affine();
 
         point_verify == *point_rand_commitment
@@ -444,8 +444,8 @@ impl CPProof {
             scalar_rand_commitment = Scalar::random(rand::thread_rng());
         }
 
-        let point_rand_commitment_g = (*base_g * &scalar_rand_commitment).to_affine();
-        let point_rand_commitment_h = (*base_h * &scalar_rand_commitment).to_affine();
+        let point_rand_commitment_g = (*base_g * scalar_rand_commitment).to_affine();
+        let point_rand_commitment_h = (*base_h * scalar_rand_commitment).to_affine();
 
         let rand_commitments = RandomCommitments {
             rc_g: point_rand_commitment_g,
@@ -486,9 +486,9 @@ impl CPProof {
     pub fn verify(&self, rand_commitments: &RandomCommitments, challenge: &Scalar) -> bool {
         // We compare the values that should agree.
         let point_verify_g =
-            ((self.base_g * &self.challenge_response) + (self.point_u * challenge)).to_affine();
+            ((self.base_g * self.challenge_response) + (self.point_u * challenge)).to_affine();
         let point_verify_h =
-            ((self.base_h * &self.challenge_response) + (self.point_v * challenge)).to_affine();
+            ((self.base_h * self.challenge_response) + (self.point_v * challenge)).to_affine();
 
         (point_verify_g == rand_commitments.rc_g) && (point_verify_h == rand_commitments.rc_h)
     }
@@ -509,9 +509,9 @@ impl CPProof {
 
         // Now we compute the "random" commitments that work for this challenge.
         let point_rand_commitment_g =
-            ((*base_g * &challenge_response) + (*point_u * &challenge)).to_affine();
+            ((*base_g * challenge_response) + (*point_u * challenge)).to_affine();
         let point_rand_commitment_h =
-            ((*base_h * &challenge_response) + (*point_v * &challenge)).to_affine();
+            ((*base_h * challenge_response) + (*point_v * challenge)).to_affine();
 
         let rand_commitments = RandomCommitments {
             rc_g: point_rand_commitment_g,
@@ -648,7 +648,7 @@ impl EncProof {
         // However, it is easier and essentially equivalent to
         // impose that challenge = real + fake as scalars.
 
-        let real_challenge = &challenge - &fake_challenge;
+        let real_challenge = challenge - fake_challenge;
 
         let real_proof = CPProof::prove_step2(
             &base_g,
@@ -728,7 +728,7 @@ impl EncProof {
         let expected_challenge = hash_as_scalar(&msg_for_challenge, session_id);
 
         // The challenge should be the sum of the challenges used in the proofs.
-        if expected_challenge != &self.challenge0 + &self.challenge1 {
+        if expected_challenge != self.challenge0 + self.challenge1 {
             return false;
         }
 

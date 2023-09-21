@@ -1,18 +1,18 @@
 use k256::elliptic_curve::Field;
-/// This file realizes Functionality 3.5 in DKLs23 (https://eprint.iacr.org/2023/765.pdf).
-/// It is based upon the OT extension protocol in the file ot_extension.rs.
+/// This file realizes Functionality 3.5 in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>).
+/// It is based upon the OT extension protocol in the file `ot/extension.rs`.
 ///
-/// As DKLs23 suggested, we use Protocol 1 of DKLs19 (https://eprint.iacr.org/2019/523.pdf).
+/// As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
 /// The first paper also gives some orientations on how to implement the protocol
 /// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
-use crate::utilities::hashes::*;
+use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, scalar_to_bytes};
 use crate::utilities::proofs::{DLogProof, EncProof};
 
-use crate::utilities::ot::ot_base::*;
-use crate::utilities::ot::ot_extension::{
+use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
+use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
 };
 use crate::utilities::ot::ErrorOT;
@@ -82,7 +82,7 @@ impl MulSender {
         ot_receiver: &OTReceiver,
         session_id: &[u8],
         correlation: Vec<bool>,
-        vec_r: &Vec<Scalar>,
+        vec_r: &[Scalar],
         dlog_proof: &DLogProof,
         nonce: &Scalar,
     ) -> Result<MulSender, ErrorOT> {
@@ -119,7 +119,7 @@ impl MulSender {
     pub fn run(
         &self,
         session_id: &[u8],
-        input: &Vec<Scalar>,
+        input: &[Scalar],
         data: &OTEDataToSender,
     ) -> Result<(Vec<Scalar>, MulDataToReceiver), ErrorMul> {
         // RANDOMIZED MULTIPLICATION
@@ -248,7 +248,7 @@ impl MulSender {
             // We compute the i-th row of the matrix r in bytes.
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
             for j in 0..BATCH_SIZE {
-                let entry = (&chi_tilde[i] * &z_tilde[i][j]) + (&chi_hat[i] * &z_hat[i][j]);
+                let entry = (chi_tilde[i] * z_tilde[i][j]) + (chi_hat[i] * z_hat[i][j]);
                 let entry_as_bytes = scalar_to_bytes(&entry);
                 entries_as_bytes.push(entry_as_bytes);
             }
@@ -256,7 +256,7 @@ impl MulSender {
             rows_r_as_bytes.push(row_i_as_bytes);
 
             // We compute the i-th entry of the vector u.
-            let entry = (&chi_tilde[i] * &a_tilde[i]) + (&chi_hat[i] * &a_hat[i]);
+            let entry = (chi_tilde[i] * a_tilde[i]) + (chi_hat[i] * a_hat[i]);
             verify_u.push(entry);
         }
         let r_as_bytes = rows_r_as_bytes.concat();
@@ -272,7 +272,7 @@ impl MulSender {
 
         let mut gamma: Vec<Scalar> = Vec::with_capacity(L);
         for i in 0..L {
-            let difference = &input[i] - &a_tilde[i];
+            let difference = input[i] - a_tilde[i];
             gamma.push(difference);
         }
 
@@ -283,7 +283,7 @@ impl MulSender {
         for i in 0..L {
             let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
-                summation += &self.public_gadget[j] * &z_tilde[i][j];
+                summation += self.public_gadget[j] * z_tilde[i][j];
             }
             output.push(summation);
         }
@@ -325,7 +325,7 @@ impl MulReceiver {
         ot_sender: &OTSender,
         session_id: &[u8],
         seed: &Seed,
-        enc_proofs: &Vec<EncProof>,
+        enc_proofs: &[EncProof],
         nonce: &Scalar,
     ) -> Result<MulReceiver, ErrorOT> {
         let ote_receiver = OTEReceiver::init_phase2(ot_sender, session_id, seed, enc_proofs)?;
@@ -479,8 +479,8 @@ impl MulReceiver {
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
             for j in 0..BATCH_SIZE {
                 // The entry depends on the choice bits.
-                let mut entry = (-(&data_kept.chi_tilde[i] * &z_tilde[i][j]))
-                    - (&data_kept.chi_hat[i] * &z_hat[i][j]);
+                let mut entry = (-(data_kept.chi_tilde[i] * z_tilde[i][j]))
+                    - (data_kept.chi_hat[i] * z_hat[i][j]);
                 if data_kept.choice_bits[j] {
                     entry += &data_received.verify_u[i];
                 }
@@ -515,9 +515,9 @@ impl MulReceiver {
         for i in 0..L {
             let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
-                summation += &self.public_gadget[j] * &z_tilde[i][j];
+                summation += self.public_gadget[j] * z_tilde[i][j];
             }
-            let final_sum = (&data_kept.b * &data_received.gamma_sender[i]) + summation;
+            let final_sum = (data_kept.b * data_received.gamma_sender[i]) + summation;
             output.push(final_sum);
         }
 

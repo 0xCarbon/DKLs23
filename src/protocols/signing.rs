@@ -13,7 +13,7 @@ use crate::protocols::{Party, Abort, PartiesMessage};
 use crate::utilities::commits::*;
 use crate::utilities::hashes::*;
 use crate::utilities::multiplication::*;
-use crate::utilities::ot::ot_extension::*;
+use crate::utilities::ot::extension::*;
 
 // This struct contains the data needed to start
 // the signature and that are used during the phases.
@@ -178,7 +178,7 @@ impl Party {
     // Communication round 1
     // Transmit the messages.
 
-    pub fn sign_phase2(&self, data: &SignData, unique_kept: &UniqueKeep1to2, kept: &HashMap<usize,KeepPhase1to2>, received: &Vec<TransmitPhase1to2>) -> Result<(UniqueKeep2to3, HashMap<usize,KeepPhase2to3>, Vec<TransmitPhase2to3>),Abort> {
+    pub fn sign_phase2(&self, data: &SignData, unique_kept: &UniqueKeep1to2, kept: &HashMap<usize,KeepPhase1to2>, received: &[TransmitPhase1to2]) -> Result<(UniqueKeep2to3, HashMap<usize,KeepPhase2to3>, Vec<TransmitPhase2to3>),Abort> {
 
         // Step 7
 
@@ -276,7 +276,7 @@ impl Party {
     // Communication round 2
     // Transmit the messages.
 
-    pub fn sign_phase3(&self, data: &SignData, unique_kept: &UniqueKeep2to3, kept: &HashMap<usize,KeepPhase2to3>, received: &Vec<TransmitPhase2to3>) -> Result<(String,Broadcast3to4),Abort> {
+    pub fn sign_phase3(&self, data: &SignData, unique_kept: &UniqueKeep2to3, kept: &HashMap<usize,KeepPhase2to3>, received: &[TransmitPhase2to3]) -> Result<(String,Broadcast3to4),Abort> {
 
         // Steps 8 and 9
 
@@ -381,7 +381,7 @@ impl Party {
     // Communication round 3
     // Broadcast the messages (including to ourselves).
 
-    pub fn sign_phase4(&self, data: &SignData, x_coord: &str, received: &Vec<Broadcast3to4>) -> Result<String,Abort> {
+    pub fn sign_phase4(&self, data: &SignData, x_coord: &str, received: &[Broadcast3to4]) -> Result<String,Abort> {
 
         // Step 10
 

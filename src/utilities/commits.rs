@@ -1,7 +1,7 @@
-/// This file implements the commitment functionality needed for DKLs23.
+/// This file implements the commitment functionality needed for `DKLs23`.
 /// We follow the approach suggested on page 7 of the paper.
 
-use crate::utilities::hashes::*;
+use crate::utilities::hashes::{HashOutput, hash, point_to_bytes};
 use k256::AffinePoint;
 use rand::Rng;
 

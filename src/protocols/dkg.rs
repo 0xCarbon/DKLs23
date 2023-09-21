@@ -20,7 +20,7 @@ use crate::protocols::{Abort, Parameters, PartiesMessage, Party};
 use crate::utilities::commits;
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
-use crate::utilities::ot::ot_base;
+use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::zero_sharings::{self, ZeroShare};
 
@@ -95,16 +95,16 @@ pub struct TransmitInitMulPhase3to4 {
     pub nonce: Scalar,
 
     pub enc_proofs: Vec<EncProof>,
-    pub seed: ot_base::Seed,
+    pub seed: ot::base::Seed,
 }
 
 // Keep
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitMulPhase3to4 {
-    pub ot_sender: ot_base::OTSender,
+    pub ot_sender: ot::base::OTSender,
     pub nonce: Scalar,
 
-    pub ot_receiver: ot_base::OTReceiver,
+    pub ot_receiver: ot::base::OTReceiver,
     pub correlation: Vec<bool>,
     pub vec_r: Vec<Scalar>,
 }
@@ -175,7 +175,7 @@ pub fn dkg_step2(parameters: &Parameters, polynomial: Vec<Scalar>) -> Vec<Scalar
 pub fn dkg_step3(
     party_index: usize,
     session_id: &[u8],
-    poly_fragments: &Vec<Scalar>,
+    poly_fragments: &[Scalar],
 ) -> (Scalar, ProofCommitment) {
     let poly_point: Scalar = poly_fragments.iter().sum();
 
@@ -197,7 +197,7 @@ pub fn dkg_step5(
     parameters: &Parameters,
     party_index: usize,
     session_id: &[u8],
-    proofs_commitments: &Vec<ProofCommitment>,
+    proofs_commitments: &[ProofCommitment],
 ) -> Result<AffinePoint, Abort> {
     let mut commited_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count); //The "public key fragments"
                                                                                             // Verify the proofs and gather the commited points.
@@ -292,7 +292,7 @@ pub fn dkg_phase1(data: &SessionData) -> Vec<Scalar> {
 // Output (Init): Some data to keep and to transmit.
 pub fn dkg_phase2(
     data: &SessionData,
-    poly_fragments: &Vec<Scalar>,
+    poly_fragments: &[Scalar],
 ) -> (
     Scalar,
     ProofCommitment,
@@ -507,12 +507,12 @@ pub fn dkg_phase3(
 pub fn dkg_phase4(
     data: &SessionData,
     poly_point: &Scalar,
-    proofs_commitments: &Vec<ProofCommitment>,
+    proofs_commitments: &[ProofCommitment],
     zero_kept: &HashMap<usize, KeepInitZeroSharePhase3to4>,
-    zero_received_phase2: &Vec<TransmitInitZeroSharePhase2to4>,
-    zero_received_phase3: &Vec<TransmitInitZeroSharePhase3to4>,
+    zero_received_phase2: &[TransmitInitZeroSharePhase2to4],
+    zero_received_phase3: &[TransmitInitZeroSharePhase3to4],
     mul_kept: &HashMap<usize, KeepInitMulPhase3to4>,
-    mul_received: &Vec<TransmitInitMulPhase3to4>,
+    mul_received: &[TransmitInitMulPhase3to4],
     bip_received_phase2: &HashMap<usize, BroadcastDerivationPhase2to4>,
     bip_received_phase3: &HashMap<usize, BroadcastDerivationPhase3to4>,
 ) -> Result<Party, Abort> {

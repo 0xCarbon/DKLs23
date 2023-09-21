@@ -2,14 +2,14 @@ use k256::elliptic_curve::Field;
 /// This file implements an oblivious transfer (OT) which will serve as a base
 /// for the OT extension protocol.
 ///
-/// As suggested in page 30 of DKLs23 (https://eprint.iacr.org/2023/765.pdf),
+/// As suggested in page 30 of `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>),
 /// we implement the endemic OT protocol of Zhou et al., which can be found on
-/// Section 3 of https://eprint.iacr.org/2022/1525.pdf.
+/// Section 3 of <https://eprint.iacr.org/2022/1525.pdf>.
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::utilities::hashes::*;
+use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, point_to_bytes};
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::SECURITY;
@@ -109,8 +109,8 @@ impl OTSender {
 
         let (_, v) = enc_proof.get_u_and_v();
 
-        let value_for_m0 = (v * &self.s).to_affine();
-        let value_for_m1 = ((ProjectivePoint::from(v) - h) * &self.s).to_affine();
+        let value_for_m0 = (v * self.s).to_affine();
+        let value_for_m1 = ((ProjectivePoint::from(v) - h) * self.s).to_affine();
 
         let msg_for_m0 = ["S".as_bytes(), &point_to_bytes(&value_for_m0)].concat();
         let msg_for_m1 = ["S".as_bytes(), &point_to_bytes(&value_for_m1)].concat();
@@ -126,7 +126,7 @@ impl OTSender {
         &self,
         session_id: &[u8],
         seed: &Seed,
-        enc_proofs: &Vec<EncProof>,
+        enc_proofs: &[EncProof],
     ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
         let batch_size = enc_proofs.len();
 
@@ -182,7 +182,7 @@ impl OTReceiver {
     pub fn run_phase1_batch(
         &self,
         session_id: &[u8],
-        bits: &Vec<bool>,
+        bits: &[bool],
     ) -> (Vec<Scalar>, Vec<EncProof>) {
         let batch_size = bits.len();
 
@@ -248,7 +248,7 @@ impl OTReceiver {
     pub fn run_phase2_batch(
         &self,
         session_id: &[u8],
-        vec_r: &Vec<Scalar>,
+        vec_r: &[Scalar],
         dlog_proof: &DLogProof,
     ) -> Result<Vec<HashOutput>, ErrorOT> {
         // Step 1

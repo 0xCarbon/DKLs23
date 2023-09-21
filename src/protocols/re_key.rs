@@ -18,7 +18,7 @@ use crate::protocols::derivation::{ChainCode, DerivationData};
 
 use crate::utilities::hashes::*;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
-use crate::utilities::ot::ot_extension::{self, OTEReceiver, OTESender};
+use crate::utilities::ot::{self, extension::{OTEReceiver, OTESender}};
 use crate::utilities::zero_sharings::{self, ZeroShare};
 
 // The main inputs here are the parameters and the secret key.
@@ -103,18 +103,18 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
             // We first compute the data for the OT extension.
 
             // Receiver: Sample the seeds.
-            let mut seeds0: Vec<HashOutput> = Vec::with_capacity(ot_extension::KAPPA);
-            let mut seeds1: Vec<HashOutput> = Vec::with_capacity(ot_extension::KAPPA);
-            for _ in 0..ot_extension::KAPPA {
+            let mut seeds0: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA);
+            let mut seeds1: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA);
+            for _ in 0..ot::extension::KAPPA {
                 seeds0.push(rand::thread_rng().gen::<HashOutput>());
                 seeds1.push(rand::thread_rng().gen::<HashOutput>());
             }
 
             // Sender: Sample the correlation and choose the correct seed.
             // The choice bits are sampled randomly.
-            let mut correlation: Vec<bool> = Vec::with_capacity(ot_extension::KAPPA);
-            let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot_extension::KAPPA);
-            for i in 0..ot_extension::KAPPA {
+            let mut correlation: Vec<bool> = Vec::with_capacity(ot::extension::KAPPA);
+            let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA);
+            for i in 0..ot::extension::KAPPA {
                 let current_bit: bool = rand::random();
                 if current_bit {
                     seeds.push(seeds1[i]);
@@ -135,8 +135,8 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
             };
 
             // We sample the public gadget vector.
-            let mut public_gadget: Vec<Scalar> = Vec::with_capacity(ot_extension::BATCH_SIZE);
-            for _ in 0..ot_extension::BATCH_SIZE {
+            let mut public_gadget: Vec<Scalar> = Vec::with_capacity(ot::extension::BATCH_SIZE);
+            for _ in 0..ot::extension::BATCH_SIZE {
                 public_gadget.push(Scalar::random(rand::thread_rng()));
             }
 

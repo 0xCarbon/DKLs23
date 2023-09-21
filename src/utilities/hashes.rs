@@ -1,9 +1,9 @@
-/// This file implements the hash function needed for the DKLs23 protocol.
+/// This file implements the hash function needed for the `DKLs23` protocol.
 /// 
 /// We are using SHA-256 from SHA-2 as in the implementation of the
-/// previous version of the protocol (https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs).
+/// previous version of the protocol (<https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>).
 /// 
-/// As explained by one of the authors (see https://youtu.be/-d0Ny7NAG-w?si=POTKF1BwwGOzvIpL&t=3065),
+/// As explained by one of the authors (see <https://youtu.be/-d0Ny7NAG-w?si=POTKF1BwwGOzvIpL&t=3065>),
 /// each subprotocol should use a different random oracle. For this purpose, our implementation
 /// has a "salt" parameter to modify the hash function. In our main protocol, the salt is
 /// usually derived from the session id.
