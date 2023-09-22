@@ -234,7 +234,7 @@ impl MulSender {
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L.into());
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L.into());
         for i in 0..L {
-            // We compute the salts according to i and the varible.
+            // We compute the salts according to i and the variable.
             let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
             let salt_hat = [&(2u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
 
@@ -419,7 +419,7 @@ impl MulReceiver {
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L.into());
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L.into());
         for i in 0..L {
-            // We compute the salts according to i and the varible.
+            // We compute the salts according to i and the variable.
             let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
             let salt_hat = [&(2u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
 

@@ -165,7 +165,7 @@ impl Party {
 
         let zeta = self.zero_share.compute(&data.counterparties, &zero_sid);
 
-        // "Unique" because it is only one message refering to all counter parties.
+        // "Unique" because it is only one message referring to all counter parties.
         let unique_keep = UniqueKeep1to2 {
             instance_key,
             instance_point,
@@ -220,7 +220,7 @@ impl Party {
             let counterparty = message.parties.sender;
             let current_kept = kept.get(&counterparty).unwrap();
 
-            // We continue the multiplciation protocol to get the values
+            // We continue the multiplication protocol to get the values
             // c^u and c^v from the paper. We are now the sender.
 
             // Let us retrieve the session id for multiplication.
@@ -315,7 +315,7 @@ impl Party {
             let counterparty = message.parties.sender;
             let current_kept = kept.get(&counterparty).unwrap();
 
-            // Checking the commited value.
+            // Checking the committed value.
             let verification = verify_commitment_point(&message.instance_point, &current_kept.commitment, &message.salt);
             if !verification {
                 return Err(Abort::new(self.party_index, &format!("Failed to verify commitment from Party {counterparty}!")));
@@ -350,14 +350,14 @@ impl Party {
             }
 
             // In the paper, they write "lagrange(P, j, 0) · P(j)". For the math
-            // to be consistent, we belive it should be "pk_j" instead.
+            // to be consistent, we believe it should be "pk_j" instead.
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.
             if (message.public_share * current_kept.chi) != ((generator * d_v) + message.gamma_v) {
                 return Err(Abort::new(self.party_index, &format!("Consistency check with v-variables failed for Party {counterparty}!")));
             }
 
-            // We add the current summands to our sums.
+            // We add the current summand to our sums.
             expected_public_key = (ProjectivePoint::from(expected_public_key) + message.public_share).to_affine();
             total_instance_point = (ProjectivePoint::from(total_instance_point) + message.instance_point).to_affine();
 
@@ -372,7 +372,7 @@ impl Party {
             return Err(Abort::new(self.party_index, "Consistency check for public key reconstruction failed!"));
         }
 
-        // We introduce another consitency check: the total instance point
+        // We introduce another consistency check: the total instance point
         // should not be the point at infinity (this is not specified on
         // DKLs23 but actually on ECDSA itself). In any case, the probability
         // of this happening is very low.
@@ -772,7 +772,7 @@ mod tests {
 
     #[test]
     // This function tests DKG and signing. The main purpose is to
-    // verify wheter the initialization protocols from DKG are working.
+    // verify whether the initialization protocols from DKG are working.
     //
     // It is a combination of test_dkg_initialization and test_signing.
     fn test_dkg_and_signing() {

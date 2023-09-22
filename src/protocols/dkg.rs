@@ -4,7 +4,7 @@
 ///
 /// During the protocol, we also initialize the functionalities that will
 /// be used during signing. Their implementations can be found in the files
-/// `zero_sharings.rs` and `multiplication.rs`.
+/// `zero_shares.rs` and `multiplication.rs`.
 use std::collections::HashMap;
 
 use hex;
@@ -22,7 +22,7 @@ use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
-use crate::utilities::zero_sharings::{self, ZeroShare};
+use crate::utilities::zero_shares::{self, ZeroShare};
 
 // This struct is used during key generation
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -68,20 +68,20 @@ pub struct TransmitInitZeroSharePhase2to4 {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
-    pub seed: zero_sharings::Seed,
+    pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
 
 // Keep
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase2to3 {
-    pub seed: zero_sharings::Seed,
+    pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase3to4 {
-    pub seed: zero_sharings::Seed,
+    pub seed: zero_shares::Seed,
 }
 
 ////////// INITIALIZING TWO-PARTY MULTIPLICATION PROTOCOL.
@@ -194,8 +194,8 @@ pub fn step3(
 
 // Step 4 is a communication round (see the description below).
 
-// Step 5 - Each party validates the other proofs. They also recover the "public keys fragements" from the other parties.
-// Finally, a consistency check is done. In the process, the publick key is computed (Step 6).
+// Step 5 - Each party validates the other proofs. They also recover the "public keys fragments" from the other parties.
+// Finally, a consistency check is done. In the process, the public key is computed (Step 6).
 /// # Errors
 /// 
 /// Will return `Err` if one of the proofs/commitments doesn't
@@ -206,8 +206,8 @@ pub fn step5(
     session_id: &[u8],
     proofs_commitments: &[ProofCommitment],
 ) -> Result<AffinePoint, Abort> {
-    let mut commited_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into()); //The "public key fragments"
-                                                                                            // Verify the proofs and gather the commited points.
+    let mut committed_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into()); //The "public key fragments"
+                                                                                            // Verify the proofs and gather the committed points.
     for party_j in proofs_commitments {
         if party_j.index != party_index {
             let verification =
@@ -219,20 +219,20 @@ pub fn step5(
                 ));
             }
         }
-        commited_points.push(party_j.proof.point);
+        committed_points.push(party_j.proof.point);
     }
 
     // Initializes what will be the public key.
     let mut pk = AffinePoint::IDENTITY;
 
-    // Verify that all points come from the same polyonimal. To do so, for each contiguous set of parties,
+    // Verify that all points come from the same polynomial. To do so, for each contiguous set of parties,
     // perform Shamir reconstruction in the exponent and check if the results agree.
     // The common value calculated is the public key.
     for i in 1..=(parameters.share_count - parameters.threshold + 1) {
         let mut current_pk = AffinePoint::IDENTITY;
         for j in i..(i + parameters.threshold) {
             // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
-            // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polyonimal from Step 3.
+            // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polynomial from Step 3.
             let mut lj_numerator = Scalar::ONE;
             let mut lj_denominator = Scalar::ONE;
             for k in i..(i + parameters.threshold) {
@@ -243,7 +243,7 @@ pub fn step5(
             }
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
 
-            let lj_times_point = commited_points[(j - 1) as usize] * lj; // j-1 because index starts at 0
+            let lj_times_point = committed_points[(j - 1) as usize] * lj; // j-1 because index starts at 0
             current_pk = (lj_times_point + current_pk).to_affine();
         }
         // The first value is taken as the public key. It should coincide with the next values.
@@ -263,10 +263,10 @@ pub fn step5(
 
 // PHASES
 // We group the steps in phases. A phase consists of all steps that can be executed in order without the need of communication.
-// Phases should be intercalated with communication rounds: broadcasts and/or private messages containg the session id.
+// Phases should be intercalated with communication rounds: broadcasts and/or private messages containing the session id.
 
 // We also include here the initialization procedures of Functionalities 3.4 and 3.5 of DKLs23 (https://eprint.iacr.org/2023/765.pdf).
-// The first one comes from the file zero_sharings.rs and needs two communication rounds (hence, it starts on Phase 2).
+// The first one comes from the file zero_shares.rs and needs two communication rounds (hence, it starts on Phase 2).
 // The second one comes from the file multiplication.rs and needs one communication round (hence, it starts on Phase 3).
 
 // For key derivation (following BIP-32: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki), parties must agree
@@ -287,7 +287,7 @@ pub fn phase1(data: &SessionData) -> Vec<Scalar> {
 
 // Communication round 1
 // DKG: Party i keeps the i-th point and sends the j-th point to Party j for j != i.
-// At the end, Party i should have received all fragements indexed by i.
+// At the end, Party i should have received all fragments indexed by i.
 // They should add up to p(i), where p is a polynomial not depending on i.
 
 // Phase 2 = Step 3
@@ -311,7 +311,7 @@ pub fn phase2(
     let (poly_point, proof_commitment) =
         step3(data.party_index, &data.session_id, poly_fragments);
 
-    // Initialization - Zero sharings.
+    // Initialization - Zero shares.
 
     // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
     let mut zero_keep: HashMap<u8, KeepInitZeroSharePhase2to3> =
@@ -386,7 +386,7 @@ pub fn phase3(
     Vec<TransmitInitMulPhase3to4>,
     BroadcastDerivationPhase3to4,
 ) {
-    // Initialization - Zero sharings.
+    // Initialization - Zero shares.
     let mut zero_keep: HashMap<u8, KeepInitZeroSharePhase3to4> =
         HashMap::with_capacity((data.parameters.share_count - 1).into());
     let mut zero_transmit: Vec<TransmitInitZeroSharePhase3to4> =
@@ -509,7 +509,7 @@ pub fn phase3(
 
 // Phase 4 = Steps 5 and 6
 // Input (DKG): Proofs and commitments received from communication + parameters, party index, session id, poly_point.
-// Input (Init): Parameters, values kept and transmited in previous phases.
+// Input (Init): Parameters, values kept and transmitted in previous phases.
 // Output: Instance of Party ready to sign.
 /// # Errors
 /// 
@@ -542,7 +542,7 @@ pub fn phase4(
     )?;
 
     // The public key cannot be the point at infinity.
-    // This is pratically impossible, but easy to check.
+    // This is practically impossible, but easy to check.
     // We also verify that pk is not the generator point, because
     // otherwise it would be trivial to find the "total" secret key.
     if pk == AffinePoint::IDENTITY || pk == AffinePoint::GENERATOR {
@@ -562,8 +562,8 @@ pub fn phase4(
         ));
     }
 
-    // Initialization - Zero sharings.
-    let mut seeds: Vec<zero_sharings::SeedPair> =
+    // Initialization - Zero shares.
+    let mut seeds: Vec<zero_shares::SeedPair> =
         Vec::with_capacity((data.parameters.share_count - 1).into());
     for (target_party, message_kept) in zero_kept {
         for message_received_2 in zero_received_phase2 {
@@ -592,7 +592,7 @@ pub fn phase4(
                     &message_received_3.salt,
                 );
                 if !verification {
-                    return Err(Abort::new(data.party_index, &format!("Initialization for zero sharings protocol failed because Party {their_index} cheated when sending the seed!")));
+                    return Err(Abort::new(data.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
                 }
 
                 // We form the final seed pairs.

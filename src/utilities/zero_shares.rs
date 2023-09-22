@@ -1,7 +1,7 @@
 /// This file implements the zero-sharing sampling functionality from the `DKLs23` protocol
 /// (this is Functionality 3.4 on page 7 of their paper).
 ///
-/// The implementation follows the suggestion yhey give using the commitment functionality.
+/// The implementation follows the suggestion they give using the commitment functionality.
 use crate::utilities::commits;
 use crate::utilities::hashes::{HashOutput, hash_as_scalar};
 
@@ -62,7 +62,7 @@ impl ZeroShare {
         }
 
         // We save if we are the party with lowest index.
-        //The case where index_party == index_couterparty shouldn't occur in practice.
+        //The case where index_party == index_counterparty shouldn't occur in practice.
         let lowest_index = index_party <= index_counterparty;
 
         SeedPair {

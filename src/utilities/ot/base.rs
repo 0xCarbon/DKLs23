@@ -41,7 +41,7 @@ pub struct OTReceiver {
 // them. Both Phase 1 and Phase 2 can be done concurrently for the sender
 // and the receiver.
 //
-// We also create an initalization function which should be executed during
+// We also create an initialization function which should be executed during
 // Phase 1. It saves some values that can be reused if the protocol is applied
 // several times. As this will be our case for the OT extension, there are also
 // "batch" variants for each of the phases.

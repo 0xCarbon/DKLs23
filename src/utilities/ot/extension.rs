@@ -35,7 +35,7 @@ pub type FieldElement = [u8; (OT_SECURITY / 8) as usize]; //The same for OT_SECU
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OTESender {
-    pub correlation: Vec<bool>, //We will deal with bits separetely
+    pub correlation: Vec<bool>, //We will deal with bits separately
     pub seeds: Vec<HashOutput>,
 }
 
@@ -455,7 +455,7 @@ impl OTEReceiver {
 
         // Step 3 - No action for the receiver.
 
-        // These values are transmited to the sender.
+        // These values are transmitted to the sender.
         let data_to_sender = OTEDataToSender {
             u,
             verify_x,
@@ -733,7 +733,7 @@ mod tests {
             ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
 
         // Communication round 1
-        // Receiver keeps exteded_seeds and transmits data_to_sender.
+        // Receiver keeps extended_seeds and transmits data_to_sender.
 
         // Unique phase - Sender
         let sender_result = ote_sender.run(&session_id, &sender_input_correlation, &data_to_sender);

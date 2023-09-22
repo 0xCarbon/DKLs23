@@ -5,6 +5,8 @@
 (?:^|/).vscode/
 (?:^|/).github/
 (?:^|/).devcontainer/
+(?:^|/)Cargo\.toml$
+(?:^|/)Cargo\.lock$
 \.avi$
 \.env$
 \.env.json$
