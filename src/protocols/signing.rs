@@ -349,7 +349,7 @@ impl Party {
                 return Err(Abort::new(self.party_index, &format!("Consistency check with u-variables failed for Party {counterparty}!")));
             }
 
-            // In the paper, they write "lagrange(P, j, 0) · P(j)". For the math
+            // In the paper, they write "Lagrange(P, j, 0) · P(j)". For the math
             // to be consistent, we believe it should be "pk_j" instead.
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.

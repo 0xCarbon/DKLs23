@@ -4,7 +4,7 @@
 /// The main protocol is for proofs of discrete logarithms. It is used during
 /// key generation in the `DKLs23` protocol (<https://eprint.iacr.org/2023/765.pdf>).
 ///
-/// For the base OTs in the OT extension, we use the endemic protocol of Zhou et al.
+/// For the base OT in the OT extension, we use the endemic protocol of Zhou et al.
 /// (see Section 3 of <https://eprint.iacr.org/2023/765.pdf>). Thus, we also include
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).

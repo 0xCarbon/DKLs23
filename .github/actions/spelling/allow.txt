@@ -1,10 +1,13 @@
+ckd
 ote
 OTE
+len
 Vec
 mul
 sid
 prg
 DKLs
+ecdsa
 ElGamal
 Schnorr
 Fischlin
@@ -27,4 +30,5 @@ HMAC
 secp
 Secp
 ethereum
+bip
 bitcoin
