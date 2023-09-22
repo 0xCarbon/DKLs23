@@ -30,7 +30,8 @@
 				"ms-azuretools.vscode-docker",
 				"ms-vscode.makefile-tools",
 				"github.vscode-github-actions",
-				"jinxdash.prettier-rust"
+				"jinxdash.prettier-rust",
+				"streetsidesoftware.code-spell-checker"
 			]
 		}
 	}
