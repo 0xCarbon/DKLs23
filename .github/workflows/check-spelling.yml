@@ -17,7 +17,7 @@ jobs:
         with:
           # Extra dictionaries to verify words
           extra_dictionaries:
-            cspell:companies/companies.txt
+            cspell:cryptocurrencies/cryptocurrencies.txt
             cspell:software-terms/src/software-terms.txt
             cspell:bash/bash-words.txt
             cspell:el/src/Greek.txt
