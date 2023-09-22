@@ -13,18 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: check-spelling
-        uses: streetsidesoftware/cspell-action@main
+        uses: check-spelling/check-spelling@main
         with:
-        #   # Extra dictionaries to verify words
-        #   extra_dictionaries:
-        #     cspell:ada/ada.txt
-        #     cspell:software-terms/src/software-terms.txt
-        #     cspell:bash/bash-words.txt
-        #     cspell:el/src/Greek.txt
-        #     cspell:en_GB/src/wordsEnGb.txt
-        #     cspell:filetypes/filetypes.txt
-        #     cspell:fonts/fonts.txt
-        #     cspell:fullstack/fullstack.txt
-        #     cspell:rust/rust.txt
+          # Extra dictionaries to verify words
+          extra_dictionaries:
+            cspell:companies/companies.txt
+            cspell:software-terms/src/software-terms.txt
+            cspell:bash/bash-words.txt
+            cspell:el/src/Greek.txt
+            cspell:en_GB/src/wordsEnGb.txt
+            cspell:filetypes/filetypes.txt
+            cspell:fonts/fonts.txt
+            cspell:fullstack/fullstack.txt
+            cspell:rust/rust.txt
           experimental_apply_changes_via_bot: 1
           check_file_names: 1

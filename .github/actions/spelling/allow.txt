@@ -1,3 +1,9 @@
+ote
+OTE
+Vec
+mul
+sid
+prg
 DKLs
 ElGamal
 Schnorr
@@ -15,7 +21,10 @@ dlog
 Keccak
 counterparties
 counterparty
+hmac
 Hmac
 HMAC
+secp
 Secp
 ethereum
+bitcoin
