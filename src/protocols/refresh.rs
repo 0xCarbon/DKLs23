@@ -1,6 +1,6 @@
 /// This file implements a refresh protocol: periodically, all parties
-/// engage in a protocol to rerandomize their secret values (while, of
-/// course, still maintining the same public key).
+/// engage in a protocol to re-randomize their secret values (while, of
+/// course, still maintaining the same public key).
 /// 
 /// The most direct way of doing this is simply executing DKG and restricting
 /// the possible random values so that we don't change our address. We
@@ -26,7 +26,7 @@ use k256::elliptic_curve::Field;
 use crate::utilities::hashes::{HashOutput, hash};
 use crate::utilities::multiplication::{MulSender, MulReceiver};
 use crate::utilities::ot;
-use crate::utilities::zero_sharings::{self, ZeroShare};
+use crate::utilities::zero_shares::{self, ZeroShare};
 
 use crate::protocols::{Party, Abort, PartiesMessage};
 use crate::protocols::derivation::DerivData;
@@ -46,7 +46,7 @@ pub struct TransmitRefreshPhase2to4 {
 #[derive(Clone)]
 pub struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
-    pub seed: zero_sharings::Seed,
+    pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
 
@@ -57,13 +57,13 @@ pub struct TransmitRefreshPhase3to4 {
 
 #[derive(Clone)]
 pub struct KeepRefreshPhase2to3 {
-    pub seed: zero_sharings::Seed,
+    pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
 
 #[derive(Clone)]
 pub struct KeepRefreshPhase3to4 {
-    pub seed: zero_sharings::Seed,
+    pub seed: zero_shares::Seed,
 }
 
 //////////////////////////
@@ -79,12 +79,12 @@ impl Party {
 
     // To adapt the DKG protocol, we change Step 1: instead of sampling any random
     // polynomial, each party generates a polynomial whose constant term is zero.
-    // In this way, the key generation provides each party with a point on a polyinomial
+    // In this way, the key generation provides each party with a point on a polynomial
     // whose constant term (the "secret key") is zero. This new point is just a correction
     // factor and must be added to the original poly_point variable. This refreshes each
     // key share while preserving the same public key.
 
-    // Each party cannot trust that their adversaries really chose a polyinomial
+    // Each party cannot trust that their adversaries really chose a polynomial
     // with zero constant term. Therefore, we must add a new consistency check in
     // Phase 4: after recovering the auxiliary public key, each party must check that
     // it is equal to the zero point on the curve. This ensures that the correction
@@ -116,7 +116,7 @@ impl Party {
         // DKG
         let (correction_value, proof_commitment) = step3(self.party_index, refresh_sid, poly_fragments);
 
-        // Initialization - Zero sharings.
+        // Initialization - Zero shares.
 
         // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
         let mut zero_keep: HashMap<u8,KeepInitZeroSharePhase2to3> = HashMap::with_capacity((self.parameters.share_count - 1).into());
@@ -149,7 +149,7 @@ impl Party {
         
         // We run Phase 3 in DKG, but we omit the derivation part.
 
-        // Initialization - Zero sharings.
+        // Initialization - Zero shares.
         let mut zero_keep: HashMap<u8,KeepInitZeroSharePhase3to4> = HashMap::with_capacity((self.parameters.share_count - 1).into());
         let mut zero_transmit: Vec<TransmitInitZeroSharePhase3to4> = Vec::with_capacity((self.parameters.share_count - 1).into());
         for (target_party, message_kept) in zero_kept {
@@ -249,8 +249,8 @@ impl Party {
             return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
 
-        // Initialization - Zero sharings.
-        let mut seeds: Vec<zero_sharings::SeedPair> = Vec::with_capacity((self.parameters.share_count - 1).into());
+        // Initialization - Zero shares.
+        let mut seeds: Vec<zero_shares::SeedPair> = Vec::with_capacity((self.parameters.share_count - 1).into());
         for (target_party, message_kept) in zero_kept {
             for message_received_2 in zero_received_phase2 {
                 for message_received_3 in zero_received_phase3 {
@@ -269,7 +269,7 @@ impl Party {
                     // We verify the commitment.
                     let verification = ZeroShare::verify_seed(&message_received_3.seed, &message_received_2.commitment, &message_received_3.salt);
                     if !verification {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for zero sharings protocol failed because Party {their_index} cheated when sending the seed!")));
+                        return Err(Abort::new(self.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
                     }
 
                     // We form the final seed pairs.
@@ -420,7 +420,7 @@ impl Party {
         // DKG
         let (correction_value, proof_commitment) = step3(self.party_index, refresh_sid, poly_fragments);
 
-        // Initialization - Zero sharings.
+        // Initialization - Zero shares.
 
         // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
         let mut keep: HashMap<u8,KeepRefreshPhase2to3> = HashMap::with_capacity((self.parameters.share_count - 1).into());
@@ -450,7 +450,7 @@ impl Party {
         
         // We run Phase 3 in DKG, but we omit the multiplication and the derivation parts.
 
-        // Initialization - Zero sharings.
+        // Initialization - Zero shares.
         let mut keep: HashMap<u8,KeepRefreshPhase3to4> = HashMap::with_capacity((self.parameters.share_count - 1).into());
         let mut transmit: Vec<TransmitRefreshPhase3to4> = Vec::with_capacity((self.parameters.share_count - 1).into());
         for (target_party, message_kept) in kept {
@@ -496,8 +496,8 @@ impl Party {
             return Err(Abort::new(self.party_index, "The auxiliary public key is not the zero point!"));
         }
 
-        // Initialization - Zero sharings.
-        let mut seeds: Vec<zero_sharings::SeedPair> = Vec::with_capacity((self.parameters.share_count - 1).into());
+        // Initialization - Zero shares.
+        let mut seeds: Vec<zero_shares::SeedPair> = Vec::with_capacity((self.parameters.share_count - 1).into());
         for (target_party, message_kept) in kept {
             for message_received_2 in received_phase2 {
                 for message_received_3 in received_phase3 {
@@ -516,7 +516,7 @@ impl Party {
                     // We verify the commitment.
                     let verification = ZeroShare::verify_seed(&message_received_3.seed, &message_received_2.commitment, &message_received_3.salt);
                     if !verification {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for zero sharings protocol failed because Party {their_index} cheated when sending the seed!")));
+                        return Err(Abort::new(self.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
                     }
 
                     // We form the final seed pairs.
@@ -597,7 +597,7 @@ impl Party {
 
             }
 
-            // We will not change the public gadget vector (well, it is "public" afterall).
+            // We will not change the public gadget vector (well, it is "public" after all).
             mul_senders.insert(their_index, MulSender { 
                 public_gadget: mul_sender.public_gadget.clone(),
                 ote_sender: new_ote_sender,

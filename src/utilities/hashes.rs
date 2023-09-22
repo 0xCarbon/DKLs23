@@ -10,7 +10,7 @@
 ///
 /// FOR THE FUTURE: It requires some work to really guarantee that all "salts" are
 /// different for each subprotocol. For example, the implementation above has a
-/// file just for this purporse. Thus, it's worth analyzing this code in the future
+/// file just for this purpose. Thus, it's worth analyzing this code in the future
 /// and maybe implementing something similar.
 
 use bitcoin_hashes::{Hash, sha256};

@@ -4,7 +4,7 @@
 /// The main protocol is for proofs of discrete logarithms. It is used during
 /// key generation in the `DKLs23` protocol (<https://eprint.iacr.org/2023/765.pdf>).
 ///
-/// For the base OTs in the OT extension, we use the endemic protocol of Zhou et al.
+/// For the base OT in the OT extension, we use the endemic protocol of Zhou et al.
 /// (see Section 3 of <https://eprint.iacr.org/2023/765.pdf>). Thus, we also include
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
@@ -27,7 +27,7 @@ pub const T: u16 = 32;
 //
 // We base our implementation on Figures 23 and 27 of https://eprint.iacr.org/2022/1525.pdf.
 //
-// For convinience, instead of writing the protocol directly, we wrote first an
+// For convenience, instead of writing the protocol directly, we wrote first an
 // implementation of the usual Schnorr's protocol, which is interactive. Since
 // it will be used for the non-interactive version, we made same particular choices
 // that would not make much sense if this interactive proof were used alone.
@@ -129,7 +129,7 @@ impl DLogProof {
     // We believe this is what the authors wanted, since this condition appears
     // in most of the rest of the first paper.
     //
-    // With lamdba = 256, we chose r = 64 and l = 4 (higher values of l were too slow).
+    // With lambda = 256, we chose r = 64 and l = 4 (higher values of l were too slow).
     // In this case, the constant t from the paper is equal to 32.
     #[must_use]
     pub fn prove(scalar: &Scalar, session_id: &[u8]) -> DLogProof {
@@ -159,7 +159,7 @@ impl DLogProof {
             // We will find different challenges until one of them works.
             // Since both hashes to be computed are of 2l bits, we expect
             // them to coincide after 2^{2l} tries (assuming everything is
-            // uniformally random and independent). For l = 4, this is just
+            // uniformly random and independent). For l = 4, this is just
             // 256 tries. For safety, we will put a large margin and repeat
             // each while at most 2^16 times (so 2^32 tries in total).
 
@@ -617,7 +617,7 @@ impl EncProof {
         let f_rc_g_as_bytes = point_to_bytes(&fake_commitments.rc_g);
         let f_rc_h_as_bytes = point_to_bytes(&fake_commitments.rc_h);
 
-        // The proof that comes first is always the one containg u and v.
+        // The proof that comes first is always the one containing u and v.
         // If bit = 0, it is the real proof, otherwise it is the fake one.
         // For the message, we first put the commitments for the first proof
         // since the verifier does not know which proof is the real one.

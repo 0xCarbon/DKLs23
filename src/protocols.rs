@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocols::derivation::DerivData;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
-use crate::utilities::zero_sharings::ZeroShare;
+use crate::utilities::zero_shares::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
@@ -26,7 +26,7 @@ pub struct Party {
     pub party_index: u8,
     pub session_id: Vec<u8>,
 
-    pub poly_point: Scalar, // It behaves as the secrect key share
+    pub poly_point: Scalar, // It behaves as the secret key share
     pub pk: AffinePoint,    // Public key
 
     pub zero_share: ZeroShare, // Used for computing shares of zero during signing.

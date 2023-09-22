@@ -19,7 +19,7 @@ use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot::{self, extension::{OTEReceiver, OTESender}};
-use crate::utilities::zero_sharings::{self, ZeroShare};
+use crate::utilities::zero_shares::{self, ZeroShare};
 
 // The main inputs here are the parameters and the secret key.
 // We also include the session id here because the party that
@@ -49,11 +49,11 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
     // (1,3), ..., (1,n). The second entry contains the seeds for the pairs
     // (2,3), (2,4), ..., (2,n), and so on. The last entry contains the
     // seed for the pair (n-1, n).
-    let mut common_seeds: Vec<Vec<zero_sharings::Seed>> = Vec::with_capacity((parameters.share_count - 1).into());
+    let mut common_seeds: Vec<Vec<zero_shares::Seed>> = Vec::with_capacity((parameters.share_count - 1).into());
     for lower_index in 1..parameters.share_count {
-        let mut seeds_with_lower_index: Vec<zero_sharings::Seed> = Vec::with_capacity((parameters.share_count - lower_index).into());
+        let mut seeds_with_lower_index: Vec<zero_shares::Seed> = Vec::with_capacity((parameters.share_count - lower_index).into());
         for _ in (lower_index + 1)..=parameters.share_count {
-            let seed = rand::thread_rng().gen::<zero_sharings::Seed>();
+            let seed = rand::thread_rng().gen::<zero_shares::Seed>();
             seeds_with_lower_index.push(seed);
         }
         common_seeds.push(seeds_with_lower_index);
@@ -63,12 +63,12 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
     let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(parameters.share_count.into());
     for party in 1..=parameters.share_count {
 
-        let mut seeds: Vec<zero_sharings::SeedPair> = Vec::with_capacity((parameters.share_count - 1).into());
+        let mut seeds: Vec<zero_shares::SeedPair> = Vec::with_capacity((parameters.share_count - 1).into());
         
         // We compute the pairs for which we have the highest index.
         if party > 1 {
             for counterparty in 1..party {
-                seeds.push(zero_sharings::SeedPair {
+                seeds.push(zero_shares::SeedPair {
                     lowest_index: false,
                     index_counterparty: counterparty,
                     seed: common_seeds[(counterparty - 1) as usize][(party - counterparty - 1) as usize],
@@ -79,7 +79,7 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
         // We compute the pairs for which we have the lowest index.
         if party < parameters.share_count {
             for counterparty in (party + 1)..=parameters.share_count {
-                seeds.push(zero_sharings::SeedPair {
+                seeds.push(zero_shares::SeedPair {
                     lowest_index: true,
                     index_counterparty: counterparty,
                     seed: common_seeds[(party - 1) as usize][(counterparty - party - 1) as usize],

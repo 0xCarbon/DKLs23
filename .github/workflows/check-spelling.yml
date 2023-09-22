@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, dev]
   pull_request:
-    branches: [dev]
+    branches: [main, dev]
 
 jobs:
   spelling:
@@ -16,7 +16,8 @@ jobs:
         uses: check-spelling/check-spelling@main
         with:
           # Extra dictionaries to verify words
-          extra_dictionaries: cspell:ada/ada.txt
+          extra_dictionaries:
+            cspell:cryptocurrencies/cryptocurrencies.txt
             cspell:software-terms/src/software-terms.txt
             cspell:bash/bash-words.txt
             cspell:el/src/Greek.txt
@@ -26,5 +27,4 @@ jobs:
             cspell:fullstack/fullstack.txt
             cspell:rust/rust.txt
           experimental_apply_changes_via_bot: 1
-          # Uncomment if wants check spell of file names
-          # check_file_names: 1
+          check_file_names: 1
