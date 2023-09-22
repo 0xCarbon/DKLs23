@@ -1,0 +1,30 @@
+# The configs for this spell check can be find at /.github/actions/spelling
+name: Spell checking
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [dev]
+
+jobs:
+  spelling:
+    name: Spell checking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: check-spelling
+        uses: check-spelling/check-spelling@main
+        with:
+          # Extra dictionaries to verify words
+          extra_dictionaries: cspell:ada/ada.txt
+            cspell:software-terms/src/software-terms.txt
+            cspell:bash/bash-words.txt
+            cspell:el/src/Greek.txt
+            cspell:en_GB/src/wordsEnGb.txt
+            cspell:filetypes/filetypes.txt
+            cspell:fonts/fonts.txt
+            cspell:fullstack/fullstack.txt
+            cspell:rust/rust.txt
+          experimental_apply_changes_via_bot: 1
+          # Uncomment if wants check spell of file names
+          # check_file_names: 1
