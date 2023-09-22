@@ -1,7 +1,9 @@
+DDH
 ckd
 ote
 OTE
 len
+vec
 Vec
 mul
 sid

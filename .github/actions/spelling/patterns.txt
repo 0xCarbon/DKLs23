@@ -1,5 +1,5 @@
 # URLs (as we can't fix links unfortunately)
-https:\/\/\S+/g
+(['"])https:.*?\g{-1}
 
 # patch hunk comments
 ^\@\@ -\d+(?:,\d+|) \+\d+(?:,\d+|) \@\@ .*
