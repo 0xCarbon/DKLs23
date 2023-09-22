@@ -15,7 +15,7 @@ jobs:
           override: true
           components: rustc, cargo, llvm-tools-preview
       - name: Install C compiler
-        run: sudo apt-get install build-essential
+        run: sudo apt-get install lld lldb clang -y
       - name: Configure to use LLVM linker
         run: echo "[build]" >> ~/.cargo/config && echo "rustflags = [\"-C\", \"link-arg=-fuse-ld=lld\"]" >> ~/.cargo/config
       - name: Run cargo test
