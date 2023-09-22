@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@master
         with:
           toolchain: stable
           override: true
@@ -30,7 +30,7 @@ jobs:
       - name: Configure to use LLVM linker
         run: echo "[build]" >> ~/.cargo/config && echo "rustflags = [\"-C\", \"link-arg=-fuse-ld=lld\"]" >> ~/.cargo/config
       - name: Run cargo test
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@master
         with:
           command: test
           args: --release
