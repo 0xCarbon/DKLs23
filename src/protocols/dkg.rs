@@ -766,7 +766,7 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
 
     let compressed_pk = [prefix, x_as_bytes].concat();
 
-    // We compute the keccak256 of the point.
+    // We compute the Keccak256 of the point.
     let mut hasher = Keccak256::new();
     hasher.update(compressed_pk);
 
