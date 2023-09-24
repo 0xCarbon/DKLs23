@@ -1,3 +1,4 @@
+use k256::elliptic_curve::{ops::Reduce, Field};
 /// This file implements some protocols for zero-knowledge proofs over the
 /// curve secp256k1.
 ///
@@ -9,12 +10,11 @@
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
-use k256::elliptic_curve::{ops::Reduce, Field};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, point_to_bytes, scalar_to_bytes};
+use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, scalar_to_bytes, HashOutput};
 
 // Constants for the randomized Fischlin transform.
 pub const R: u16 = 64;
@@ -43,7 +43,6 @@ impl InteractiveDLogProof {
     // Step 1 - Sample the random commitments.
     #[must_use]
     pub fn prove_step1() -> (Scalar, AffinePoint) {
-
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
@@ -182,8 +181,11 @@ impl DLogProof {
                 // a lot of repetitions.
 
                 // We execute Step 2 at index i.
-                let first_proof =
-                    InteractiveDLogProof::prove_step2(scalar, &states[i as usize], &first_challenge);
+                let first_proof = InteractiveDLogProof::prove_step2(
+                    scalar,
+                    &states[i as usize],
+                    &first_challenge,
+                );
 
                 // Let's take the first hash here.
                 let first_msg = [
@@ -277,7 +279,11 @@ impl DLogProof {
         // All the proofs should be different (otherwise, it would be easier to forge a proof).
         // Here we compare the random commitments using a HashSet.
         let mut without_repetitions: HashSet<Vec<u8>> = HashSet::with_capacity(R.into());
-        if !vec_rc_as_bytes.clone().into_iter().all(move |x| without_repetitions.insert(x)) {
+        if !vec_rc_as_bytes
+            .clone()
+            .into_iter()
+            .all(move |x| without_repetitions.insert(x))
+        {
             return false;
         }
 
@@ -311,9 +317,12 @@ impl DLogProof {
             }
 
             // We verify both proofs.
-            let verification_1 = proof.proofs[i as usize].verify(&proof.point, &proof.rand_commitments[i as usize]);
-            let verification_2 = proof.proofs[(i + (R / 2)) as usize]
-                .verify(&proof.point, &proof.rand_commitments[(i + (R / 2)) as usize]);
+            let verification_1 =
+                proof.proofs[i as usize].verify(&proof.point, &proof.rand_commitments[i as usize]);
+            let verification_2 = proof.proofs[(i + (R / 2)) as usize].verify(
+                &proof.point,
+                &proof.rand_commitments[(i + (R / 2)) as usize],
+            );
 
             if !verification_1 || !verification_2 {
                 return false;
@@ -445,7 +454,6 @@ impl CPProof {
     // Step 1 - Sample the random commitments.
     #[must_use]
     pub fn prove_step1(base_g: &AffinePoint, base_h: &AffinePoint) -> (Scalar, RandomCommitments) {
-        
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
@@ -776,8 +784,7 @@ mod tests {
         let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let mut proof = DLogProof::prove(&scalar, &session_id);
-        proof.proofs[0].challenge_response =
-            &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
+        proof.proofs[0].challenge_response *= Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::verify(&proof, &session_id)));
     }
 
@@ -794,8 +801,7 @@ mod tests {
         let scalar = Scalar::random(rand::thread_rng());
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
         let (mut proof, commitment) = DLogProof::prove_commit(&scalar, &session_id);
-        proof.proofs[0].challenge_response =
-            &proof.proofs[0].challenge_response * &Scalar::from(2u32); //Changing the proof
+        proof.proofs[0].challenge_response *= Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::decommit_verify(&proof, &commitment, &session_id)));
     }
 

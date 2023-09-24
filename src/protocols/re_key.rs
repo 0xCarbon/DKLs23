@@ -4,21 +4,23 @@
 /// "trusted dealer" that can manipulate all the data from `DKLs23` to the
 /// other parties. Hence, this function is computed locally and doesn't
 /// need any communication.
-
 use std::collections::HashMap;
 
-use k256::{Scalar, AffinePoint};
 use k256::elliptic_curve::Field;
+use k256::{AffinePoint, Scalar};
 
 use rand::Rng;
 
-use crate::protocols::{Parameters, Party};
-use crate::protocols::dkg::compute_eth_address;
 use crate::protocols::derivation::{ChainCode, DerivData};
+use crate::protocols::dkg::compute_eth_address;
+use crate::protocols::{Parameters, Party};
 
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
-use crate::utilities::ot::{self, extension::{OTEReceiver, OTESender}};
+use crate::utilities::ot::{
+    self,
+    extension::{OTEReceiver, OTESender},
+};
 use crate::utilities::zero_shares::{self, ZeroShare};
 
 // The main inputs here are the parameters and the secret key.
@@ -28,14 +30,18 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 // We also include an option to put a chain code if the original
 // wallet followed BIP-32 for key derivation.
 #[must_use]
-pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, option_chain_code: Option<ChainCode>) -> Vec<Party> {
-
+pub fn re_key(
+    parameters: &Parameters,
+    session_id: &[u8],
+    secret_key: &Scalar,
+    option_chain_code: Option<ChainCode>,
+) -> Vec<Party> {
     // Public key.
     let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
 
     // We will compute "poly_point" for each party with this polynomial
     // via Shamir's secret sharing.
-    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold.into());
+    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
     polynomial.push(*secret_key);
     for _ in 1..parameters.threshold {
         polynomial.push(Scalar::random(rand::thread_rng()));
@@ -49,9 +55,11 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
     // (1,3), ..., (1,n). The second entry contains the seeds for the pairs
     // (2,3), (2,4), ..., (2,n), and so on. The last entry contains the
     // seed for the pair (n-1, n).
-    let mut common_seeds: Vec<Vec<zero_shares::Seed>> = Vec::with_capacity((parameters.share_count - 1).into());
+    let mut common_seeds: Vec<Vec<zero_shares::Seed>> =
+        Vec::with_capacity((parameters.share_count - 1).into());
     for lower_index in 1..parameters.share_count {
-        let mut seeds_with_lower_index: Vec<zero_shares::Seed> = Vec::with_capacity((parameters.share_count - lower_index).into());
+        let mut seeds_with_lower_index: Vec<zero_shares::Seed> =
+            Vec::with_capacity((parameters.share_count - lower_index).into());
         for _ in (lower_index + 1)..=parameters.share_count {
             let seed = rand::thread_rng().gen::<zero_shares::Seed>();
             seeds_with_lower_index.push(seed);
@@ -62,16 +70,17 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
     // We can now finish the initialization.
     let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(parameters.share_count.into());
     for party in 1..=parameters.share_count {
+        let mut seeds: Vec<zero_shares::SeedPair> =
+            Vec::with_capacity((parameters.share_count - 1).into());
 
-        let mut seeds: Vec<zero_shares::SeedPair> = Vec::with_capacity((parameters.share_count - 1).into());
-        
         // We compute the pairs for which we have the highest index.
         if party > 1 {
             for counterparty in 1..party {
                 seeds.push(zero_shares::SeedPair {
                     lowest_index: false,
                     index_counterparty: counterparty,
-                    seed: common_seeds[(counterparty - 1) as usize][(party - counterparty - 1) as usize],
+                    seed: common_seeds[(counterparty - 1) as usize]
+                        [(party - counterparty - 1) as usize],
                 });
             }
         }
@@ -93,13 +102,22 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
     // Two-party multiplication.
 
     // These will store the result of initialization for each party.
-    let mut all_mul_receivers: Vec<HashMap<u8,MulReceiver>> = vec![HashMap::with_capacity((parameters.share_count - 1).into()); parameters.share_count as usize];
-    let mut all_mul_senders: Vec<HashMap<u8,MulSender>> = vec![HashMap::with_capacity((parameters.share_count - 1).into()); parameters.share_count as usize];
+    let mut all_mul_receivers: Vec<HashMap<u8, MulReceiver>> =
+        vec![
+            HashMap::with_capacity((parameters.share_count - 1).into());
+            parameters.share_count as usize
+        ];
+    let mut all_mul_senders: Vec<HashMap<u8, MulSender>> =
+        vec![
+            HashMap::with_capacity((parameters.share_count - 1).into());
+            parameters.share_count as usize
+        ];
 
     for receiver in 1..=parameters.share_count {
         for sender in 1..=parameters.share_count {
-
-            if sender == receiver { continue; }
+            if sender == receiver {
+                continue;
+            }
 
             // We first compute the data for the OT extension.
 
@@ -125,18 +143,13 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
                 correlation.push(current_bit);
             }
 
-            let ote_receiver = OTEReceiver {
-                seeds0,
-                seeds1,
-            };
+            let ote_receiver = OTEReceiver { seeds0, seeds1 };
 
-            let ote_sender = OTESender {
-                correlation,
-                seeds,
-            };
+            let ote_sender = OTESender { correlation, seeds };
 
             // We sample the public gadget vector.
-            let mut public_gadget: Vec<Scalar> = Vec::with_capacity(ot::extension::BATCH_SIZE.into());
+            let mut public_gadget: Vec<Scalar> =
+                Vec::with_capacity(ot::extension::BATCH_SIZE.into());
             for _ in 0..ot::extension::BATCH_SIZE {
                 public_gadget.push(Scalar::random(rand::thread_rng()));
             }
@@ -161,14 +174,13 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
     // Key derivation - BIP-32.
     // We use the chain code given or we sample a new one.
     let chain_code = match option_chain_code {
-        Some(cc) => { cc },
-        None => { rand::thread_rng().gen::<ChainCode>() },
+        Some(cc) => cc,
+        None => rand::thread_rng().gen::<ChainCode>(),
     };
 
     // We create the parties.
     let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count.into());
     for index in 1..=parameters.share_count {
-
         // poly_point is polynomial evaluated at index.
         let mut poly_point = Scalar::ZERO;
         let mut power_of_index = Scalar::ONE;
@@ -185,8 +197,8 @@ pub fn re_key(parameters: &Parameters, session_id: &[u8], secret_key: &Scalar, o
 
         let derivation_data = DerivData {
             depth: 0,
-            child_number: 0,            // These three values are initialized as zero for the master node.
-            parent_fingerprint: [0;4],
+            child_number: 0, // These three values are initialized as zero for the master node.
+            parent_fingerprint: [0; 4],
             poly_point,
             pk,
             chain_code,

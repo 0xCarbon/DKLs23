@@ -143,11 +143,11 @@ pub struct UniqueKeepDerivationPhase2to3 {
 #[must_use]
 pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
     // We represent the polynomial by its coefficients.
+    let mut rng = rand::thread_rng(); // Reuse RNG
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold.into());
     for _ in 0..parameters.threshold {
-        polynomial.push(Scalar::random(rand::thread_rng()));
+        polynomial.push(Scalar::random(&mut rng)); // Pass the RNG explicitly
     }
-
     polynomial
 }
 
@@ -155,14 +155,16 @@ pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
 #[must_use]
 pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
     let mut points: Vec<Scalar> = Vec::with_capacity(parameters.share_count.into());
+    let last_index = (parameters.threshold - 1) as usize;
 
     for j in 1..=parameters.share_count {
-        // We compute the polynomial evaluated at j.
-        let mut evaluation_at_j = Scalar::ZERO;
-        let mut power_of_j = Scalar::ONE;
-        for i in 0..parameters.threshold {
-            evaluation_at_j += polynomial[i as usize] * power_of_j;
-            power_of_j *= Scalar::from(u32::from(j));
+        let j_scalar = Scalar::from(j as u32); // Direct conversion
+
+        // Using Horner's method for polynomial evaluation
+        let mut evaluation_at_j = polynomial[last_index];
+
+        for &coefficient in polynomial[..last_index].iter().rev() {
+            evaluation_at_j = evaluation_at_j * j_scalar + coefficient;
         }
 
         points.push(evaluation_at_j);
@@ -197,7 +199,7 @@ pub fn step3(
 // Step 5 - Each party validates the other proofs. They also recover the "public keys fragments" from the other parties.
 // Finally, a consistency check is done. In the process, the public key is computed (Step 6).
 /// # Errors
-/// 
+///
 /// Will return `Err` if one of the proofs/commitments doesn't
 /// verify or if the consistency check for the public key fails.
 pub fn step5(
@@ -207,7 +209,7 @@ pub fn step5(
     proofs_commitments: &[ProofCommitment],
 ) -> Result<AffinePoint, Abort> {
     let mut committed_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into()); //The "public key fragments"
-                                                                                            // Verify the proofs and gather the committed points.
+                                                                                                    // Verify the proofs and gather the committed points.
     for party_j in proofs_commitments {
         if party_j.index != party_index {
             let verification =
@@ -233,19 +235,24 @@ pub fn step5(
         for j in i..(i + parameters.threshold) {
             // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
             // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polynomial from Step 3.
+            let j_scalar = Scalar::from(u32::from(j));
             let mut lj_numerator = Scalar::ONE;
             let mut lj_denominator = Scalar::ONE;
+
             for k in i..(i + parameters.threshold) {
                 if k != j {
-                    lj_numerator *= Scalar::from(u32::from(k));
-                    lj_denominator *= Scalar::from(u32::from(k)) - Scalar::from(u32::from(j));
+                    let k_scalar = Scalar::from(u32::from(k));
+                    lj_numerator *= k_scalar;
+                    lj_denominator *= k_scalar - j_scalar;
                 }
             }
-            let lj = lj_numerator * (lj_denominator.invert().unwrap());
 
+            let lj = lj_numerator * (lj_denominator.invert().unwrap());
             let lj_times_point = committed_points[(j - 1) as usize] * lj; // j-1 because index starts at 0
+
             current_pk = (lj_times_point + current_pk).to_affine();
         }
+
         // The first value is taken as the public key. It should coincide with the next values.
         if i == 1 {
             pk = current_pk;
@@ -280,7 +287,6 @@ pub fn step5(
 pub fn phase1(data: &SessionData) -> Vec<Scalar> {
     // DKG
     let secret_polynomial = step1(&data.parameters);
-    
 
     step2(&data.parameters, &secret_polynomial)
 }
@@ -308,16 +314,14 @@ pub fn phase2(
     BroadcastDerivationPhase2to4,
 ) {
     // DKG
-    let (poly_point, proof_commitment) =
-        step3(data.party_index, &data.session_id, poly_fragments);
+    let (poly_point, proof_commitment) = step3(data.party_index, &data.session_id, poly_fragments);
 
     // Initialization - Zero shares.
 
     // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
-    let mut zero_keep: HashMap<u8, KeepInitZeroSharePhase2to3> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
-    let mut zero_transmit: Vec<TransmitInitZeroSharePhase2to4> =
-        Vec::with_capacity((data.parameters.share_count - 1).into());
+    let mut zero_keep = HashMap::with_capacity((data.parameters.share_count - 1).into());
+    let mut zero_transmit = Vec::with_capacity((data.parameters.share_count - 1).into());
+
     for i in 1..=data.parameters.share_count {
         if i == data.party_index {
             continue;
@@ -327,28 +331,27 @@ pub fn phase2(
         let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
 
         // We first send the commitments. We keep the rest to send later.
-        let keep = KeepInitZeroSharePhase2to3 { seed, salt };
-        let transmit = TransmitInitZeroSharePhase2to4 {
+        zero_keep.insert(i, KeepInitZeroSharePhase2to3 { seed, salt });
+        zero_transmit.push(TransmitInitZeroSharePhase2to4 {
             parties: PartiesMessage {
                 sender: data.party_index,
                 receiver: i,
             },
             commitment,
-        };
-
-        zero_keep.insert(i, keep);
-        zero_transmit.push(transmit);
+        });
     }
 
     // Initialization - BIP-32.
+
     // Each party samples a random auxiliary chain code.
-    let aux_chain_code = rand::thread_rng().gen::<ChainCode>();
+    let aux_chain_code: ChainCode = rand::thread_rng().gen();
     let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
 
     let bip_keep = UniqueKeepDerivationPhase2to3 {
         aux_chain_code,
         cc_salt,
     };
+
     // For simplicity, this message should be sent to us too.
     let bip_broadcast = BroadcastDerivationPhase2to4 {
         sender_index: data.party_index,
@@ -387,11 +390,11 @@ pub fn phase3(
     BroadcastDerivationPhase3to4,
 ) {
     // Initialization - Zero shares.
-    let mut zero_keep: HashMap<u8, KeepInitZeroSharePhase3to4> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
-    let mut zero_transmit: Vec<TransmitInitZeroSharePhase3to4> =
-        Vec::with_capacity((data.parameters.share_count - 1).into());
-    for (target_party, message_kept) in zero_kept {
+    let share_count = (data.parameters.share_count - 1) as usize;
+    let mut zero_keep = HashMap::with_capacity(share_count);
+    let mut zero_transmit = Vec::with_capacity(share_count);
+
+    for (&target_party, message_kept) in zero_kept.iter() {
         // The messages kept contain the seed and the salt.
         // They have to be transmitted to the target party.
         // We keep the seed with us for the next phase.
@@ -401,23 +404,23 @@ pub fn phase3(
         let transmit = TransmitInitZeroSharePhase3to4 {
             parties: PartiesMessage {
                 sender: data.party_index,
-                receiver: *target_party,
+                receiver: target_party,
             },
             seed: message_kept.seed,
             salt: message_kept.salt.clone(),
         };
 
-        zero_keep.insert(*target_party, keep);
+        zero_keep.insert(target_party, keep);
         zero_transmit.push(transmit);
     }
 
     // Initialization - Two-party multiplication.
     // Each party prepares initialization both as
     // a receiver and as a sender.
-    let mut mul_keep: HashMap<u8, KeepInitMulPhase3to4> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
-    let mut mul_transmit: Vec<TransmitInitMulPhase3to4> =
-        Vec::with_capacity((data.parameters.share_count - 1).into());
+    // Initialization - Two-party multiplication.
+    let mut mul_keep = HashMap::with_capacity(share_count);
+    let mut mul_transmit = Vec::with_capacity(share_count);
+
     for i in 1..=data.parameters.share_count {
         if i == data.party_index {
             continue;
@@ -512,13 +515,13 @@ pub fn phase3(
 // Input (Init): Parameters, values kept and transmitted in previous phases.
 // Output: Instance of Party ready to sign.
 /// # Errors
-/// 
+///
 /// Will return `Err` if a message is not meant for the party
 /// or if one of the initializations fails. With very low probability,
 /// it may also fail if the secret data is trivial.
-/// 
+///
 /// # Panics
-/// 
+///
 /// Will panic if the list of keys in the `HashMap`'s are incompatible
 /// with the party indices in the received vectors.
 pub fn phase4(
@@ -653,9 +656,7 @@ pub fn phase4(
             );
 
             let mul_receiver: MulReceiver = match receiver_result {
-                Ok(r) => {
-                    r
-                }
+                Ok(r) => r,
                 Err(error) => {
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
@@ -683,9 +684,7 @@ pub fn phase4(
             );
 
             let mul_sender: MulSender = match sender_result {
-                Ok(s) => {
-                    s
-                }
+                Ok(s) => s,
                 Err(error) => {
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
@@ -757,14 +756,13 @@ pub fn phase4(
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
     // Here, we will compute the address using the compressed form of pk.
-    let x_as_bytes = pk.x().as_slice().to_vec();
-    let prefix = if pk.y_is_odd().into() {
-        vec![3]
-    } else {
-        vec![2]
-    };
+    let x_value = pk.x();
+    let x_as_bytes = x_value.as_slice();
+    let prefix = if pk.y_is_odd().into() { 3 } else { 2 };
 
-    let compressed_pk = [prefix, x_as_bytes].concat();
+    let mut compressed_pk = [0u8; 33];
+    compressed_pk[0] = prefix;
+    compressed_pk[1..].copy_from_slice(x_as_bytes);
 
     // We compute the Keccak256 of the point.
     let mut hasher = Keccak256::new();
@@ -772,11 +770,9 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
 
     // We save the last 20 bytes represented in hexadecimal.
     let address_bytes = &hasher.finalize()[12..];
-    let mut address = hex::encode(address_bytes);
-
-    // We insert 0x in the beginning.
-    address.insert(0, 'x');
-    address.insert(0, '0');
+    let mut address = String::with_capacity(42); // 2 for "0x" and 40 for the 20-byte address
+    address.push_str("0x");
+    address.push_str(&hex::encode(address_bytes));
 
     address
 }
@@ -858,8 +854,10 @@ mod tests {
 
         // Communication round 1
         // We transpose the matrix
-        let mut poly_fragments =
-            vec![Vec::<Scalar>::with_capacity(parameters.share_count.into()); parameters.share_count as usize];
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count.into());
+            parameters.share_count as usize
+        ];
         for row_i in phase1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row_i[j as usize]);
@@ -879,12 +877,7 @@ mod tests {
         let mut result_parties: Vec<Result<AffinePoint, Abort>> =
             Vec::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            result_parties.push(step5(
-                &parameters,
-                i + 1,
-                &session_id,
-                &proofs_commitments,
-            ));
+            result_parties.push(step5(&parameters, i + 1, &session_id, &proofs_commitments));
         }
 
         for result in result_parties {
@@ -1045,12 +1038,7 @@ mod tests {
         let mut results: Vec<Result<AffinePoint, Abort>> =
             Vec::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            results.push(step5(
-                &parameters,
-                i + 1,
-                &session_id,
-                &proofs_commitments,
-            ));
+            results.push(step5(&parameters, i + 1, &session_id, &proofs_commitments));
         }
 
         let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into());
@@ -1113,8 +1101,10 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments =
-            vec![Vec::<Scalar>::with_capacity(parameters.share_count.into()); parameters.share_count as usize];
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count.into());
+            parameters.share_count as usize
+        ];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row_i[j as usize]);
@@ -1134,7 +1124,8 @@ mod tests {
         let mut bip_broadcast_2to4: HashMap<u8, BroadcastDerivationPhase2to4> =
             HashMap::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5, out6) = phase2(&all_data[i as usize], &poly_fragments[i as usize]);
+            let (out1, out2, out3, out4, out5, out6) =
+                phase2(&all_data[i as usize], &poly_fragments[i as usize]);
 
             poly_points.push(out1);
             proofs_commitments.push(out2);
@@ -1179,8 +1170,11 @@ mod tests {
         let mut bip_broadcast_3to4: HashMap<u8, BroadcastDerivationPhase3to4> =
             HashMap::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5) =
-                phase3(&all_data[i as usize], &zero_kept_2to3[i as usize], &bip_kept_2to3[i as usize]);
+            let (out1, out2, out3, out4, out5) = phase3(
+                &all_data[i as usize],
+                &zero_kept_2to3[i as usize],
+                &bip_kept_2to3[i as usize],
+            );
 
             zero_kept_3to4.push(out1);
             zero_transmit_3to4.push(out2);

@@ -1,6 +1,3 @@
-# URLs (as we can't fix links unfortunately)
-(['"])https:.*?\g{-1}
-
 # patch hunk comments
 ^\@\@ -\d+(?:,\d+|) \+\d+(?:,\d+|) \@\@ .*
 # git index header

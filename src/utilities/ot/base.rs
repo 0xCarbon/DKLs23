@@ -9,7 +9,7 @@ use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, point_to_bytes};
+use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, HashOutput};
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::SECURITY;
@@ -52,7 +52,6 @@ impl OTSender {
     // logarithm. Thus, we isolate this part from the rest for efficiency.
     #[must_use]
     pub fn init(session_id: &[u8]) -> OTSender {
-        
         // We sample a nonzero random scalar.
         let mut s = Scalar::ZERO;
         while s == Scalar::ZERO {
@@ -82,7 +81,7 @@ impl OTSender {
 
     // Phase 2 - We verify the receiver's data and compute the output.
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the proof of discrete logarithm fails.
     pub fn run_phase2(
         &self,
@@ -128,7 +127,7 @@ impl OTSender {
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if one of the executions fails.
     pub fn run_phase2_batch(
         &self,
@@ -136,7 +135,8 @@ impl OTSender {
         seed: &Seed,
         enc_proofs: &[EncProof],
     ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
-        let batch_size = u16::try_from(enc_proofs.len()).expect("The batch sizes used always fit into an u16!");
+        let batch_size =
+            u16::try_from(enc_proofs.len()).expect("The batch sizes used always fit into an u16!");
 
         let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
         let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
@@ -195,7 +195,8 @@ impl OTReceiver {
         session_id: &[u8],
         bits: &[bool],
     ) -> (Vec<Scalar>, Vec<EncProof>) {
-        let batch_size = u16::try_from(bits.len()).expect("The batch sizes used always fit into an u16!");
+        let batch_size =
+            u16::try_from(bits.len()).expect("The batch sizes used always fit into an u16!");
 
         let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size.into());
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size.into());
@@ -222,7 +223,7 @@ impl OTReceiver {
     // once, while the second is different for each iteration.
 
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the proof of discrete logarithm fails.
     pub fn run_phase2_step1(
         &self,
@@ -253,7 +254,6 @@ impl OTReceiver {
         let value_for_mb = (*z * r).to_affine();
 
         let msg_for_mb = ["S".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
-        
 
         // We could return the bit as in the paper, but the receiver has this information.
         hash(&msg_for_mb, session_id)
@@ -261,7 +261,7 @@ impl OTReceiver {
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if one of the executions fails.
     pub fn run_phase2_batch(
         &self,
@@ -273,7 +273,8 @@ impl OTReceiver {
         let z = self.run_phase2_step1(session_id, dlog_proof)?;
 
         // Step 2
-        let batch_size = u16::try_from(vec_r.len()).expect("The batch sizes used always fit into an u16!");
+        let batch_size =
+            u16::try_from(vec_r.len()).expect("The batch sizes used always fit into an u16!");
 
         let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
         for i in 0..batch_size {

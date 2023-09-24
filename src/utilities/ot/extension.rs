@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
-use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar};
+use crate::utilities::hashes::{hash, hash_as_scalar, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
 
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
@@ -78,7 +78,7 @@ impl OTESender {
     }
 
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_receiver: &OTReceiver,
@@ -99,7 +99,7 @@ impl OTESender {
     // Input: Correlation for the points (as in Functionality 3 of DKLs19) and values transmitted by the receiver.
     // Output: Protocol's output and a value to be sent to the receiver.
     /// # Errors
-    /// 
+    ///
     /// Will return  `Err` if the consistency check using the receiver values fails.
     pub fn run(
         &self,
@@ -145,7 +145,9 @@ impl OTESender {
         for i in 0..KAPPA {
             let mut q_i = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
-                q_i[j as usize] = (u8::from(self.correlation[i as usize]) * data.u[i as usize][j as usize]) ^ extended_seeds[i as usize][j as usize];
+                q_i[j as usize] = (u8::from(self.correlation[i as usize])
+                    * data.u[i as usize][j as usize])
+                    ^ extended_seeds[i as usize][j as usize];
             }
             q.push(q_i);
         }
@@ -183,12 +185,17 @@ impl OTESender {
         for i in 0..KAPPA {
             // The summation sign on the protocol is just the sum of the following two terms:
             let prod_qi_1 = field_mul(&q[i as usize][0..(OT_SECURITY / 8) as usize], &chi1);
-            let prod_qi_2 = field_mul(&q[i as usize][((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)], &chi2);
+            let prod_qi_2 = field_mul(
+                &q[i as usize][((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
+                &chi2,
+            );
 
             //We sum the terms to get q_i.
             let mut verify_qi = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
-                verify_qi[k as usize] = prod_qi_1[k as usize] ^ prod_qi_2[k as usize] ^ q[i as usize][((2 * OT_SECURITY / 8) + k) as usize];
+                verify_qi[k as usize] = prod_qi_1[k as usize]
+                    ^ prod_qi_2[k as usize]
+                    ^ q[i as usize][((2 * OT_SECURITY / 8) + k) as usize];
             }
 
             verify_q.push(verify_qi);
@@ -199,8 +206,8 @@ impl OTESender {
         for i in 0..KAPPA {
             let mut verify_sender_i = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
-                verify_sender_i[k as usize] =
-                    data.verify_t[i as usize][k as usize] ^ (u8::from(self.correlation[i as usize]) * data.verify_x[k as usize]);
+                verify_sender_i[k as usize] = data.verify_t[i as usize][k as usize]
+                    ^ (u8::from(self.correlation[i as usize]) * data.verify_x[k as usize]);
             }
 
             verify_sender.push(verify_sender_i);
@@ -246,7 +253,8 @@ impl OTESender {
             // For v1, we compute transposed_q[j] ^ correlation.
             let mut transposed_qj_plus_correlation = [0u8; (KAPPA / 8) as usize];
             for i in 0..KAPPA / 8 {
-                transposed_qj_plus_correlation[i as usize] = transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
+                transposed_qj_plus_correlation[i as usize] =
+                    transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
             }
 
             let salt = [&j.to_be_bytes(), session_id].concat();
@@ -296,7 +304,7 @@ impl OTEReceiver {
     }
 
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_sender: &OTSender,
@@ -332,7 +340,8 @@ impl OTEReceiver {
 
         // For convenience, we also keep the choice bits in "compressed form" as an array of u8.
         // We interpreted extended_choice_bits as a little-endian representation of a number.
-        let mut compressed_extended_bits: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8).into());
+        let mut compressed_extended_bits: Vec<u8> =
+            Vec::with_capacity((EXTENDED_BATCH_SIZE / 8).into());
         for i in 0..EXTENDED_BATCH_SIZE / 8 {
             compressed_extended_bits.push(
                 u8::from(extended_choice_bits[(i * 8) as usize])
@@ -385,8 +394,9 @@ impl OTEReceiver {
         for i in 0..KAPPA {
             let mut u_i = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
-                u_i[j as usize] =
-                    extended_seeds0[i as usize][j as usize] ^ extended_seeds1[i as usize][j as usize] ^ compressed_extended_bits[j as usize];
+                u_i[j as usize] = extended_seeds0[i as usize][j as usize]
+                    ^ extended_seeds1[i as usize][j as usize]
+                    ^ compressed_extended_bits[j as usize];
             }
             u.push(u_i);
         }
@@ -421,33 +431,43 @@ impl OTEReceiver {
         // Step 2 - We compute the verification values to the sender.
 
         // The summation sign on the protocol is just the sum of the following two terms:
-        let prod_x_1 = field_mul(&compressed_extended_bits[0..(OT_SECURITY / 8) as usize], &chi1);
+        let prod_x_1 = field_mul(
+            &compressed_extended_bits[0..(OT_SECURITY / 8) as usize],
+            &chi1,
+        );
         let prod_x_2 = field_mul(
-            &compressed_extended_bits[((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
+            &compressed_extended_bits
+                [((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
             &chi2,
         );
 
         // We sum the terms to get x.
         let mut verify_x = [0u8; (OT_SECURITY / 8) as usize];
         for k in 0..OT_SECURITY / 8 {
-            verify_x[k as usize] =
-                prod_x_1[k as usize] ^ prod_x_2[k as usize] ^ compressed_extended_bits[((2 * OT_SECURITY / 8) + k) as usize];
+            verify_x[k as usize] = prod_x_1[k as usize]
+                ^ prod_x_2[k as usize]
+                ^ compressed_extended_bits[((2 * OT_SECURITY / 8) + k) as usize];
         }
 
         let mut verify_t: Vec<FieldElement> = Vec::with_capacity(KAPPA.into());
         for i in 0..KAPPA {
             // The summation sign on the protocol is just the sum of the following two terms:
-            let prod_ti_1 = field_mul(&extended_seeds0[i as usize][0..(OT_SECURITY / 8) as usize], &chi1);
+            let prod_ti_1 = field_mul(
+                &extended_seeds0[i as usize][0..(OT_SECURITY / 8) as usize],
+                &chi1,
+            );
             let prod_ti_2 = field_mul(
-                &extended_seeds0[i as usize][((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
+                &extended_seeds0[i as usize]
+                    [((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
                 &chi2,
             );
 
             //We sum the terms to get t_i.
             let mut verify_ti = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
-                verify_ti[k as usize] =
-                    prod_ti_1[k as usize] ^ prod_ti_2[k as usize] ^ extended_seeds0[i as usize][((2 * OT_SECURITY / 8) + k) as usize];
+                verify_ti[k as usize] = prod_ti_1[k as usize]
+                    ^ prod_ti_2[k as usize]
+                    ^ extended_seeds0[i as usize][((2 * OT_SECURITY / 8) + k) as usize];
             }
 
             verify_t.push(verify_ti);
@@ -548,7 +568,9 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
                     // In every row, the columns are packed in bytes.
                     // We access the row_bit-th row, then the column_byte-th byte,
                     // and then we extract the desired bit.
-                    let entry = (input[row_bit as usize][column_byte as usize] >> column_bit_within_byte) & 0x01;
+                    let entry = (input[row_bit as usize][column_byte as usize]
+                        >> column_bit_within_byte)
+                        & 0x01;
 
                     // If we see output as a matrix of booleans, we want to
                     // write output[column_bit][row_bit] = entry;
@@ -572,18 +594,20 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
 /// It is based on Algorithm 2.34 ("Right-to-left comb method for polynomial multiplication")
 /// and Figure 2.9 (for reduction modulo the irreducible polynomial) of the book
 /// Guide to Elliptic Curve Cryptography by Hankerson, Menezes and Vanstone.
-/// 
+///
 /// # Panics
-/// 
+///
 /// Will panic if `left` or `right` doesn't have the correct size, that is `OT_SECURITY` = 208 bits.
 #[must_use]
 pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
-    
     // Constants W and t from Section 2.3 in the book.
     const W: u8 = 64;
     const T: u8 = 4;
-    
-    assert!((left.len() == (OT_SECURITY / 8).into()) && (right.len() == (OT_SECURITY / 8).into()), "Binary field multiplication: Entries don't have the correct length!");
+
+    assert!(
+        (left.len() == (OT_SECURITY / 8).into()) && (right.len() == (OT_SECURITY / 8).into()),
+        "Binary field multiplication: Entries don't have the correct length!"
+    );
 
     let mut a = [0u64; T as usize];
     let mut b = [0u64; (T + 1) as usize]; //b has extra space because it will be shifted.
@@ -651,7 +675,8 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
     // We convert the result to the original format.
     let mut result = [0u8; (OT_SECURITY / 8) as usize];
     for i in 0..OT_SECURITY / 8 {
-        result[i as usize] = u8::try_from((c[(i >> 3) as usize] >> ((i & 0x07) << 3)) & 0xFF).expect("This value fits into an u8!");
+        result[i as usize] = u8::try_from((c[(i >> 3) as usize] >> ((i & 0x07) << 3)) & 0xFF)
+            .expect("This value fits into an u8!");
     }
 
     result
@@ -695,28 +720,22 @@ mod tests {
 
         // Phase 2 - Receiver
         let result_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs);
-        let ote_receiver: OTEReceiver;
-        match result_receiver {
-            Ok(r) => {
-                ote_receiver = r;
-            }
+        let ote_receiver = match result_receiver {
+            Ok(r) => r,
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
             }
-        }
+        };
 
         // Phase 2 - Sender
         let result_sender =
             OTESender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof);
-        let ote_sender: OTESender;
-        match result_sender {
-            Ok(s) => {
-                ote_sender = s;
-            }
+        let ote_sender = match result_sender {
+            Ok(s) => s,
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
             }
-        }
+        };
 
         // PROTOCOL
 
@@ -760,7 +779,7 @@ mod tests {
         for i in 0..BATCH_SIZE {
             //Depending on the choice the receiver made, the sum of the outputs should
             //be equal to 0 or to the correlation the sender chose.
-            let sum = &sender_output[i as usize] + &receiver_output[i as usize];
+            let sum = sender_output[i as usize] + receiver_output[i as usize];
             if receiver_choice_bits[i as usize] {
                 assert_eq!(sum, sender_input_correlation[i as usize]);
             } else {
