@@ -3,7 +3,7 @@
 ///
 /// The implementation follows the suggestion they give using the commitment functionality.
 use crate::utilities::commits;
-use crate::utilities::hashes::{HashOutput, hash_as_scalar};
+use crate::utilities::hashes::{hash_as_scalar, HashOutput};
 
 use k256::Scalar;
 use rand::Rng;
@@ -117,7 +117,8 @@ mod tests {
         let number_parties: u8 = 8; //This number can be changed. If so, change executing_parties below.
 
         //Parties generate the initial seeds and the commitments.
-        let mut step1: Vec<Vec<(Seed, HashOutput, Vec<u8>)>> = Vec::with_capacity(number_parties.into());
+        let mut step1: Vec<Vec<(Seed, HashOutput, Vec<u8>)>> =
+            Vec::with_capacity(number_parties.into());
         for _ in 0..number_parties {
             let mut step1_party_i: Vec<(Seed, HashOutput, Vec<u8>)> =
                 Vec::with_capacity(number_parties.into());

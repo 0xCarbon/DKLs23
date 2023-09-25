@@ -8,7 +8,7 @@ use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
-use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, scalar_to_bytes};
+use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
 
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
@@ -81,7 +81,7 @@ impl MulSender {
 
     // The nonce will be sent by the receiver for the computation of the public gadget vector.
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_receiver: &OTReceiver,
@@ -122,7 +122,7 @@ impl MulSender {
     // Input: Protocol's input and data coming from receiver.
     // Output: Protocol's output and data to receiver.
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the underlying OT extension fails (see `ot/extension.rs`).
     pub fn run(
         &self,
@@ -187,7 +187,9 @@ impl MulSender {
 
         for i in 0..L {
             //Running OT protocol for tilde values.
-            let result = self.ote_sender.run(session_id, &correlation_tilde[i as usize], data);
+            let result = self
+                .ote_sender
+                .run(session_id, &correlation_tilde[i as usize], data);
 
             match result {
                 Ok((output, tau)) => {
@@ -203,7 +205,9 @@ impl MulSender {
             }
 
             //Running OT protocol for hat values.
-            let result = self.ote_sender.run(session_id, &correlation_hat[i as usize], data);
+            let result = self
+                .ote_sender
+                .run(session_id, &correlation_hat[i as usize], data);
 
             match result {
                 Ok((output, tau)) => {
@@ -256,7 +260,8 @@ impl MulSender {
             // We compute the i-th row of the matrix r in bytes.
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE.into());
             for j in 0..BATCH_SIZE {
-                let entry = (chi_tilde[i as usize] * z_tilde[i as usize][j as usize]) + (chi_hat[i as usize] * z_hat[i as usize][j as usize]);
+                let entry = (chi_tilde[i as usize] * z_tilde[i as usize][j as usize])
+                    + (chi_hat[i as usize] * z_hat[i as usize][j as usize]);
                 let entry_as_bytes = scalar_to_bytes(&entry);
                 entries_as_bytes.push(entry_as_bytes);
             }
@@ -264,7 +269,8 @@ impl MulSender {
             rows_r_as_bytes.push(row_i_as_bytes);
 
             // We compute the i-th entry of the vector u.
-            let entry = (chi_tilde[i as usize] * a_tilde[i as usize]) + (chi_hat[i as usize] * a_hat[i as usize]);
+            let entry = (chi_tilde[i as usize] * a_tilde[i as usize])
+                + (chi_hat[i as usize] * a_hat[i as usize]);
             verify_u.push(entry);
         }
         let r_as_bytes = rows_r_as_bytes.concat();
@@ -331,7 +337,7 @@ impl MulReceiver {
     }
 
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_sender: &OTSender,
@@ -446,7 +452,7 @@ impl MulReceiver {
     // Input: Data from previous phase and data from sender.
     // Output: Second of protocol's outputs.
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the consistency check using the receiver values fails.
     pub fn run_phase2(
         &self,
@@ -495,7 +501,8 @@ impl MulReceiver {
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE.into());
             for j in 0..BATCH_SIZE {
                 // The entry depends on the choice bits.
-                let mut entry = (-(data_kept.chi_tilde[i as usize] * z_tilde[i as usize][j as usize]))
+                let mut entry = (-(data_kept.chi_tilde[i as usize]
+                    * z_tilde[i as usize][j as usize]))
                     - (data_kept.chi_hat[i as usize] * z_hat[i as usize][j as usize]);
                 if data_kept.choice_bits[j as usize] {
                     entry += &data_received.verify_u[i as usize];
@@ -566,15 +573,12 @@ mod tests {
         // Phase 2 - Receiver
         let result_receiver =
             MulReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs, &nonce);
-        let mul_receiver: MulReceiver;
-        match result_receiver {
-            Ok(r) => {
-                mul_receiver = r;
-            }
+        let mul_receiver = match result_receiver {
+            Ok(r) => r,
             Err(error) => {
                 panic!("Two-party multiplication error: {:?}", error.description);
             }
-        }
+        };
 
         // Phase 2 - Sender
         let result_sender = MulSender::init_phase2(
@@ -585,15 +589,12 @@ mod tests {
             &dlog_proof,
             &nonce,
         );
-        let mul_sender: MulSender;
-        match result_sender {
-            Ok(s) => {
-                mul_sender = s;
-            }
+        let mul_sender = match result_sender {
+            Ok(s) => s,
             Err(error) => {
                 panic!("Two-party multiplication error: {:?}", error.description);
             }
-        }
+        };
 
         // PROTOCOL
 
@@ -632,22 +633,19 @@ mod tests {
         let receiver_result =
             mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
 
-        let receiver_output: Vec<Scalar>;
-        match receiver_result {
-            Ok(output) => {
-                receiver_output = output;
-            }
+        let receiver_output = match receiver_result {
+            Ok(output) => output,
             Err(error) => {
                 panic!("Two-party multiplication error: {:?}", error.description);
             }
-        }
+        };
 
         // Verification that the protocol did what it should do.
         for i in 0..L {
             // The sum of the outputs should be equal to the product of the
             // sender's chosen scalar and the receiver's random scalar.
-            let sum = &sender_output[i as usize] + &receiver_output[i as usize];
-            assert_eq!(sum, &sender_input[i as usize] * &receiver_random);
+            let sum = sender_output[i as usize] + receiver_output[i as usize];
+            assert_eq!(sum, sender_input[i as usize] * receiver_random);
         }
     }
 }

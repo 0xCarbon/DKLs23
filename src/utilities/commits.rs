@@ -1,7 +1,6 @@
 /// This file implements the commitment functionality needed for `DKLs23`.
 /// We follow the approach suggested on page 7 of the paper.
-
-use crate::utilities::hashes::{HashOutput, hash, point_to_bytes};
+use crate::utilities::hashes::{hash, point_to_bytes, HashOutput};
 use k256::AffinePoint;
 use rand::Rng;
 
@@ -14,15 +13,13 @@ use crate::SECURITY;
 //he sends the message together with the salt.
 #[must_use]
 pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
-
     //The paper instructs the salt to have 2*lambda_c bits.
-    let salt1 = rand::thread_rng().gen::<[u8; SECURITY as usize]>(); //This function doesn't work for higher SECURITY.
-    let salt2 = rand::thread_rng().gen::<[u8; SECURITY as usize]>(); //However, we don't expect SECURITY to be changed.
-    let salt = [salt1, salt2].concat();
+    let mut salt = [0u8; 2 * SECURITY as usize];
+    rand::thread_rng().fill(&mut salt[..]);
 
     let commitment = hash(msg, &salt);
 
-    (commitment, salt)
+    (commitment, salt.to_vec())
 }
 
 //After having received the commitment and later the message and the salt, the receiver
@@ -63,7 +60,7 @@ mod tests {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
         let (commitment, salt) = commit(&msg);
         let msg = rand::thread_rng().gen::<[u8; 32]>(); //We change the message
-        assert!(!(verify_commitment(&msg, &commitment, &salt)));  //The test can fail but with very low probability
+        assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
     #[test]
@@ -71,17 +68,15 @@ mod tests {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
         let (_, salt) = commit(&msg);
         let commitment = rand::thread_rng().gen::<HashOutput>(); //We change the commitment
-        assert!(!(verify_commitment(&msg, &commitment, &salt)));           //The test can fail but with very low probability
+        assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
     #[test]
     fn test_commit_decommit_fail_salt() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
         let (commitment, _) = commit(&msg);
-        let salt1 = rand::thread_rng().gen::<[u8; SECURITY as usize]>(); //We change the salt
-        let salt2 = rand::thread_rng().gen::<[u8; SECURITY as usize]>();
-        let salt = [salt1,salt2].concat();
-        assert!(!(verify_commitment(&msg, &commitment, &salt)));   //The test can fail but with very low probability
+        let mut salt = [0u8; 2 * SECURITY as usize];
+        rand::thread_rng().fill(&mut salt[..]);
+        assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
-
 }
