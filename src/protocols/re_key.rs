@@ -4,7 +4,7 @@
 /// "trusted dealer" that can manipulate all the data from `DKLs23` to the
 /// other parties. Hence, this function is computed locally and doesn't
 /// need any communication.
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
@@ -56,10 +56,10 @@ pub fn re_key(
     // (2,3), (2,4), ..., (2,n), and so on. The last entry contains the
     // seed for the pair (n-1, n).
     let mut common_seeds: Vec<Vec<zero_shares::Seed>> =
-        Vec::with_capacity((parameters.share_count - 1).into());
+        Vec::with_capacity((parameters.share_count - 1) as usize);
     for lower_index in 1..parameters.share_count {
         let mut seeds_with_lower_index: Vec<zero_shares::Seed> =
-            Vec::with_capacity((parameters.share_count - lower_index).into());
+            Vec::with_capacity((parameters.share_count - lower_index) as usize);
         for _ in (lower_index + 1)..=parameters.share_count {
             let seed = rand::thread_rng().gen::<zero_shares::Seed>();
             seeds_with_lower_index.push(seed);
@@ -68,10 +68,10 @@ pub fn re_key(
     }
 
     // We can now finish the initialization.
-    let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(parameters.share_count.into());
+    let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(parameters.share_count as usize);
     for party in 1..=parameters.share_count {
         let mut seeds: Vec<zero_shares::SeedPair> =
-            Vec::with_capacity((parameters.share_count - 1).into());
+            Vec::with_capacity((parameters.share_count - 1) as usize);
 
         // We compute the pairs for which we have the highest index.
         if party > 1 {
@@ -102,14 +102,14 @@ pub fn re_key(
     // Two-party multiplication.
 
     // These will store the result of initialization for each party.
-    let mut all_mul_receivers: Vec<HashMap<u8, MulReceiver>> =
+    let mut all_mul_receivers: Vec<BTreeMap<u8, MulReceiver>> =
         vec![
-            HashMap::with_capacity((parameters.share_count - 1).into());
+            BTreeMap::new();
             parameters.share_count as usize
         ];
-    let mut all_mul_senders: Vec<HashMap<u8, MulSender>> =
+    let mut all_mul_senders: Vec<BTreeMap<u8, MulSender>> =
         vec![
-            HashMap::with_capacity((parameters.share_count - 1).into());
+            BTreeMap::new();
             parameters.share_count as usize
         ];
 
@@ -122,8 +122,8 @@ pub fn re_key(
             // We first compute the data for the OT extension.
 
             // Receiver: Sample the seeds.
-            let mut seeds0: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA.into());
-            let mut seeds1: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA.into());
+            let mut seeds0: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
+            let mut seeds1: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for _ in 0..ot::extension::KAPPA {
                 seeds0.push(rand::thread_rng().gen::<HashOutput>());
                 seeds1.push(rand::thread_rng().gen::<HashOutput>());
@@ -131,8 +131,8 @@ pub fn re_key(
 
             // Sender: Sample the correlation and choose the correct seed.
             // The choice bits are sampled randomly.
-            let mut correlation: Vec<bool> = Vec::with_capacity(ot::extension::KAPPA.into());
-            let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA.into());
+            let mut correlation: Vec<bool> = Vec::with_capacity(ot::extension::KAPPA as usize);
+            let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for i in 0..ot::extension::KAPPA {
                 let current_bit: bool = rand::random();
                 if current_bit {
@@ -149,7 +149,7 @@ pub fn re_key(
 
             // We sample the public gadget vector.
             let mut public_gadget: Vec<Scalar> =
-                Vec::with_capacity(ot::extension::BATCH_SIZE.into());
+                Vec::with_capacity(ot::extension::BATCH_SIZE as usize);
             for _ in 0..ot::extension::BATCH_SIZE {
                 public_gadget.push(Scalar::random(rand::thread_rng()));
             }
@@ -179,7 +179,7 @@ pub fn re_key(
     };
 
     // We create the parties.
-    let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count.into());
+    let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
     for index in 1..=parameters.share_count {
         // poly_point is polynomial evaluated at index.
         let mut poly_point = Scalar::ZERO;

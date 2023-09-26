@@ -218,7 +218,7 @@ impl Party {
 #[must_use]
 pub fn serialize_point_compressed(point: &AffinePoint) -> Vec<u8> {
     let mut result = Vec::with_capacity(33);
-    result.push(if point.y_is_odd().into() { 3 } else { 2 });
+    result.push(if bool::from(point.y_is_odd()) { 3 } else { 2 });
     result.extend_from_slice(point.x().as_slice());
     result
 }
@@ -273,7 +273,7 @@ mod tests {
     use hex;
     use k256::elliptic_curve::Field;
     use rand::Rng;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_derivation() {
@@ -345,7 +345,7 @@ mod tests {
 
         let path = "m/0/1/2/3";
 
-        let mut derived_parties: Vec<Party> = Vec::with_capacity(parameters.share_count.into());
+        let mut derived_parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = parties[i as usize].derive_from_path(path);
             match result {
@@ -369,8 +369,7 @@ mod tests {
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
 
         // Each party prepares their data for this signing session.
-        let mut all_data: HashMap<u8, SignData> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -387,12 +386,9 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: HashMap<u8, UniqueKeep1to2> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_1to2: HashMap<u8, HashMap<u8, KeepPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap());
@@ -403,8 +399,7 @@ mod tests {
         }
 
         // Communication round 1
-        let mut received_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold as usize);
+        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
 
         // Iterate over each party_index in executing_parties
         for &party_index in &executing_parties {
@@ -422,12 +417,9 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: HashMap<u8, UniqueKeep2to3> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_2to3: HashMap<u8, HashMap<u8, KeepPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -448,8 +440,7 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold as usize);
+        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
 
         // Use references to avoid cloning executing_parties
         for &party_index in &executing_parties {
@@ -467,9 +458,9 @@ mod tests {
         }
 
         // Phase 3
-        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold.into());
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
         let mut broadcast_3to4: Vec<Broadcast3to4> =
-            Vec::with_capacity(parameters.threshold.into());
+            Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),

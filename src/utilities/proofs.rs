@@ -133,8 +133,8 @@ impl DLogProof {
     #[must_use]
     pub fn prove(scalar: &Scalar, session_id: &[u8]) -> DLogProof {
         // We execute Step 1 r times.
-        let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R.into());
-        let mut states: Vec<Scalar> = Vec::with_capacity(R.into());
+        let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R as usize);
+        let mut states: Vec<Scalar> = Vec::with_capacity(R as usize);
         for _ in 0..R {
             let (state, rand_commitment) = InteractiveDLogProof::prove_step1();
 
@@ -152,8 +152,8 @@ impl DLogProof {
 
         // Now, there is a "proof of work".
         // We have to find the good challenges.
-        let mut first_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2).into());
-        let mut last_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2).into());
+        let mut first_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2) as usize);
+        let mut last_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2) as usize);
         for i in 0..(R / 2) {
             // We will find different challenges until one of them works.
             // Since both hashes to be computed are of 2l bits, we expect
@@ -264,7 +264,7 @@ impl DLogProof {
         // We first verify that all vectors have the correct length.
         // If the prover is very unlucky, there is the possibility that
         // he doesn't return all the needed proofs.
-        if proof.rand_commitments.len() != R.into() || proof.proofs.len() != R.into() {
+        if proof.rand_commitments.len() != (R as usize) || proof.proofs.len() != (R as usize) {
             return false;
         }
 
@@ -278,7 +278,7 @@ impl DLogProof {
 
         // All the proofs should be different (otherwise, it would be easier to forge a proof).
         // Here we compare the random commitments using a HashSet.
-        let mut without_repetitions: HashSet<Vec<u8>> = HashSet::with_capacity(R.into());
+        let mut without_repetitions: HashSet<Vec<u8>> = HashSet::with_capacity(R as usize);
         if !vec_rc_as_bytes
             .clone()
             .into_iter()
