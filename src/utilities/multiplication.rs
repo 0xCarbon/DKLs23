@@ -1,10 +1,10 @@
-use k256::elliptic_curve::Field;
 /// This file realizes Functionality 3.5 in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>).
 /// It is based upon the OT extension protocol in the file `ot/extension.rs`.
 ///
 /// As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
 /// The first paper also gives some orientations on how to implement the protocol
 /// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
+use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,10 @@ use crate::utilities::ot::ErrorOT;
 
 // Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
 pub const L: u8 = 2;
+
+// This represents the number of times the OT extension protocol will be
+// called using the same value chosen by the receiver.
+pub const OT_WIDTH: u8 = 2 * L;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MulSender {
@@ -35,8 +39,7 @@ pub struct MulReceiver {
 // These structs are for better readability of the code.
 #[derive(Clone)]
 pub struct MulDataToReceiver {
-    pub tau_tilde: Vec<Vec<Scalar>>,
-    pub tau_hat: Vec<Vec<Scalar>>,
+    pub vector_of_tau: Vec<Vec<Scalar>>,
     pub verify_r: HashOutput,
     pub verify_u: Vec<Scalar>,
     pub gamma_sender: Vec<Scalar>,
@@ -154,7 +157,7 @@ impl MulSender {
         //
         // Now, by DKLs23, we hardcoded l = 1 in DKLs19. At the same time,
         // DKLs23 has its parameter L. To adapt the old protocol, we repeat
-        // Step 2 in DKLs23 L times, so in the end we get 2*L correlations.
+        // Step 2 in DKLs19 L times, so in the end we get 2*L correlations.
         let mut correlation_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
         let mut correlation_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
         for i in 0..L {
@@ -165,63 +168,43 @@ impl MulSender {
             correlation_hat.push(correlation_hat_i);
         }
 
+        // We gather the correlations.
+        let correlations = [correlation_tilde, correlation_hat].concat();
+
         // Step 3 - We execute the OT protocol.
 
-        // It is here that we use the "force-reuse" technique that
+        // It is here that we use the "forced-reuse" technique that
         // DKLs23 mentions on page 8. As they say: "Alice performs the
         // steps of the protocol for each input in her vector, but uses
         // a single batch of Bob’s OT instances for all of them,
         // concatenating the corresponding OT payloads to form one batch
         // of payloads with lengths proportionate to her input vector length."
         //
-        // Hence, the data u, verify_x and verify_t sent by the receiver will
-        // be used 2*L times with the 2*L correlations from the previous step.
+        // Hence, the OT extension protocol will be executed 2*L times with
+        // the 2*L correlations from the previous step. The implementation
+        // in the file ot/extension.rs already deals with these repetitions,
+        // we just have to especify this quantity (the "OT width").
 
-        // These are the sender's output from the OT protocol.
-        let mut z_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
-        let mut z_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
+        let result = self
+            .ote_sender
+            .run(session_id, OT_WIDTH, &correlations, data);
 
-        // These values will be used by the receiver to finish the OT protocol.
-        let mut tau_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
-        let mut tau_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
-
-        for i in 0..L {
-            //Running OT protocol for tilde values.
-            let result = self
-                .ote_sender
-                .run(session_id, &correlation_tilde[i as usize], data);
-
-            match result {
-                Ok((output, tau)) => {
-                    z_tilde.push(output);
-                    tau_tilde.push(tau);
-                }
-                Err(error) => {
-                    return Err(ErrorMul::new(&format!(
-                        "OTE error during multiplication: {:?}",
-                        error.description
-                    )));
-                }
+        let ot_outputs: Vec<Vec<Scalar>>;
+        let vector_of_tau: Vec<Vec<Scalar>>; // Used by the receiver to finish the OT protocol.
+        match result {
+            Ok((out, tau)) => {
+                (ot_outputs, vector_of_tau) = (out, tau);
             }
-
-            //Running OT protocol for hat values.
-            let result = self
-                .ote_sender
-                .run(session_id, &correlation_hat[i as usize], data);
-
-            match result {
-                Ok((output, tau)) => {
-                    z_hat.push(output);
-                    tau_hat.push(tau);
-                }
-                Err(error) => {
-                    return Err(ErrorMul::new(&format!(
-                        "OTE error during multiplication: {:?}",
-                        error.description
-                    )));
-                }
+            Err(error) => {
+                return Err(ErrorMul::new(&format!(
+                    "OTE error during multiplication: {:?}",
+                    error.description
+                )));
             }
         }
+
+        // This is the sender's output from the OT protocol with the notation from DKLs19.
+        let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
         // Step 4 - We compute the shared random values.
 
@@ -305,8 +288,7 @@ impl MulSender {
         // We now return all values.
 
         let data_to_receiver = MulDataToReceiver {
-            tau_tilde,
-            tau_hat,
+            vector_of_tau,
             verify_r,
             verify_u,
             gamma_sender: gamma,
@@ -463,28 +445,31 @@ impl MulReceiver {
         // Step 3 (Conclusion) - We conclude the OT protocol.
 
         // The sender applied the protocol 2*L times with our data,
-        // so we will have 2*L outputs. They are separated in two
-        // variables: z_tilde and z_hat.
+        // so we will have 2*L outputs (we refer to this number as
+        // the "OT width").
 
-        let mut z_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
-        let mut z_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
-        for i in 0..L {
-            let output_tilde = self.ote_receiver.run_phase2(
-                session_id,
-                &data_kept.choice_bits,
-                &data_kept.extended_seeds,
-                &data_received.tau_tilde[i as usize],
-            );
-            let output_hat = self.ote_receiver.run_phase2(
-                session_id,
-                &data_kept.choice_bits,
-                &data_kept.extended_seeds,
-                &data_received.tau_hat[i as usize],
-            );
+        let result = self.ote_receiver.run_phase2(
+            session_id,
+            OT_WIDTH,
+            &data_kept.choice_bits,
+            &data_kept.extended_seeds,
+            &data_received.vector_of_tau,
+        );
 
-            z_tilde.push(output_tilde);
-            z_hat.push(output_hat);
-        }
+        let ot_outputs: Vec<Vec<Scalar>> = match result {
+            Ok(out) => {
+                out
+            }
+            Err(error) => {
+                return Err(ErrorMul::new(&format!(
+                    "OTE error during multiplication: {:?}",
+                    error.description
+                )));
+            }
+        };
+
+        // This is the receiver's output from the OT protocol with the notation from DKLs19.
+        let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
         // Step 6 - We verify if the data sent by the sender is consistent.
 

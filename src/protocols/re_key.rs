@@ -103,15 +103,9 @@ pub fn re_key(
 
     // These will store the result of initialization for each party.
     let mut all_mul_receivers: Vec<BTreeMap<u8, MulReceiver>> =
-        vec![
-            BTreeMap::new();
-            parameters.share_count as usize
-        ];
+        vec![BTreeMap::new(); parameters.share_count as usize];
     let mut all_mul_senders: Vec<BTreeMap<u8, MulSender>> =
-        vec![
-            BTreeMap::new();
-            parameters.share_count as usize
-        ];
+        vec![BTreeMap::new(); parameters.share_count as usize];
 
     for receiver in 1..=parameters.share_count {
         for sender in 1..=parameters.share_count {
