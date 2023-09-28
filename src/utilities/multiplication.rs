@@ -457,9 +457,7 @@ impl MulReceiver {
         );
 
         let ot_outputs: Vec<Vec<Scalar>> = match result {
-            Ok(out) => {
-                out
-            }
+            Ok(out) => out,
             Err(error) => {
                 return Err(ErrorMul::new(&format!(
                     "OTE error during multiplication: {:?}",

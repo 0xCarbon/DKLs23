@@ -781,8 +781,10 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utilities::hashes::scalar_to_bytes;
     use k256::elliptic_curve::Field;
     use rand::Rng;
+    use std::collections::HashSet;
 
     #[test]
     fn test_field_mul() {
@@ -902,6 +904,9 @@ mod tests {
         }
 
         // Verification that the protocol did what it should do.
+
+        let mut sender_outputs_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(ot_width as usize);
+        let mut receiver_outputs_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
             for i in 0..BATCH_SIZE {
                 //Depending on the choice the receiver made, the sum of the outputs should
@@ -917,6 +922,48 @@ mod tests {
                     assert_eq!(sum, Scalar::ZERO);
                 }
             }
+
+            // We save these outputs in bytes for the next verification.
+            sender_outputs_as_bytes.push(
+                sender_outputs[iteration as usize]
+                    .clone()
+                    .into_iter()
+                    .map(|x| scalar_to_bytes(&x))
+                    .collect::<Vec<Vec<u8>>>()
+                    .concat(),
+            );
+            receiver_outputs_as_bytes.push(
+                receiver_outputs[iteration as usize]
+                    .clone()
+                    .into_iter()
+                    .map(|x| scalar_to_bytes(&x))
+                    .collect::<Vec<Vec<u8>>>()
+                    .concat(),
+            );
         }
+
+        // We confirm that there are not repeated outputs.
+        let mut sender_without_repetitions: HashSet<Vec<u8>> =
+            HashSet::with_capacity(ot_width as usize);
+        if !sender_outputs_as_bytes
+            .into_iter()
+            .all(move |x| sender_without_repetitions.insert(x))
+        {
+            panic!("Very improbable/unexpected: The sender got two identic outputs!");
+        }
+
+        let mut receiver_without_repetitions: HashSet<Vec<u8>> =
+            HashSet::with_capacity(ot_width as usize);
+        if !receiver_outputs_as_bytes
+            .into_iter()
+            .all(move |x| receiver_without_repetitions.insert(x))
+        {
+            panic!("Very improbable/unexpected: The receiver got two identic outputs!");
+        }
+
+        //TODO - We included this last check because an old implementation was wrong
+        //       and was generating repeated outputs for the sender. A more appropriate
+        //       test would be to run this test many times and attest that there is no
+        //       noticeable correlation between the outputs.
     }
 }

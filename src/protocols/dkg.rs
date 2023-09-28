@@ -11,6 +11,7 @@ use hex;
 use k256::elliptic_curve::{point::AffineCoordinates, Field};
 use k256::{AffinePoint, Scalar};
 use rand::Rng;
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -759,7 +760,11 @@ pub fn phase4(
 // For convenience, we are going to include the Ethereum address.
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
-    // Here, we will compute the address using the compressed form of pk.
+    // In order to compute the address, we need the x and y coordinates
+    // of the point pk. However, k256 does not let us access y directly.
+    // Hence, will use the library secp256k1 to compute this value.
+
+    // First, let us represent pk in compressed form.
     let x_value = pk.x();
     let x_as_bytes = x_value.as_slice();
     let prefix = if bool::from(pk.y_is_odd()) { 3 } else { 2 };
@@ -768,9 +773,18 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
     compressed_pk[0] = prefix;
     compressed_pk[1..].copy_from_slice(x_as_bytes);
 
+    // We now use the other library to get the y value.
+    let pk_alternative = PublicKey::from_slice(&compressed_pk)
+        .expect("We are inserting a point known to be on the curve!");
+    let uncompressed_pk_with_prefix = pk_alternative.serialize_uncompressed();
+
+    // Finally, here is pk in uncompressed form without the prefix 04.
+    let mut uncompressed_pk = [0u8; 64];
+    uncompressed_pk.copy_from_slice(&uncompressed_pk_with_prefix[1..]);
+
     // We compute the Keccak256 of the point.
     let mut hasher = Keccak256::new();
-    hasher.update(compressed_pk);
+    hasher.update(uncompressed_pk);
 
     // We save the last 20 bytes represented in hexadecimal.
     let address_bytes = &hasher.finalize()[12..];
@@ -1259,16 +1273,16 @@ mod tests {
     #[test]
     fn test_compute_eth_address() {
         // You should test different values using, for example,
-        // https://paulmillr.com/noble/ and https://emn178.github.io/online-tools/keccak_256.html.
+        // https://www.rfctools.com/ethereum-address-test-tool/.
         let sk = Scalar::reduce(U256::from_be_hex(
-            "cc545f6edbac6c62def9205033629e553acb1fceb95c171cf389c636ce4613a2",
+            "8A64581DCC4EB1590AA94D61C1C0C8994221292EA9EC7BBDE7AB17E91CBA6836",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();
 
         let address = compute_eth_address(&pk);
         assert_eq!(
             address,
-            "0x8be92babaa139ecf60145f822520b68cebb44711".to_string()
+            "0x22c5f5054af0fb194cbda08c25249ffc46b1b14d".to_string()
         );
     }
 }
