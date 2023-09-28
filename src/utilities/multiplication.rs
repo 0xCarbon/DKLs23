@@ -183,7 +183,7 @@ impl MulSender {
         // Hence, the OT extension protocol will be executed 2*L times with
         // the 2*L correlations from the previous step. The implementation
         // in the file ot/extension.rs already deals with these repetitions,
-        // we just have to especify this quantity (the "OT width").
+        // we just have to specify this quantity (the "OT width").
 
         let result = self
             .ote_sender
