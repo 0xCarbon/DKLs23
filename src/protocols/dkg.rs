@@ -202,14 +202,20 @@ pub fn step3(
 ///
 /// Will return `Err` if one of the proofs/commitments doesn't
 /// verify or if the consistency check for the public key fails.
+///
+/// # Panics
+///
+/// Will panic if the list of indices in `proofs_commitments`
+/// are not the numbers from 1 to `parameters.share_count`.
 pub fn step5(
     parameters: &Parameters,
     party_index: u8,
     session_id: &[u8],
     proofs_commitments: &[ProofCommitment],
 ) -> Result<AffinePoint, Abort> {
-    let mut committed_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count as usize); //The "public key fragments"
-                                                                                                    // Verify the proofs and gather the committed points.
+    let mut committed_points: BTreeMap<u8, AffinePoint> = BTreeMap::new(); //The "public key fragments"
+
+    // Verify the proofs and gather the committed points.
     for party_j in proofs_commitments {
         if party_j.index != party_index {
             let verification =
@@ -221,7 +227,7 @@ pub fn step5(
                 ));
             }
         }
-        committed_points.push(party_j.proof.point);
+        committed_points.insert(party_j.index, party_j.proof.point);
     }
 
     // Initializes what will be the public key.
@@ -248,7 +254,7 @@ pub fn step5(
             }
 
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
-            let lj_times_point = committed_points[(j - 1) as usize] * lj; // j-1 because index starts at 0
+            let lj_times_point = *committed_points.get(&j).unwrap() * lj;
 
             current_pk = (lj_times_point + current_pk).to_affine();
         }

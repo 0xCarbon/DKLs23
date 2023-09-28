@@ -902,7 +902,8 @@ mod tests {
         }
 
         // Phase 2
-        let mut correction_values: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
+        let mut correction_values: Vec<Scalar> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut proofs_commitments: Vec<ProofCommitment> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
@@ -1189,7 +1190,8 @@ mod tests {
         }
 
         // Phase 2
-        let mut correction_values: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
+        let mut correction_values: Vec<Scalar> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut proofs_commitments: Vec<ProofCommitment> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut kept_2to3: Vec<BTreeMap<u8, KeepRefreshPhase2to3>> =

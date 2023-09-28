@@ -11,7 +11,9 @@
 /// In order to reduce the round count, we apply the Fiat-Shamir heuristic, as `DKLs23`
 /// instructs. We also include an additional phase in the protocol given by KOS. It
 /// comes from Protocol 9 of the `DKLs18` paper (<https://eprint.iacr.org/2018/499.pdf>).
-/// It is needed to transform the outputs to the desired form.
+/// It is needed to transform the outputs to the desired form. Finally, `DKLs23` asks
+/// for a "forced-reuse" implementation. Essentially, the bits chosen by the receiver are
+/// used multiple times by the sender with different input correlations.
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
@@ -95,8 +97,26 @@ impl OTESender {
 
     // PROTOCOL
     // We now follow the main steps in Fig. 10 of KOS.
+    // The suggestions given in the DKLs papers are also implemented.
 
-    // Input: Correlation for the points (as in Functionality 3 of DKLs19) and values transmitted by the receiver.
+    // IMPORTANT: we implement the "forced-reuse" technique suggested in DKLs23.
+    // As they say: "Alice performs the steps of the protocol for each input in
+    // her vector, but uses a single batch of Bob’s OT instances for all of them,
+    // concatenating the corresponding OT payloads to form one batch of payloads
+    // with lengths proportionate to her input vector length."
+
+    // Actually, this approach is implicitly used in DKLs19. This can be seen,
+    // for example, in the two following implementations:
+    // <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>
+    // <https://github.com/docknetwork/crypto/blob/main/oblivious_transfer/src/ot_extensions/kos_ote.rs>
+
+    // In both of them, the sender supplies a vector of 2-tuples of correlations against
+    // a unique vector of choice bits by the receiver. This number "2" is called in the
+    // first implementation as the "OT width". We shall use the same terminology. Here,
+    // instead of taking a vector of k-tuples of correlations, we equivalently deal with
+    // k vectors of single correlations, where k is the OT width.
+
+    // Input: Correlations for the points and values transmitted by the receiver.
     // Output: Protocol's output and a value to be sent to the receiver.
     /// # Errors
     ///
@@ -104,9 +124,17 @@ impl OTESender {
     pub fn run(
         &self,
         session_id: &[u8],
-        input_correlation: &[Scalar],
+        ot_width: u8,
+        input_correlations: &[Vec<Scalar>],
         data: &OTEDataToSender,
-    ) -> Result<(Vec<Scalar>, Vec<Scalar>), ErrorOT> {
+    ) -> Result<(Vec<Vec<Scalar>>, Vec<Vec<Scalar>>), ErrorOT> {
+        // The protocol will be executed ot_width times using different input correlations.
+        if input_correlations.len() != ot_width as usize {
+            return Err(ErrorOT::new(
+                "The vector of input correlations does not have the expected size!",
+            ));
+        }
+
         // EXTEND
 
         // Step 1 - No action for the sender.
@@ -231,6 +259,14 @@ impl OTESender {
         // Step 3 - We compute the final messages. For the final part, it will be better
         // if we compute them in the form Scalar<Secp256k1>.
 
+        // IMPORTANT: This step will generate the sender's output. In this implementation,
+        // we are executing the protocol ot_width times and, ideally, each execution must
+        // use a different random oracle. Thus, this last part of code will be repeatedly
+        // executed and the number of each iteration must appear in the hash functions.
+        // We could also execute the previous steps ot_width times, but the consistency
+        // checks would fail if we changed the random oracle (essentially because the
+        // receiver did his part only once and with a unique random oracle).
+
         // For convenience, we write the correlation in "compressed form" as an array of u8.
         // We interpreted the correlation as a little-endian representation of a number.
         let mut compressed_correlation: Vec<u8> = Vec::with_capacity((KAPPA / 8) as usize);
@@ -247,20 +283,34 @@ impl OTESender {
             );
         }
 
-        let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
-        let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
-        for j in 0..BATCH_SIZE {
-            // For v1, we compute transposed_q[j] ^ correlation.
-            let mut transposed_qj_plus_correlation = [0u8; (KAPPA / 8) as usize];
-            for i in 0..KAPPA / 8 {
-                transposed_qj_plus_correlation[i as usize] =
-                    transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
+        let mut vector_of_v0: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        let mut vector_of_v1: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                // For v1, we compute transposed_q[j] ^ correlation.
+                let mut transposed_qj_plus_correlation = [0u8; (KAPPA / 8) as usize];
+                for i in 0..KAPPA / 8 {
+                    transposed_qj_plus_correlation[i as usize] =
+                        transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
+                }
+
+                // This salt must depend on iteration (otherwise, v0 and v1 would be always the same).
+                let salt = [
+                    &j.to_be_bytes(),
+                    session_id,
+                    "Iteration number:".as_bytes(),
+                    &iteration.to_be_bytes(),
+                ]
+                .concat();
+
+                v0.push(hash_as_scalar(&transposed_q[j as usize], &salt));
+                v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
             }
 
-            let salt = [&j.to_be_bytes(), session_id].concat();
-
-            v0.push(hash_as_scalar(&transposed_q[j as usize], &salt));
-            v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
+            vector_of_v0.push(v0);
+            vector_of_v1.push(v1);
         }
 
         // TRANSFER
@@ -268,20 +318,31 @@ impl OTESender {
         // a random OT protocol. Now, for our use in DKLs23, we implement the
         // "Transfer" phase in Protocol 9 of DKLs18 (https://eprint.iacr.org/2018/499.pdf).
 
+        // As before, this part is executed ot_width times.
+
         // Step 1 - We compute t_A and tau, as in the paper.
         // Note that t_A is just the message v0 we computed above.
+        let mut vector_of_tau: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            // Retrieving the current values.
+            let v0 = &vector_of_v0[iteration as usize];
+            let v1 = &vector_of_v1[iteration as usize];
+            let input_correlation = &input_correlations[iteration as usize];
 
-        let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
-        for j in 0..BATCH_SIZE {
-            let tau_j = v1[j as usize] - v0[j as usize] + input_correlation[j as usize];
-            tau.push(tau_j);
+            let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                let tau_j = v1[j as usize] - v0[j as usize] + input_correlation[j as usize];
+                tau.push(tau_j);
+            }
+
+            vector_of_tau.push(tau);
         }
 
         // Step 2 - No action for the sender.
 
-        // v0 is the output for the sender.
-        // tau has to be sent to the receiver.
-        Ok((v0, tau))
+        // Each v0 in vector_of_v0 is the output for the sender in each iteration.
+        // vector_of_tau has to be sent to the receiver.
+        Ok((vector_of_v0, vector_of_tau))
     }
 }
 
@@ -486,16 +547,28 @@ impl OTEReceiver {
         (extended_seeds0, data_to_sender)
     }
 
-    // Input: Previous inputs and value tau sent by the sender.
+    // Input: Previous inputs and the vector of values tau sent by the sender.
     // Output: Protocol's output.
-    #[must_use]
+    /// # Errors
+    ///
+    /// Will return `Err` if the length of `vector_of_tau` is not `ot_width`.
     pub fn run_phase2(
         &self,
         session_id: &[u8],
+        ot_width: u8,
         choice_bits: &[bool],
         extended_seeds: &[PRGOutput],
-        tau: &[Scalar],
-    ) -> Vec<Scalar> {
+        vector_of_tau: &[Vec<Scalar>],
+    ) -> Result<Vec<Vec<Scalar>>, ErrorOT> {
+        // IMPORTANT: Since the sender executed its part with our data ot_width times,
+        // our final result will be ot_width times the usual result we would get.
+        // But first, we check that the sender gave us a message with the correct length.
+        if vector_of_tau.len() != ot_width as usize {
+            return Err(ErrorOT::new(
+                "The vector sent by the sender does not have the expected size!",
+            ));
+        }
+
         // TRANSPOSE AND RANDOMIZE
 
         // Step 1 - We compute the transpose of extended_seeds and take the first BATCH_SIZE rows.
@@ -505,10 +578,22 @@ impl OTEReceiver {
         // Step 2 - We compute the final message. For the final part, it will be better
         // if we compute it in the form Scalar<Secp256k1>.
 
-        let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
-        for j in 0..BATCH_SIZE {
-            let salt = [&j.to_be_bytes(), session_id].concat();
-            v.push(hash_as_scalar(&transposed_t[j as usize], &salt));
+        // As stated for the sender, we run this part ot_width times with varying salts.
+        let mut vector_of_v: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                let salt = [
+                    &j.to_be_bytes(),
+                    session_id,
+                    "Iteration number:".as_bytes(),
+                    &iteration.to_be_bytes(),
+                ]
+                .concat();
+                v.push(hash_as_scalar(&transposed_t[j as usize], &salt));
+            }
+
+            vector_of_v.push(v);
         }
 
         // Step 3 - No action for the receiver.
@@ -522,17 +607,28 @@ impl OTEReceiver {
 
         // Step 2 - We compute t_B as in the paper. We use the value tau sent by the sender.
 
-        let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
-        for j in 0..BATCH_SIZE {
-            let mut t_b_j = -&v[j as usize];
-            if choice_bits[j as usize] {
-                t_b_j = tau[j as usize] + t_b_j;
+        // Again, we repeat this step ot_width times.
+
+        let mut vector_of_t_b: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            // Retrieving the current values.
+            let v = &vector_of_v[iteration as usize];
+            let tau = &vector_of_tau[iteration as usize];
+
+            let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                let mut t_b_j = -&v[j as usize];
+                if choice_bits[j as usize] {
+                    t_b_j = tau[j as usize] + t_b_j;
+                }
+                t_b.push(t_b_j);
             }
-            t_b.push(t_b_j);
+
+            vector_of_t_b.push(t_b);
         }
 
-        // The output for the receiver is t_b
-        t_b
+        // Each t_b in vector_of_t_b is the output for the receiver in each iteration.
+        Ok(vector_of_t_b)
     }
 }
 
@@ -739,11 +835,21 @@ mod tests {
 
         // PROTOCOL
 
+        let ot_width = 4;
+
         // Sampling the choices.
-        let mut sender_input_correlation: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+        let mut sender_input_correlations: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for _ in 0..ot_width {
+            let mut current_input_correlation: Vec<Scalar> =
+                Vec::with_capacity(BATCH_SIZE as usize);
+            for _ in 0..BATCH_SIZE {
+                current_input_correlation.push(Scalar::random(rand::thread_rng()));
+            }
+            sender_input_correlations.push(current_input_correlation);
+        }
+
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            sender_input_correlation.push(Scalar::random(rand::thread_rng()));
             receiver_choice_bits.push(rand::random());
         }
 
@@ -755,13 +861,18 @@ mod tests {
         // Receiver keeps extended_seeds and transmits data_to_sender.
 
         // Unique phase - Sender
-        let sender_result = ote_sender.run(&session_id, &sender_input_correlation, &data_to_sender);
+        let sender_result = ote_sender.run(
+            &session_id,
+            ot_width,
+            &sender_input_correlations,
+            &data_to_sender,
+        );
 
-        let sender_output: Vec<Scalar>;
-        let tau: Vec<Scalar>;
+        let sender_outputs: Vec<Vec<Scalar>>;
+        let vector_of_tau: Vec<Vec<Scalar>>;
         match sender_result {
             Ok((v0, t)) => {
-                (sender_output, tau) = (v0, t);
+                (sender_outputs, vector_of_tau) = (v0, t);
             }
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
@@ -772,18 +883,39 @@ mod tests {
         // Sender transmits tau.
 
         // Phase 2 - Receiver
-        let receiver_output =
-            ote_receiver.run_phase2(&session_id, &receiver_choice_bits, &extended_seeds, &tau);
+        let receiver_result = ote_receiver.run_phase2(
+            &session_id,
+            ot_width,
+            &receiver_choice_bits,
+            &extended_seeds,
+            &vector_of_tau,
+        );
+
+        let receiver_outputs: Vec<Vec<Scalar>>;
+        match receiver_result {
+            Ok(t_b) => {
+                receiver_outputs = t_b;
+            }
+            Err(error) => {
+                panic!("OTE error: {:?}", error.description);
+            }
+        }
 
         // Verification that the protocol did what it should do.
-        for i in 0..BATCH_SIZE {
-            //Depending on the choice the receiver made, the sum of the outputs should
-            //be equal to 0 or to the correlation the sender chose.
-            let sum = sender_output[i as usize] + receiver_output[i as usize];
-            if receiver_choice_bits[i as usize] {
-                assert_eq!(sum, sender_input_correlation[i as usize]);
-            } else {
-                assert_eq!(sum, Scalar::ZERO);
+        for iteration in 0..ot_width {
+            for i in 0..BATCH_SIZE {
+                //Depending on the choice the receiver made, the sum of the outputs should
+                //be equal to 0 or to the correlation the sender chose.
+                let sum = sender_outputs[iteration as usize][i as usize]
+                    + receiver_outputs[iteration as usize][i as usize];
+                if receiver_choice_bits[i as usize] {
+                    assert_eq!(
+                        sum,
+                        sender_input_correlations[iteration as usize][i as usize]
+                    );
+                } else {
+                    assert_eq!(sum, Scalar::ZERO);
+                }
             }
         }
     }
