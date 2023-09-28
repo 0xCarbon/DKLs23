@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use hex;
-use k256::elliptic_curve::{point::AffineCoordinates, Field};
+use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
 use rand::Rng;
 use secp256k1::PublicKey;
@@ -19,7 +19,7 @@ use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Abort, Parameters, PartiesMessage, Party};
 
 use crate::utilities::commits;
-use crate::utilities::hashes::HashOutput;
+use crate::utilities::hashes::{point_to_bytes, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
@@ -765,13 +765,7 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
     // Hence, will use the library secp256k1 to compute this value.
 
     // First, let us represent pk in compressed form.
-    let x_value = pk.x();
-    let x_as_bytes = x_value.as_slice();
-    let prefix = if bool::from(pk.y_is_odd()) { 3 } else { 2 };
-
-    let mut compressed_pk = [0u8; 33];
-    compressed_pk[0] = prefix;
-    compressed_pk[1..].copy_from_slice(x_as_bytes);
+    let compressed_pk = point_to_bytes(pk);
 
     // We now use the other library to get the y value.
     let pk_alternative = PublicKey::from_slice(&compressed_pk)
@@ -1275,14 +1269,14 @@ mod tests {
         // You should test different values using, for example,
         // https://www.rfctools.com/ethereum-address-test-tool/.
         let sk = Scalar::reduce(U256::from_be_hex(
-            "8A64581DCC4EB1590AA94D61C1C0C8994221292EA9EC7BBDE7AB17E91CBA6836",
+            "0249815B0D7E186DB61E7A6AAD6226608BB1C48B309EA8903CAB7A7283DA64A5",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();
 
         let address = compute_eth_address(&pk);
         assert_eq!(
             address,
-            "0x22c5f5054af0fb194cbda08c25249ffc46b1b14d".to_string()
+            "0x2afddfdf813e567a6f357da818b16e2dae08599f".to_string()
         );
     }
 }

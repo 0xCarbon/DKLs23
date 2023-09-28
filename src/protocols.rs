@@ -1,3 +1,6 @@
+//! `DKLs23` main protocols and related ones.
+//!
+//! Some structs appearing in most of the protocols are defined here.
 use std::collections::BTreeMap;
 
 use k256::{AffinePoint, Scalar};
@@ -13,39 +16,50 @@ pub mod re_key;
 pub mod refresh;
 pub mod signing;
 
+/// Contains the values `t` and  `n` from `DKLs23`.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Parameters {
     pub threshold: u8,   //t
     pub share_count: u8, //n
 }
 
-// This struct represents a party after key generation ready to sign a message.
+/// Represents a party after key generation ready to sign a message.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Party {
     pub parameters: Parameters,
     pub party_index: u8,
     pub session_id: Vec<u8>,
 
-    pub poly_point: Scalar, // It behaves as the secret key share
-    pub pk: AffinePoint,    // Public key
+    /// Behaves as the secret key share.
+    pub poly_point: Scalar,
+    /// Public key.
+    pub pk: AffinePoint,
 
-    pub zero_share: ZeroShare, // Used for computing shares of zero during signing.
+    /// Used for computing shares of zero during signing.
+    pub zero_share: ZeroShare,
 
-    pub mul_senders: BTreeMap<u8, MulSender>, // Initializations for two-party multiplication.
-    pub mul_receivers: BTreeMap<u8, MulReceiver>, // The key in the BTreeMap represents the other party.
+    /// Initializations for two-party multiplication.
+    /// The key in the `BTreeMap` represents the other party.
+    pub mul_senders: BTreeMap<u8, MulSender>,
+    pub mul_receivers: BTreeMap<u8, MulReceiver>,
 
-    pub derivation_data: DerivData, // Data for BIP-32 derivation.
+    /// Data for BIP-32 derivation.
+    pub derivation_data: DerivData,
 
-    pub eth_address: String, // Ethereum address calculated from the public key.
+    /// Ethereum address calculated from the public key.
+    pub eth_address: String,
 }
 
+/// Used for abort messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Abort {
+    /// Index of the party generating the abort message.
     pub index: u8,
     pub description: String,
 }
 
 impl Abort {
+    /// Creates an instance of `Abort`.
     #[must_use]
     pub fn new(index: u8, description: &str) -> Abort {
         Abort {
@@ -55,7 +69,7 @@ impl Abort {
     }
 }
 
-// This struct saves the sender and receiver of a message.
+/// Saves the sender and receiver of a message.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PartiesMessage {
     pub sender: u8,
@@ -63,6 +77,7 @@ pub struct PartiesMessage {
 }
 
 impl PartiesMessage {
+    /// Swaps the sender with the receiver, returning another instance of `PartiesMessage`.
     #[must_use]
     pub fn reverse(&self) -> PartiesMessage {
         PartiesMessage {
