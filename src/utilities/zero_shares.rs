@@ -118,10 +118,10 @@ mod tests {
 
         //Parties generate the initial seeds and the commitments.
         let mut step1: Vec<Vec<(Seed, HashOutput, Vec<u8>)>> =
-            Vec::with_capacity(number_parties.into());
+            Vec::with_capacity(number_parties as usize);
         for _ in 0..number_parties {
             let mut step1_party_i: Vec<(Seed, HashOutput, Vec<u8>)> =
-                Vec::with_capacity(number_parties.into());
+                Vec::with_capacity(number_parties as usize);
             for _ in 0..number_parties {
                 //Each party should skip his own iteration, but we ignore this now for simplicity.
                 step1_party_i.push(ZeroShare::generate_seed_with_commitment());
@@ -140,9 +140,9 @@ mod tests {
         }
 
         //Each party creates his "seed pairs" and finishes the initialization.
-        let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(number_parties.into());
+        let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(number_parties as usize);
         for i in 0..number_parties {
-            let mut seeds: Vec<SeedPair> = Vec::with_capacity((number_parties - 1).into());
+            let mut seeds: Vec<SeedPair> = Vec::with_capacity((number_parties - 1) as usize);
             for j in 0..number_parties {
                 if i == j {
                     continue;

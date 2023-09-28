@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use k256::{AffinePoint, Scalar};
 use serde::{Deserialize, Serialize};
@@ -31,46 +31,12 @@ pub struct Party {
 
     pub zero_share: ZeroShare, // Used for computing shares of zero during signing.
 
-    pub mul_senders: HashMap<u8, MulSender>, // Initializations for two-party multiplication.
-    pub mul_receivers: HashMap<u8, MulReceiver>, // The key in the HashMap represents the other party.
+    pub mul_senders: BTreeMap<u8, MulSender>, // Initializations for two-party multiplication.
+    pub mul_receivers: BTreeMap<u8, MulReceiver>, // The key in the BTreeMap represents the other party.
 
     pub derivation_data: DerivData, // Data for BIP-32 derivation.
 
     pub eth_address: String, // Ethereum address calculated from the public key.
-}
-
-impl Party {
-    #[must_use]
-    pub fn new(
-        parameters: Parameters,
-        party_index: u8,
-        session_id: Vec<u8>,
-        poly_point: Scalar,
-        pk: AffinePoint,
-        zero_share: ZeroShare,
-        mul_senders: HashMap<u8, MulSender>,
-        mul_receivers: HashMap<u8, MulReceiver>,
-        derivation_data: DerivData,
-        eth_address: String,
-    ) -> Party {
-        Party {
-            parameters,
-            party_index,
-            session_id,
-
-            poly_point,
-            pk,
-
-            zero_share,
-
-            mul_senders,
-            mul_receivers,
-
-            derivation_data,
-
-            eth_address,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

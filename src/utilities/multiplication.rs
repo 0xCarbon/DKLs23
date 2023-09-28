@@ -1,10 +1,10 @@
-use k256::elliptic_curve::Field;
 /// This file realizes Functionality 3.5 in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>).
 /// It is based upon the OT extension protocol in the file `ot/extension.rs`.
 ///
 /// As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
 /// The first paper also gives some orientations on how to implement the protocol
 /// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
+use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,10 @@ use crate::utilities::ot::ErrorOT;
 
 // Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
 pub const L: u8 = 2;
+
+// This represents the number of times the OT extension protocol will be
+// called using the same value chosen by the receiver.
+pub const OT_WIDTH: u8 = 2 * L;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MulSender {
@@ -35,8 +39,7 @@ pub struct MulReceiver {
 // These structs are for better readability of the code.
 #[derive(Clone)]
 pub struct MulDataToReceiver {
-    pub tau_tilde: Vec<Vec<Scalar>>,
-    pub tau_hat: Vec<Vec<Scalar>>,
+    pub vector_of_tau: Vec<Vec<Scalar>>,
     pub verify_r: HashOutput,
     pub verify_u: Vec<Scalar>,
     pub gamma_sender: Vec<Scalar>,
@@ -96,7 +99,7 @@ impl MulSender {
 
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
-        let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
+        let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
             counter += Scalar::ONE;
@@ -138,8 +141,8 @@ impl MulSender {
         // We also set the correlation for the OT protocol.
 
         // There are L pads and L check_values.
-        let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L.into());
-        let mut a_hat: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
+        let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
             a_tilde.push(Scalar::random(rand::thread_rng()));
             a_hat.push(Scalar::random(rand::thread_rng()));
@@ -154,74 +157,54 @@ impl MulSender {
         //
         // Now, by DKLs23, we hardcoded l = 1 in DKLs19. At the same time,
         // DKLs23 has its parameter L. To adapt the old protocol, we repeat
-        // Step 2 in DKLs23 L times, so in the end we get 2*L correlations.
-        let mut correlation_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
-        let mut correlation_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
+        // Step 2 in DKLs19 L times, so in the end we get 2*L correlations.
+        let mut correlation_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
+        let mut correlation_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            let correlation_tilde_i = vec![a_tilde[i as usize]; BATCH_SIZE.into()];
-            let correlation_hat_i = vec![a_hat[i as usize]; BATCH_SIZE.into()];
+            let correlation_tilde_i = vec![a_tilde[i as usize]; BATCH_SIZE as usize];
+            let correlation_hat_i = vec![a_hat[i as usize]; BATCH_SIZE as usize];
 
             correlation_tilde.push(correlation_tilde_i);
             correlation_hat.push(correlation_hat_i);
         }
 
+        // We gather the correlations.
+        let correlations = [correlation_tilde, correlation_hat].concat();
+
         // Step 3 - We execute the OT protocol.
 
-        // It is here that we use the "force-reuse" technique that
+        // It is here that we use the "forced-reuse" technique that
         // DKLs23 mentions on page 8. As they say: "Alice performs the
         // steps of the protocol for each input in her vector, but uses
         // a single batch of Bob’s OT instances for all of them,
         // concatenating the corresponding OT payloads to form one batch
         // of payloads with lengths proportionate to her input vector length."
         //
-        // Hence, the data u, verify_x and verify_t sent by the receiver will
-        // be used 2*L times with the 2*L correlations from the previous step.
+        // Hence, the OT extension protocol will be executed 2*L times with
+        // the 2*L correlations from the previous step. The implementation
+        // in the file ot/extension.rs already deals with these repetitions,
+        // we just have to specify this quantity (the "OT width").
 
-        // These are the sender's output from the OT protocol.
-        let mut z_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
-        let mut z_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
+        let result = self
+            .ote_sender
+            .run(session_id, OT_WIDTH, &correlations, data);
 
-        // These values will be used by the receiver to finish the OT protocol.
-        let mut tau_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
-        let mut tau_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
-
-        for i in 0..L {
-            //Running OT protocol for tilde values.
-            let result = self
-                .ote_sender
-                .run(session_id, &correlation_tilde[i as usize], data);
-
-            match result {
-                Ok((output, tau)) => {
-                    z_tilde.push(output);
-                    tau_tilde.push(tau);
-                }
-                Err(error) => {
-                    return Err(ErrorMul::new(&format!(
-                        "OTE error during multiplication: {:?}",
-                        error.description
-                    )));
-                }
+        let ot_outputs: Vec<Vec<Scalar>>;
+        let vector_of_tau: Vec<Vec<Scalar>>; // Used by the receiver to finish the OT protocol.
+        match result {
+            Ok((out, tau)) => {
+                (ot_outputs, vector_of_tau) = (out, tau);
             }
-
-            //Running OT protocol for hat values.
-            let result = self
-                .ote_sender
-                .run(session_id, &correlation_hat[i as usize], data);
-
-            match result {
-                Ok((output, tau)) => {
-                    z_hat.push(output);
-                    tau_hat.push(tau);
-                }
-                Err(error) => {
-                    return Err(ErrorMul::new(&format!(
-                        "OTE error during multiplication: {:?}",
-                        error.description
-                    )));
-                }
+            Err(error) => {
+                return Err(ErrorMul::new(&format!(
+                    "OTE error during multiplication: {:?}",
+                    error.description
+                )));
             }
         }
+
+        // This is the sender's output from the OT protocol with the notation from DKLs19.
+        let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
         // Step 4 - We compute the shared random values.
 
@@ -235,8 +218,8 @@ impl MulSender {
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
-        let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L.into());
-        let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
+        let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
             // We compute the salts according to i and the variable.
             let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
@@ -254,11 +237,11 @@ impl MulSender {
         // Only a hash of r will be sent to the receiver,
         // so we'll compute r directly in bytes.
         // The variable below saves each row of r in bytes.
-        let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L.into());
-        let mut verify_u: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L as usize);
+        let mut verify_u: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
             // We compute the i-th row of the matrix r in bytes.
-            let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE.into());
+            let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 let entry = (chi_tilde[i as usize] * z_tilde[i as usize][j as usize])
                     + (chi_hat[i as usize] * z_hat[i as usize][j as usize]);
@@ -284,7 +267,7 @@ impl MulSender {
 
         // Step 7 - We compute the difference gamma_A.
 
-        let mut gamma: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut gamma: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
             let difference = input[i as usize] - a_tilde[i as usize];
             gamma.push(difference);
@@ -293,7 +276,7 @@ impl MulSender {
         // Step 8 - Finally, we compute the protocol's output.
         // Recall that we hardcoded gamma_B = 0.
 
-        let mut output: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut output: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
             let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
@@ -305,8 +288,7 @@ impl MulSender {
         // We now return all values.
 
         let data_to_receiver = MulDataToReceiver {
-            tau_tilde,
-            tau_hat,
+            vector_of_tau,
             verify_r,
             verify_u,
             gamma_sender: gamma,
@@ -350,7 +332,7 @@ impl MulReceiver {
 
         // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
-        let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
+        let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
             counter += Scalar::ONE;
@@ -389,7 +371,7 @@ impl MulReceiver {
         // number b that the receiver inputs into the protocol. Hence, we
         // will denote b_tilde simply as b.
 
-        let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE.into());
+        let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut b = Scalar::ZERO;
         for i in 0..BATCH_SIZE {
             let current_bit: bool = rand::random();
@@ -422,8 +404,8 @@ impl MulReceiver {
 
         // At this point, the constant L from DKLs23 behaves as the
         // constant l from DKLs19.
-        let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L.into());
-        let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
+        let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
             // We compute the salts according to i and the variable.
             let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
@@ -463,28 +445,31 @@ impl MulReceiver {
         // Step 3 (Conclusion) - We conclude the OT protocol.
 
         // The sender applied the protocol 2*L times with our data,
-        // so we will have 2*L outputs. They are separated in two
-        // variables: z_tilde and z_hat.
+        // so we will have 2*L outputs (we refer to this number as
+        // the "OT width").
 
-        let mut z_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
-        let mut z_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L.into());
-        for i in 0..L {
-            let output_tilde = self.ote_receiver.run_phase2(
-                session_id,
-                &data_kept.choice_bits,
-                &data_kept.extended_seeds,
-                &data_received.tau_tilde[i as usize],
-            );
-            let output_hat = self.ote_receiver.run_phase2(
-                session_id,
-                &data_kept.choice_bits,
-                &data_kept.extended_seeds,
-                &data_received.tau_hat[i as usize],
-            );
+        let result = self.ote_receiver.run_phase2(
+            session_id,
+            OT_WIDTH,
+            &data_kept.choice_bits,
+            &data_kept.extended_seeds,
+            &data_received.vector_of_tau,
+        );
 
-            z_tilde.push(output_tilde);
-            z_hat.push(output_hat);
-        }
+        let ot_outputs: Vec<Vec<Scalar>> = match result {
+            Ok(out) => {
+                out
+            }
+            Err(error) => {
+                return Err(ErrorMul::new(&format!(
+                    "OTE error during multiplication: {:?}",
+                    error.description
+                )));
+            }
+        };
+
+        // This is the receiver's output from the OT protocol with the notation from DKLs19.
+        let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
         // Step 6 - We verify if the data sent by the sender is consistent.
 
@@ -495,10 +480,10 @@ impl MulReceiver {
         // Only a hash of r will be sent to us so we'll
         // reconstruct r directly in bytes.
         // The variable below saves each row of r in bytes.
-        let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L.into());
+        let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L as usize);
         for i in 0..L {
             // We compute the i-th row of the matrix r in bytes.
-            let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE.into());
+            let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 // The entry depends on the choice bits.
                 let mut entry = (-(data_kept.chi_tilde[i as usize]
@@ -534,7 +519,7 @@ impl MulReceiver {
         // Step 8 - Finally, we compute the protocol's output.
         // Recall that we hardcoded gamma_B = 0.
 
-        let mut output: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut output: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
             let mut summation = Scalar::ZERO;
             for j in 0..BATCH_SIZE {
@@ -599,7 +584,7 @@ mod tests {
         // PROTOCOL
 
         // Sampling the choices.
-        let mut sender_input: Vec<Scalar> = Vec::with_capacity(L.into());
+        let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
             sender_input.push(Scalar::random(rand::thread_rng()));
         }

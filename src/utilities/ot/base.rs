@@ -138,8 +138,8 @@ impl OTSender {
         let batch_size =
             u16::try_from(enc_proofs.len()).expect("The batch sizes used always fit into an u16!");
 
-        let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
-        let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
+        let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
+        let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
@@ -198,8 +198,8 @@ impl OTReceiver {
         let batch_size =
             u16::try_from(bits.len()).expect("The batch sizes used always fit into an u16!");
 
-        let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size.into());
-        let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size.into());
+        let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size as usize);
+        let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
@@ -276,7 +276,7 @@ impl OTReceiver {
         let batch_size =
             u16::try_from(vec_r.len()).expect("The batch sizes used always fit into an u16!");
 
-        let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size.into());
+        let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
