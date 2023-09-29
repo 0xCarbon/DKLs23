@@ -1,5 +1,5 @@
 //! Adaptation of BIP-32 to the threshold setting.
-//! 
+//!
 //! This file implements a key derivation mechanism for threshold wallets
 //! based on BIP-32 (<https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>).
 //! Each party can derive their key share individually so that the secret
@@ -11,6 +11,7 @@
 //!
 //! ATTENTION: Since no party has the full secret key, it is not convenient
 //! to do hardened derivation. Thus, we only implement normal derivation.
+
 use bitcoin_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 
 use k256::elliptic_curve::{ops::Reduce, Curve};
@@ -23,11 +24,11 @@ use crate::utilities::hashes::point_to_bytes;
 use super::dkg::compute_eth_address;
 
 /// Fingerprint of a key as in BIP-32.
-/// 
+///
 /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
 pub type Fingerprint = [u8; 4];
 /// Chaincode of a key as in BIP-32.
-/// 
+///
 /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
 pub type ChainCode = [u8; 32];
 
@@ -73,14 +74,14 @@ pub struct DerivData {
 /// Maximum depth.
 pub const MAX_DEPTH: u8 = 255;
 /// Maximum child number.
-/// 
+///
 /// This is the limit since we are not implementing hardened derivation.
 pub const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
 
 impl DerivData {
     /// Computes the "tweak" needed to derive a secret key. In the process,
     /// it also produces the chain code and the parent fingerprint.
-    /// 
+    ///
     /// This is an adaptation of `ckd_pub_tweak` from the repository:
     /// <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
     ///
@@ -122,7 +123,7 @@ impl DerivData {
     }
 
     /// Derives an instance of `DerivData` given a child number.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the depth is already at the maximum value,
@@ -165,11 +166,11 @@ impl DerivData {
 
     /// Derives an instance of `DerivData` following a path
     /// on the "key tree".
-    /// 
+    ///
     /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>
     /// for the description of a possible path (and don't forget that
     /// hardened derivations are not implemented).
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the path is invalid or if `derive_child` fails.
@@ -189,9 +190,8 @@ impl DerivData {
 
 /// Implementations related to BIP-32 derivation ([read more](self)).
 impl Party {
-
     /// Derives an instance of `Party` given a child number.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_child` fails.
@@ -223,11 +223,11 @@ impl Party {
 
     /// Derives an instance of `Party` following a path
     /// on the "key tree".
-    /// 
+    ///
     /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>
     /// for the description of a possible path (and don't forget that
     /// hardened derivations are not implemented).
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_from_path` fails.
@@ -260,7 +260,7 @@ impl Party {
 
 /// Takes a path as in BIP-32 (for normal derivation),
 /// and transforms it into a vector of child numbers.
-/// 
+///
 /// # Errors
 ///
 /// Will return `Err` if the path is not valid or empty.
@@ -307,6 +307,11 @@ mod tests {
     use rand::Rng;
     use std::collections::BTreeMap;
 
+    /// Tests if the method `derive_from_path` from [`DerivData`]
+    /// works properly by checking its output against a known value.
+    ///
+    /// Since this function calls the other methods in this struct,
+    /// they are implicitly tested as well.
     #[test]
     fn test_derivation() {
         // The following values were calculated at random with: https://bitaps.com/bip32.
@@ -330,6 +335,7 @@ mod tests {
             chain_code,
         };
 
+        // You should try other paths as well.
         let path = "m/0/1/2/3";
         let try_derive = data.derive_from_path(path);
 
@@ -357,8 +363,9 @@ mod tests {
         }
     }
 
+    /// Tests if the key shares are still capable of executing
+    /// the signing protocol after being derived.
     #[test]
-    // This test verifies if the key shares continue working.
     fn test_derivation_and_signing() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);

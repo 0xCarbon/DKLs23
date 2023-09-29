@@ -1,14 +1,14 @@
 //! Distributed Key Generation protocol.
-//! 
+//!
 //!  This file implements Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>,
 //! as instructed in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>). It is
 //! the distributed key generation which setups the main signing protocol.
 //!
 //! During the protocol, we also initialize the functionalities that will
 //! be used during signing.
-//! 
+//!
 //! # Phases
-//! 
+//!
 //! We group the steps in phases. A phase consists of all steps that can be
 //! executed in order without the need of communication. Phases should be
 //! intercalated with communication rounds: broadcasts and/or private messages
@@ -24,19 +24,19 @@
 //! parties must agree on a common chain code for their shared master key. Using the
 //! commitment functionality, we need two communication rounds, so this part starts
 //! only on Phase 2.
-//! 
+//!
 //! # Nomenclature
-//! 
+//!
 //! For the initialization structs, we will use the following nomenclature:
 //!
 //! **Transmit** messages refer to only one counterparty, hence
-//! we must produce a whole vector of them. Each message in this 
+//! we must produce a whole vector of them. Each message in this
 //! vector contains the party index to whom we should send it.
 //!
 //! **Broadcast** messages refer to all counterparties at once,
 //! hence we only need to produce a unique instance of it.
 //! This message is broadcasted to all parties.
-//! 
+//!
 //! ATTENTION: we broadcast the message to ourselves as well!
 //!
 //! **Keep** messages refer to only one counterparty, hence
@@ -46,6 +46,7 @@
 //!
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
+
 use std::collections::BTreeMap;
 
 use hex;
@@ -67,9 +68,9 @@ use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::zero_shares::{self, ZeroShare};
 
 /// Used during key generation.
-/// 
+///
 /// After Phase 2, only the values `index` and `commitment` are broadcasted.
-/// 
+///
 /// The `proof` is broadcasted after Phase 3.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProofCommitment {
@@ -89,7 +90,7 @@ pub struct SessionData {
 // INITIALIZING ZERO SHARES PROTOCOL.
 
 /// Transmit - Initialization of zero shares protocol.
-/// 
+///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase2to4 {
@@ -98,7 +99,7 @@ pub struct TransmitInitZeroSharePhase2to4 {
 }
 
 /// Transmit - Initialization of zero shares protocol.
-/// 
+///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase3to4 {
@@ -127,7 +128,7 @@ pub struct KeepInitZeroSharePhase3to4 {
 // INITIALIZING TWO-PARTY MULTIPLICATION PROTOCOL.
 
 /// Transmit - Initialization of multiplication protocol.
-/// 
+///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitMulPhase3to4 {
@@ -156,7 +157,7 @@ pub struct KeepInitMulPhase3to4 {
 // INITIALIZING KEY DERIVATION (VIA BIP-32).
 
 /// Broadcast - Initialization for key derivation.
-/// 
+///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase2to4 {
@@ -165,7 +166,7 @@ pub struct BroadcastDerivationPhase2to4 {
 }
 
 /// Broadcast - Initialization for key derivation.
-/// 
+///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase3to4 {
@@ -175,7 +176,7 @@ pub struct BroadcastDerivationPhase3to4 {
 }
 
 /// Unique keep - Initialization for key derivation.
-/// 
+///
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UniqueKeepDerivationPhase2to3 {
@@ -189,7 +190,7 @@ pub struct UniqueKeepDerivationPhase2to3 {
 // We implement each step of the DKLs23 protocol.
 
 /// Generates a random polynomial of degree t-1.
-/// 
+///
 /// This is Step 1 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
 pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
@@ -203,10 +204,10 @@ pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
 }
 
 /// Evaluates the polynomial from the previous step at every point.
-/// 
+///
 /// If `p_i` denotes such polynomial, then the output is of the form
 /// \[`p_i(1)`, `p_i(2)`, ..., `p_i(n)`\] in this order, where `n` = `parameters.share_count`.
-/// 
+///
 /// The value `p_i(j)` should be transmitted to the party with index `j`.
 /// Here, `i` denotes our index, so we should keep `p_i(i)` for the future.
 ///
@@ -233,15 +234,15 @@ pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
 }
 
 /// Computes `poly_point` and the corresponding "public key" together with a zero-knowledge proof.
-/// 
+///
 /// The variable `poly_fragments` is just a vector containing (in any order)
 /// the scalars received from the other parties after the previous step.
-/// 
+///
 /// The commitment from [`ProofCommitment`] should be broadcasted at this point.
-/// 
+///
 /// This is Step 3 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 /// There, `poly_point` is denoted by `p(i)` and the "public key" is `P(i)`.
-/// 
+///
 /// The Step 4 of the protocol is broadcasting the rest of [`ProofCommitment`] after
 /// having received all commitments.
 #[must_use]
@@ -264,14 +265,14 @@ pub fn step3(
 
 /// Validates the other proofs, runs a consistency check
 /// and computes the public key.
-/// 
+///
 /// The variable `proofs_commitments` is just a vector containing (in any order)
 /// the instances of [`ProofCommitment`] received from the other parties after the
 /// previous step (including ours).
-/// 
+///
 /// This is Step 5 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 /// Step 6 is essentially the same, so it is also done here.
-/// 
+///
 /// # Errors
 ///
 /// Will return `Err` if one of the proofs/commitments doesn't
@@ -349,17 +350,17 @@ pub fn step5(
 // PHASES
 
 /// Phase 1 = [`step1`] and [`step2`].
-/// 
+///
 /// # Input
-/// 
+///
 /// Parameters for the key generation.
-/// 
+///
 /// # Output
-/// 
+///
 /// Evaluation of a random polynomial at every party index.
 /// The j-th coordinate of the output vector must be sent
 /// to the party with index j.
-/// 
+///
 /// ATTENTION: In particular, we keep the coordinate corresponding
 /// to our party index for the next phase.
 #[must_use]
@@ -376,18 +377,18 @@ pub fn phase1(data: &SessionData) -> Vec<Scalar> {
 // They should add up to p(i), where p is a polynomial not depending on i.
 
 /// Phase 2 = [`step3`].
-/// 
+///
 /// # Input
-/// 
+///
 /// Fragments received from the previous phase.
-/// 
+///
 /// # Output
-/// 
+///
 /// The variable `poly_point` (= `p(i)`), which should be kept, and a proof of
 /// discrete logarithm with commitment. You should transmit the commitment
 /// now and, after fininshing Phase 3, you send the rest. Remember to also
 /// save a copy of your [`ProofCommitment`] for the final phase.
-/// 
+///
 /// There is also some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
@@ -464,13 +465,13 @@ pub fn phase2(
 // and broadcasts a message for key derivation (the same for every party).
 
 /// Phase 3 = No steps in DKG (just initialization).
-/// 
+///
 /// # Input
-/// 
+///
 /// Initialization data kept from the previous phase.
-/// 
+///
 /// # Output
-/// 
+///
 /// Some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
@@ -609,26 +610,26 @@ pub fn phase3(
 // and broadcasts a message for key derivation (the same for every party).
 
 /// Phase 4 = [`step5`].
-/// 
+///
 /// # Input
-/// 
-/// The `poly_point` scalar generated in Phase 2; 
-/// 
+///
+/// The `poly_point` scalar generated in Phase 2;
+///
 /// A vector containing (in any order) the [`ProofCommitment`]'s
 /// received from the other parties (including ours);
-/// 
+///
 /// The initialization data kept from the previous phases;
-/// 
+///
 /// The initialization data received from the other parties in
 /// the previous phases. They must be grouped in vectors (in any
 /// order) according to the type or, in the case of the messages
 /// related to derivation BIP-32, in a `BTreeMap` where the key
 /// represents the index of the party that transmitted the message.
-/// 
+///
 /// # Output
-/// 
+///
 /// An instance of [`Party`] ready to execute the other protocols.
-/// 
+///
 /// # Errors
 ///
 /// Will return `Err` if a message is not meant for the party
@@ -914,8 +915,9 @@ mod tests {
 
     // The initializations are checked after these tests (see below).
 
+    /// Tests if the main steps of the protocol do not generate
+    /// an unexpected [`Abort`] in the 2-of-2 scenario.
     #[test]
-    // 2-of-2 scenario.
     fn test_dkg_t2_n2() {
         let parameters = Parameters {
             threshold: 2,
@@ -953,8 +955,10 @@ mod tests {
         assert!(p2_result.is_ok());
     }
 
+    /// Tests if the main steps of the protocol do not generate
+    /// an unexpected [`Abort`] in the t-of-n scenario, where
+    /// t and n are small random values.
     #[test]
-    // General t-of-n scenario
     fn test_dkg_random() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
@@ -1007,8 +1011,14 @@ mod tests {
         }
     }
 
+    /// Tests if the main steps of the protocol generate
+    /// the expected public key.
+    ///
+    /// In this case, we remove the randomness of [Step 1](step1)
+    /// by providing fixed values.
+    ///
+    /// This functions treats the 2-of-2 scenario.
     #[test]
-    // We remove the randomness from Phase 1. This allows us to compute the public key.
     fn test1_dkg_t2_n2_fixed_polynomials() {
         let parameters = Parameters {
             threshold: 2,
@@ -1051,6 +1061,7 @@ mod tests {
         assert_eq!(p2_pk, expected_pk);
     }
 
+    /// Variation on [`test1_dkg_t2_n2_fixed_polynomials`].
     #[test]
     fn test2_dkg_t2_n2_fixed_polynomials() {
         let parameters = Parameters {
@@ -1094,6 +1105,8 @@ mod tests {
         assert_eq!(p2_pk, expected_pk);
     }
 
+    /// The same as [`test1_dkg_t2_n2_fixed_polynomials`]
+    /// but in the 3-of-5 scenario.
     #[test]
     fn test_dkg_t3_n5_fixed_polynomials() {
         let parameters = Parameters {
@@ -1192,6 +1205,10 @@ mod tests {
     // parties are being simulated one after the other, but they
     // should actually execute the protocol simultaneously.
 
+    /// Tests if the whole DKG protocol (with initializations)
+    /// does not generate an unexpected [`Abort`].
+    ///
+    /// The correctness of the protocol is verified on `test_dkg_and_signing`.
     #[test]
     fn test_dkg_initialization() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
@@ -1374,6 +1391,8 @@ mod tests {
         }
     }
 
+    /// Tests if [`compute_eth_address`] correctly
+    /// computes the Ethereum address for a fixed public key.
     #[test]
     fn test_compute_eth_address() {
         // You should test different values using, for example,

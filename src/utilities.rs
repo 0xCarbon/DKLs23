@@ -1,4 +1,5 @@
 //! Extra functionalities needed in `protocols`.
+
 pub mod commits;
 pub mod hashes;
 pub mod multiplication;

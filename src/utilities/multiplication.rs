@@ -6,6 +6,7 @@
 //! As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
 //! The first paper also gives some orientations on how to implement the protocol
 //! in only two-rounds (see page 8 and Section 5.1) which we adopt here.
+
 use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
@@ -205,9 +206,7 @@ impl MulSender {
 
         let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
 
-        let result = self
-            .ote_sender
-            .run(&ote_sid, OT_WIDTH, &correlations, data);
+        let result = self.ote_sender.run(&ote_sid, OT_WIDTH, &correlations, data);
 
         let ot_outputs: Vec<Vec<Scalar>>;
         let vector_of_tau: Vec<Vec<Scalar>>; // Used by the receiver to finish the OT protocol.
@@ -427,8 +426,7 @@ impl MulReceiver {
 
         let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
 
-        let (extended_seeds, data_to_sender) =
-            self.ote_receiver.run_phase1(&ote_sid, &choice_bits);
+        let (extended_seeds, data_to_sender) = self.ote_receiver.run_phase1(&ote_sid, &choice_bits);
 
         // Step 4 - We compute the shared random values.
 
@@ -580,6 +578,8 @@ mod tests {
     use super::*;
     use rand::Rng;
 
+    /// Tests if the outputs for the multiplication protocol
+    /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_multiplication() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();

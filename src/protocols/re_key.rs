@@ -1,11 +1,12 @@
 //! Splits a secret key into a threshold signature scheme.
-//! 
+//!
 //! This file implements a re-key function: if the user already has
 //! an address, he can split his secret key into a threshold signature
 //! scheme. Since he starts with the secret key, we consider him as a
 //! "trusted dealer" that can manipulate all the data from `DKLs23` to the
 //! other parties. Hence, this function is computed locally and doesn't
 //! need any communication.
+
 use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
@@ -27,10 +28,10 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 
 /// Given a secret key, computes the data needed to make
 /// `DKLs23` signatures under the corresponding public key.
-/// 
+///
 /// The output is a vector of [`Party`]'s which should be
 /// distributed to different users.
-/// 
+///
 /// We also include an option to put a chain code if the original
 /// wallet followed BIP-32 for key derivation ([read more](super::derivation)).
 #[must_use]

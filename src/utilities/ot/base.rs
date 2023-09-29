@@ -6,7 +6,7 @@
 //! As suggested in page 30 of `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>),
 //! we implement the endemic OT protocol of Zhou et al., which can be found on
 //! Section 3 of <https://eprint.iacr.org/2022/1525.pdf>.
-//! 
+//!
 //! There are two phases for each party and one communication round between
 //! them. Both Phase 1 and Phase 2 can be done concurrently for the sender
 //! and the receiver.
@@ -15,6 +15,7 @@
 //! Phase 1. It saves some values that can be reused if the protocol is applied
 //! several times. As this will be our case for the OT extension, there are
 //! "batch" variants for each of the phases.
+
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::Rng;
@@ -86,7 +87,7 @@ impl OTSender {
 
     /// Using the seed and the encryption proof transmitted by the receiver,
     /// the two output messages are computed.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the encryption proof fails.
@@ -135,7 +136,7 @@ impl OTSender {
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
 
     /// Executes `run_phase2` for each encryption proof in `enc_proofs`.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if one of the executions fails.
@@ -241,7 +242,7 @@ impl OTReceiver {
 
     /// Verifies the discrete logarithm proof sent by the sender
     /// and returns the point concerned in the proof.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the proof fails.
@@ -285,7 +286,7 @@ impl OTReceiver {
 
     /// Executes `run_phase2_step1` once and `run_phase2_step2` for every
     /// secret scalar in `vec_r` from Phase 1.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if one of the executions fails.
@@ -320,6 +321,8 @@ impl OTReceiver {
 mod tests {
     use super::*;
 
+    /// Tests if the outputs for the OT base protocol
+    /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_base() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
@@ -367,6 +370,7 @@ mod tests {
         }
     }
 
+    /// Batch version for [`test_ot_base`].
     #[test]
     fn test_ot_base_batch() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();

@@ -1,5 +1,5 @@
 //! Protocols for refreshing key shares when wanted/needed.
-//! 
+//!
 //! This file implements a refresh protocol: periodically, all parties
 //! engage in a protocol to re-randomize their secret values (while, of
 //! course, still maintaining the same public key).
@@ -19,7 +19,7 @@
 //! good idea because the refreshed derivation becomes essentially independent
 //! of the master node. We recommend that only master nodes are refreshed
 //! and derivations are calculated as needed afterwards.
-//! 
+//!
 //! # Complete refresh
 //!
 //! In this case, we recompute all data from the parties. Hence, we essentially
@@ -37,9 +37,9 @@
 //! [Phase 4](super::dkg::phase4): after recovering the auxiliary public key, each party must check that
 //! it is equal to the zero point on the curve. This ensures that the correction
 //! factors will not change the public key.
-//! 
+//!
 //! # A faster refresh
-//! 
+//!
 //! During a complete refresh, we initialize the multiplication protocol
 //! from scratch. Instead, we can use our previous data to more efficiently
 //! refresh this initialization. This results in a faster refresh and,
@@ -60,19 +60,19 @@
 //! the fourth phase, the initialization for the zero shares protocol
 //! generates its seeds. We reuse them to apply the Beaver trick (described
 //! in the article) to refresh the OT instances used for multiplication.
-//! 
+//!
 //! # Nomenclature
-//! 
+//!
 //! For the messages structs, we will use the following nomenclature:
 //!
 //! **Transmit** messages refer to only one counterparty, hence
-//! we must produce a whole vector of them. Each message in this 
+//! we must produce a whole vector of them. Each message in this
 //! vector contains the party index to whom we should send it.
 //!
 //! **Broadcast** messages refer to all counterparties at once,
 //! hence we only need to produce a unique instance of it.
 //! This message is broadcasted to all parties.
-//! 
+//!
 //! ATTENTION: we broadcast the message to ourselves as well!
 //!
 //! **Keep** messages refer to only one counterparty, hence
@@ -82,6 +82,7 @@
 //!
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
+
 use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
@@ -106,7 +107,7 @@ use crate::protocols::{Abort, PartiesMessage, Party};
 // we must send a whole vector of them.
 
 /// Transmit - (Faster) Refresh.
-/// 
+///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone)]
 pub struct TransmitRefreshPhase2to4 {
@@ -115,7 +116,7 @@ pub struct TransmitRefreshPhase2to4 {
 }
 
 /// Transmit - (Faster) Refresh.
-/// 
+///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone)]
 pub struct TransmitRefreshPhase3to4 {
@@ -145,12 +146,11 @@ pub struct KeepRefreshPhase3to4 {
 
 /// Implementations related to refresh protocols ([read more](self)).
 impl Party {
-
     // COMPLETE REFRESH
 
     /// Works as [Phase 1](super::dkg::phase1) in DKG, but with
     /// the alterations needed for the refresh protocol.
-    /// 
+    ///
     /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_complete_phase1(&self) -> Vec<Scalar> {
@@ -169,7 +169,7 @@ impl Party {
 
     /// Works as [Phase 2](super::dkg::phase2) in DKG, but the
     /// derivation part is omitted.
-    /// 
+    ///
     /// The output should be dealt in the same way. The only
     /// difference is that we will refer to the scalar`poly_point`
     /// as `correction_value`.
@@ -225,7 +225,7 @@ impl Party {
 
     /// Works as [Phase 3](super::dkg::phase3) in DKG, but the
     /// derivation part is omitted.
-    /// 
+    ///
     /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_complete_phase3(
@@ -343,10 +343,10 @@ impl Party {
     /// Works as [Phase 4](super::dkg::phase4) in DKG, but the
     /// derivation part is omitted. Moreover, the variable
     /// `poly_point` is now called `correction_value`.
-    /// 
+    ///
     /// The output is a new instance of [`Party`] which is the
     /// previous one refreshed.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the verifying public key is not trivial,
@@ -552,7 +552,7 @@ impl Party {
 
     /// Works as [Phase 1](super::dkg::phase1) in DKG, but with
     /// the alterations needed for the refresh protocol.
-    /// 
+    ///
     /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_phase1(&self) -> Vec<Scalar> {
@@ -571,7 +571,7 @@ impl Party {
 
     /// Works as [Phase 2](super::dkg::phase2) in DKG, but the
     /// derivation part is omitted.
-    /// 
+    ///
     /// The output should be dealt in the same way. The only
     /// difference is that we will refer to the scalar`poly_point`
     /// as `correction_value`.
@@ -624,7 +624,7 @@ impl Party {
 
     /// Works as [Phase 3](super::dkg::phase3) in DKG, but the
     /// multiplication and derivation parts are omitted.
-    /// 
+    ///
     /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_phase3(
@@ -666,10 +666,10 @@ impl Party {
     /// Works as [Phase 4](super::dkg::phase4) in DKG, but the
     /// multiplication and derivation parts are omitted. Moreover,
     /// the variable `poly_point` is now called `correction_value`.
-    /// 
+    ///
     /// The output is a new instance of [`Party`] which is the
     /// previous one refreshed.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the verifying public key is not trivial,
@@ -942,8 +942,11 @@ mod tests {
 
     use rand::Rng;
 
+    /// Tests if the complete refresh protocol generates parties
+    /// still capable of running the signing protocol.
+    ///
+    /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
-    // Test for complete refresh: initializations are rerun from the beginning.
     fn test_refresh_complete() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
@@ -1230,8 +1233,11 @@ mod tests {
         }
     }
 
+    /// Tests if the faster refresh protocol generates parties
+    /// still capable of running the signing protocol.
+    ///
+    /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
-    // Test for alternative refresh.
     fn test_refresh() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);

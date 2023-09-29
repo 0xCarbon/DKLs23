@@ -32,6 +32,7 @@
 //!
 //! IMPORTANT: As specified in page 30 of `DKLs23`, we instantiate the protocols
 //! above over the same elliptic curve group used in our main protocol.
+
 use k256::elliptic_curve::{ops::Reduce, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
 use rand::Rng;
@@ -816,6 +817,7 @@ mod tests {
 
     // DLogProof
 
+    /// Tests if proving and verifying work for [`DLogProof`].
     #[test]
     fn test_dlog_proof() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -824,6 +826,8 @@ mod tests {
         assert!(DLogProof::verify(&proof, &session_id));
     }
 
+    /// Generates a [`DLogProof`] and changes it on purpose
+    /// to see if the verify function detects.
     #[test]
     fn test_dlog_proof_fail_proof() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -833,6 +837,8 @@ mod tests {
         assert!(!(DLogProof::verify(&proof, &session_id)));
     }
 
+    /// Tests if proving and verifying work for [`DLogProof`]
+    /// in the case with commitment.
     #[test]
     fn test_dlog_proof_commit() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -841,6 +847,8 @@ mod tests {
         assert!(DLogProof::decommit_verify(&proof, &commitment, &session_id));
     }
 
+    /// Generates a [`DLogProof`] with commitment and changes
+    /// the proof on purpose to see if the verify function detects.
     #[test]
     fn test_dlog_proof_commit_fail_proof() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -850,6 +858,8 @@ mod tests {
         assert!(!(DLogProof::decommit_verify(&proof, &commitment, &session_id)));
     }
 
+    /// Generates a [`DLogProof`] with commitment and changes
+    /// the commitment on purpose to see if the verify function detects.
     #[test]
     fn test_dlog_proof_commit_fail_commitment() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -865,6 +875,7 @@ mod tests {
 
     // CPProof
 
+    /// Tests if proving and verifying work for [`CPProof`].
     #[test]
     fn test_cp_proof() {
         let log_base_g = Scalar::random(rand::thread_rng());
@@ -896,6 +907,7 @@ mod tests {
         assert!(verification);
     }
 
+    /// Tests if simulating a fake proof and verifying work for [`CPProof`].
     #[test]
     fn test_cp_proof_simulate() {
         let log_base_g = Scalar::random(rand::thread_rng());
@@ -920,6 +932,7 @@ mod tests {
 
     // EncProof
 
+    /// Tests if proving and verifying work for [`EncProof`].
     #[test]
     fn test_enc_proof() {
         // We sample the initial values.

@@ -1,7 +1,8 @@
 //! Oblivious Transfer.
 //!
 //! The main protocol is given by the file [`extension`], but it needs
-//! a base OT implemented in [`base`];
+//! a base OT implemented in [`base`].
+
 pub mod base;
 pub mod extension;
 

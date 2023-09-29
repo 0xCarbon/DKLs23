@@ -14,20 +14,20 @@
 //! instructs. We also include an additional step in the protocol given by `KOS`. It
 //! comes from Protocol 9 of the `DKLs18` paper (<https://eprint.iacr.org/2018/499.pdf>).
 //! It is needed to transform the outputs to the desired form.
-//! 
+//!
 //! # Remark: the OT width
-//! 
-//! We implement the "forced-reuse" technique suggested in DKLs23.
+//!
+//! We implement the "forced-reuse" technique suggested in `DKLs23`.
 //! As they say: "Alice performs the steps of the protocol for each input in
 //! her vector, but uses a single batch of Bob’s OT instances for all of them,
 //! concatenating the corresponding OT payloads to form one batch of payloads
 //! with lengths proportionate to her input vector length."
 //!
-//! Actually, this approach is implicitly used in DKLs19. This can be seen,
+//! Actually, this approach is implicitly used in `DKLs19`. This can be seen,
 //! for example, in the two following implementations:
-//! 
+//!
 //! <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>
-//! 
+//!
 //! <https://github.com/docknetwork/crypto/blob/main/oblivious_transfer/src/ot_extensions/kos_ote.rs>
 //!
 //! In both of them, the sender supplies a vector of 2-tuples of correlations against
@@ -35,6 +35,7 @@
 //! first implementation as the "OT width". We shall use the same terminology. Here,
 //! instead of taking a vector of k-tuples of correlations, we equivalently deal with
 //! k vectors of single correlations, where k is the OT width.
+
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
@@ -53,14 +54,14 @@ use crate::utilities::ot::ErrorOT;
 /// Computational security parameter.
 pub const KAPPA: u16 = RAW_SECURITY;
 /// Statistical security parameter used in `KOS`.
-/// 
+///
 /// This particular number comes from the implementation of `DKLs19`:
 /// <https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>.
-/// 
+///
 /// It has to divide [`BATCH_SIZE`]!
 pub const OT_SECURITY: u16 = 128 + STAT_SECURITY;
 /// The extension execute this number of OT's.
-/// 
+///
 /// This particular number is the one used in the [multiplication protocol](super::super::multiplication).
 pub const BATCH_SIZE: u16 = RAW_SECURITY + 2 * STAT_SECURITY;
 /// Constant `l'` as in Fig. 10 of `KOS`.
@@ -103,10 +104,10 @@ impl OTESender {
     // Hence, a sender in the extension initializes as a receiver in the base OT.
 
     /// Starts the initialization.
-    /// 
+    ///
     /// In this case, it initializes and runs **as a receiver** the first phase
     /// of the base OT ([`KAPPA`] times).
-    /// 
+    ///
     /// See [`OTReceiver`](super::base::OTReceiver) for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
@@ -124,11 +125,11 @@ impl OTESender {
     }
 
     /// Finishes the initialization.
-    /// 
+    ///
     /// The inputs are the instance of [`OTReceiver`](super::base::OTReceiver) generated
     /// in the previous round and everything needed to finish the OT base protocol
     /// (see the description of the aforementioned struct).
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the base OT fails (see the file above).
@@ -151,17 +152,17 @@ impl OTESender {
     // See the description at the beginning of this file for more details.
 
     /// Runs the sender's protocol.
-    /// 
+    ///
     /// Input: OT width (see the remark [here](super::extension)), correlations for
     /// the points and values transmitted by the receiver. In this case, a correlation
     /// vector contains [`BATCH_SIZE`] scalars and `input_correlations` contains `ot_width`
     /// correlation vectors.
-    /// 
+    ///
     /// Output: Protocol's output and data to be sent to the receiver.
     /// The usual output would be just a vector of [`BATCH_SIZE`] scalars.
     /// However, we are executing the protocol `ot_width` times, so the result
     /// is a vector containing `ot_width` such vectors.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return  `Err` if `input_correlations` does not have the correct length
@@ -401,10 +402,10 @@ impl OTEReceiver {
     // Hence, a receiver in the extension initializes as a sender in the base OT.
 
     /// Starts the initialization.
-    /// 
+    ///
     /// In this case, it initializes and runs **as a sender** the first phase
     /// of the base OT ([`KAPPA`] times).
-    /// 
+    ///
     /// See [`OTSender`](super::base::OTSender) for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof) {
@@ -416,11 +417,11 @@ impl OTEReceiver {
     }
 
     /// Finishes the initialization.
-    /// 
+    ///
     /// The inputs are the instance of [`OTSender`](super::base::OTSender) generated
     /// in the previous round and everything needed to finish the OT base protocol
     /// (see the description of the aforementioned struct).
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the base OT fails (see the file above).
@@ -440,11 +441,11 @@ impl OTEReceiver {
     // We now follow the main steps in Fig. 10 of KOS.
 
     /// Runs the first phase of the receiver's protocol.
-    /// 
+    ///
     /// Note that it is the receiver who starts the OTE protocol.
-    /// 
+    ///
     /// Input: [`BATCH_SIZE`] choice bits.
-    /// 
+    ///
     /// Output: Extended seeds (used in the next phase) and data to be sent to the sender.
     #[must_use]
     pub fn run_phase1(
@@ -610,15 +611,15 @@ impl OTEReceiver {
     }
 
     /// Finishes the receiver's protocol and gives his output.
-    /// 
+    ///
     /// Input: Previous inputs, the OT width (see the remark [here](super::extension)),
-    /// the extended_seeds from the previous phase and the vector of values tau sent
+    /// the `extended_seeds` from the previous phase and the vector of values tau sent
     /// by the sender.
-    /// 
+    ///
     /// Output: Protocol's output. The usual output would be just a vector of [`BATCH_SIZE`]
     /// scalars. However, we are executing the protocol `ot_width` times, so the result
     /// is a vector containing `ot_width` such vectors.
-    /// 
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the length of `vector_of_tau` is not `ot_width`.
@@ -705,7 +706,7 @@ impl OTEReceiver {
 // EXTRA FUNCTIONS
 
 /// Transposes a given matrix.
-/// 
+///
 /// This function receives a [`KAPPA`] by [`EXTENDED_BATCH_SIZE`] matrix of booleans,
 /// takes the first [`BATCH_SIZE`] columns and computes the transpose matrix, which
 /// has [`BATCH_SIZE`] rows and [`KAPPA`] columns.
@@ -858,6 +859,11 @@ mod tests {
     use rand::Rng;
     use std::collections::HashSet;
 
+    /// Tests if [`field_mul`] is correctly computing
+    /// the multiplication in the finite field.
+    ///
+    /// It is based on the test found here:
+    /// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos_test.go>.
     #[test]
     fn test_field_mul() {
         for _ in 0..100 {
@@ -873,6 +879,8 @@ mod tests {
         }
     }
 
+    /// Tests if the outputs for the OTE protocol
+    /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_extension() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();

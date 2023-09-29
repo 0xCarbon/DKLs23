@@ -3,6 +3,7 @@
 //! This file implements the commitment functionality needed for `DKLs23`.
 //! We follow the approach suggested on page 7 of their paper
 //! (<https://eprint.iacr.org/2023/765.pdf>).
+
 use crate::utilities::hashes::{hash, point_to_bytes, HashOutput};
 use k256::AffinePoint;
 use rand::Rng;
@@ -60,6 +61,7 @@ pub fn verify_commitment_point(point: &AffinePoint, commitment: &HashOutput, sal
 mod tests {
     use super::*;
 
+    /// Tests if committing and decommitting work.
     #[test]
     fn test_commit_decommit() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
@@ -67,6 +69,8 @@ mod tests {
         assert!(verify_commitment(&msg, &commitment, &salt));
     }
 
+    /// Commits to a message and changes it on purpose
+    /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_msg() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
@@ -75,6 +79,8 @@ mod tests {
         assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
+    /// Commits to a message and changes the commitment on purpose
+    /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_commitment() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
@@ -83,6 +89,8 @@ mod tests {
         assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
+    /// Commits to a message and changes the salt on purpose
+    /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_salt() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();

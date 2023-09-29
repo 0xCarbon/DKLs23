@@ -4,6 +4,7 @@
 //! (this is Functionality 3.4 on page 7 of their paper).
 //!
 //! The implementation follows the suggestion they give using the commitment functionality.
+
 use crate::utilities::commits;
 use crate::utilities::hashes::{hash_as_scalar, HashOutput};
 
@@ -122,6 +123,8 @@ impl ZeroShare {
 mod tests {
     use super::*;
 
+    /// Tests if the shares returned by the zero shares
+    /// protocol indeed add up to zero.
     #[test]
     fn test_zero_shares() {
         let number_parties: u8 = 8; //This number can be changed. If so, change executing_parties below.

@@ -1,6 +1,7 @@
 //! `DKLs23` main protocols and related ones.
 //!
 //! Some structs appearing in most of the protocols are defined here.
+
 use std::collections::BTreeMap;
 
 use k256::{AffinePoint, Scalar};

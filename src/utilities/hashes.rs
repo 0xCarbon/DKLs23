@@ -12,6 +12,7 @@
 // different for each subprotocol. For example, the implementation above has a
 // file just for this purpose. Thus, it's worth analyzing this code in the future
 // and maybe implementing something similar.
+
 use bitcoin_hashes::{sha256, Hash};
 use k256::elliptic_curve::{bigint::Encoding, group::GroupEncoding, ops::Reduce};
 use k256::{AffinePoint, Scalar, U256};
@@ -71,6 +72,10 @@ mod tests {
     use hex;
     use k256::elliptic_curve::{point::AffineCoordinates, Field};
 
+    /// Tests if [`hash`] really works as `SHA-256` is intended.
+    ///
+    /// In this case, you should manually change the values and
+    /// use a trusted source which computes `SHA-256` to compare.
     #[test]
     fn test_hash() {
         let msg_string = "Testing message";
@@ -86,6 +91,10 @@ mod tests {
         );
     }
 
+    /// Tests if [`hash_as_int`] gives the correct integer.
+    ///
+    /// In this case, you should manually change the values and
+    /// use a trusted source which computes `SHA-256` to compare.
     #[test]
     fn test_hash_as_int() {
         let msg_string = "Testing message";
@@ -100,6 +109,8 @@ mod tests {
         );
     }
 
+    /// Tests if [`scalar_to_bytes`] converts a `Scalar`
+    /// in the expected way.
     #[test]
     fn test_scalar_to_bytes() {
         for _ in 0..100 {
@@ -112,6 +123,8 @@ mod tests {
         }
     }
 
+    /// Tests if [`point_to_bytes`] indeed returns the compressed
+    /// representation of a point on the elliptic curve.
     #[test]
     fn test_point_to_bytes() {
         for _ in 0..100 {
