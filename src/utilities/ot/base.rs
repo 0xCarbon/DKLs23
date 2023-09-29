@@ -98,9 +98,9 @@ impl OTSender {
     ) -> Result<(HashOutput, HashOutput), ErrorOT> {
         // We reconstruct h from the seed (as in the paper).
         // Instead of using a real identifier for the receiver,
-        // we just take the letter 'R' for simplicity.
+        // we just take the word 'Receiver' for simplicity.
         // I guess we could omit it, but we leave it to "change the oracle".
-        let msg_for_h = ["R".as_bytes(), seed].concat();
+        let msg_for_h = ["Receiver".as_bytes(), seed].concat();
         let h = (AffinePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id)).to_affine();
 
         // We verify the proof.
@@ -116,15 +116,15 @@ impl OTSender {
 
         // We compute the messages.
         // As before, instead of an identifier for the sender,
-        // we just take the letter 'S' for simplicity.
+        // we just take the word 'Sender' for simplicity.
 
         let (_, v) = enc_proof.get_u_and_v();
 
         let value_for_m0 = (v * self.s).to_affine();
         let value_for_m1 = ((ProjectivePoint::from(v) - h) * self.s).to_affine();
 
-        let msg_for_m0 = ["S".as_bytes(), &point_to_bytes(&value_for_m0)].concat();
-        let msg_for_m1 = ["S".as_bytes(), &point_to_bytes(&value_for_m1)].concat();
+        let msg_for_m0 = ["Sender".as_bytes(), &point_to_bytes(&value_for_m0)].concat();
+        let msg_for_m1 = ["Sender".as_bytes(), &point_to_bytes(&value_for_m1)].concat();
 
         let m0 = hash(&msg_for_m0, session_id);
         let m1 = hash(&msg_for_m1, session_id);
@@ -188,9 +188,9 @@ impl OTReceiver {
 
         // We compute h as in the paper.
         // Instead of using a real identifier for the receiver,
-        // we just take the letter 'R' for simplicity.
+        // we just take the word 'Receiver' for simplicity.
         // I guess we could omit it, but we leave it to "change the oracle".
-        let msg_for_h = ["R".as_bytes(), &self.seed].concat();
+        let msg_for_h = ["Receiver".as_bytes(), &self.seed].concat();
         let h = (AffinePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id)).to_affine();
 
         // We prove our data.
@@ -271,11 +271,11 @@ impl OTReceiver {
     pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
         // We compute the message.
         // As before, instead of an identifier for the sender,
-        // we just take the letter 'S' for simplicity.
+        // we just take the word 'Sender' for simplicity.
 
         let value_for_mb = (*z * r).to_affine();
 
-        let msg_for_mb = ["S".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
+        let msg_for_mb = ["Sender".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
 
         // We could return the bit as in the paper, but the receiver has this information.
         hash(&msg_for_mb, session_id)

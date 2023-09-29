@@ -528,6 +528,7 @@ pub fn phase3(
         // We first compute a new session id.
         // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
         let mul_sid_receiver = [
+            "Multiplication protocol".as_bytes(),
             &data.party_index.to_be_bytes(),
             &i.to_be_bytes(),
             &data.session_id[..],
@@ -542,6 +543,7 @@ pub fn phase3(
         // New session id as above.
         // Note that the indexes are now in the opposite order.
         let mul_sid_sender = [
+            "Multiplication protocol".as_bytes(),
             &i.to_be_bytes(),
             &data.party_index.to_be_bytes(),
             &data.session_id[..],
@@ -752,6 +754,7 @@ pub fn phase4(
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
             let mul_sid_receiver = [
+                "Multiplication protocol".as_bytes(),
                 &my_index.to_be_bytes(),
                 &their_index.to_be_bytes(),
                 &data.session_id[..],
@@ -779,6 +782,7 @@ pub fn phase4(
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
             let mul_sid_sender = [
+                "Multiplication protocol".as_bytes(),
                 &their_index.to_be_bytes(),
                 &my_index.to_be_bytes(),
                 &data.session_id[..],

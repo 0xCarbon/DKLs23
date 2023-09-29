@@ -183,10 +183,11 @@ impl Party {
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             // We also use both the sign id and the DKG id.
             let mul_sid = [
-                self.party_index.to_be_bytes().to_vec(),
-                counterparty.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &self.party_index.to_be_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -223,7 +224,7 @@ impl Party {
         // Now, different to DKLs23, we won't put the indexes from the parties
         // because the sign id refers only to this set of parties, hence
         // it's simpler and almost equivalent to take just the following:
-        let zero_sid = [self.session_id.clone(), data.sign_id.clone()].concat();
+        let zero_sid = ["Zero shares protocol".as_bytes(), &self.session_id, &data.sign_id].concat();
 
         let zeta = self.zero_share.compute(&data.counterparties, &zero_sid);
 
@@ -310,10 +311,11 @@ impl Party {
             // Let us retrieve the session id for multiplication.
             // Note that the roles are now reversed.
             let mul_sid = [
-                counterparty.to_be_bytes().to_vec(),
-                self.party_index.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.party_index.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -454,10 +456,11 @@ impl Party {
             // Let us retrieve the session id for multiplication.
             // Note that we reverse the roles again.
             let mul_sid = [
-                self.party_index.to_be_bytes().to_vec(),
-                counterparty.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &self.party_index.to_be_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 

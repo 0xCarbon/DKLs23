@@ -203,9 +203,11 @@ impl MulSender {
         // in the file ot/extension.rs already deals with these repetitions,
         // we just have to especify this quantity (the "OT width").
 
+        let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
+
         let result = self
             .ote_sender
-            .run(session_id, OT_WIDTH, &correlations, data);
+            .run(&ote_sid, OT_WIDTH, &correlations, data);
 
         let ot_outputs: Vec<Vec<Scalar>>;
         let vector_of_tau: Vec<Vec<Scalar>>; // Used by the receiver to finish the OT protocol.
@@ -423,8 +425,10 @@ impl MulReceiver {
         // cannot get the output immediately. This will only be computed
         // at the beginning of the next phase for the receiver.
 
+        let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
+
         let (extended_seeds, data_to_sender) =
-            self.ote_receiver.run_phase1(session_id, &choice_bits);
+            self.ote_receiver.run_phase1(&ote_sid, &choice_bits);
 
         // Step 4 - We compute the shared random values.
 
@@ -486,8 +490,10 @@ impl MulReceiver {
         // so we will have 2*L outputs (we refer to this number as
         // the "OT width").
 
+        let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
+
         let result = self.ote_receiver.run_phase2(
-            session_id,
+            &ote_sid,
             OT_WIDTH,
             &data_kept.choice_bits,
             &data_kept.extended_seeds,

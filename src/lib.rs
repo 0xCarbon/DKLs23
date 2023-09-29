@@ -1,3 +1,8 @@
+//! A library for dealing with the `DKLs23` protocol (see <https://eprint.iacr.org/2023/765.pdf>)
+//! and related protocols.
+//! 
+//! Written and used by Alore.
+
 pub mod protocols;
 pub mod utilities;
 
