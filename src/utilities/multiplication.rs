@@ -1,7 +1,7 @@
 //! Random Vector OLE functionality from `DKLs23`.
 //!
 //! This file realizes Functionality 3.5 in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>).
-//! It is based upon the OT extension protocol in the file [`super::ot::extension`].
+//! It is based upon the OT extension protocol [here](super::ot::extension).
 //!
 //! As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
 //! The first paper also gives some orientations on how to implement the protocol
@@ -85,7 +85,7 @@ impl MulSender {
 
     /// Starts the initialization of the protocol.
     ///
-    /// See [`super::ot::extension::OTESender`] for explanation.
+    /// See [`OTESender`](super::ot::extension::OTESender) for explanation.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
         OTESender::init_phase1(session_id)
@@ -93,7 +93,7 @@ impl MulSender {
 
     /// Finishes the initialization of the protocol.
     ///
-    /// The inputs here come from [`super::ot::extension::OTESender`],
+    /// The inputs here come from [`OTESender`](super::ot::extension::OTESender),
     /// except for `nonce`, which was sent by the receiver for the
     /// computation of the public gadget vector.
     ///
@@ -138,13 +138,13 @@ impl MulSender {
 
     /// Runs the sender's protocol.
     ///
-    /// Input: `L` instances of `Scalar` and data coming from receiver.
+    /// Input: [`L`] instances of `Scalar` and data coming from receiver.
     ///
     /// Output: Protocol's output and data to receiver.
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the underlying OT extension fails (see [`super::ot::extension::OTESender`]).
+    /// Will return `Err` if the underlying OT extension fails (see [`OTESender`](super::ot::extension::OTESender)).
     pub fn run(
         &self,
         session_id: &[u8],
@@ -326,7 +326,7 @@ impl MulReceiver {
 
     /// Starts the initialization of the protocol.
     ///
-    /// See [`super::ot::extension::OTEReceiver`] for explanation.
+    /// See [`OTEReceiver`](super::ot::extension::OTEReceiver) for explanation.
     ///
     /// The `Scalar` does not come from the OT extension. It is just
     /// a nonce for the generation of the public gadget vector. It should
@@ -345,7 +345,7 @@ impl MulReceiver {
 
     /// Finishes the initialization of the protocol.
     ///
-    /// The inputs here come from [`super::ot::extension::OTEReceiver`],
+    /// The inputs here come from [`OTEReceiver`](super::ot::extension::OTEReceiver),
     /// except for `nonce`, which was generated during the previous phase.
     ///
     /// # Errors
@@ -473,7 +473,7 @@ impl MulReceiver {
     /// # Errors
     ///
     /// Will return `Err` if the consistency check using the sender values fails
-    /// or if the underlying OT extension fails (see [`super::ot::extension::OTEReceiver`]).
+    /// or if the underlying OT extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
     pub fn run_phase2(
         &self,
         session_id: &[u8],

@@ -1,9 +1,11 @@
-/// This file implements a re-key function: if the user already has
-/// an address, he can split his secret key into a threshold signature
-/// scheme. Since he starts with the secret key, we consider him as a
-/// "trusted dealer" that can manipulate all the data from `DKLs23` to the
-/// other parties. Hence, this function is computed locally and doesn't
-/// need any communication.
+//! Splits a secret key into a threshold signature scheme.
+//! 
+//! This file implements a re-key function: if the user already has
+//! an address, he can split his secret key into a threshold signature
+//! scheme. Since he starts with the secret key, we consider him as a
+//! "trusted dealer" that can manipulate all the data from `DKLs23` to the
+//! other parties. Hence, this function is computed locally and doesn't
+//! need any communication.
 use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
@@ -23,12 +25,14 @@ use crate::utilities::ot::{
 };
 use crate::utilities::zero_shares::{self, ZeroShare};
 
-// The main inputs here are the parameters and the secret key.
-// We also include the session id here because the party that
-// is creating the wallet must verify the id was not used before,
-// and we cannot do this here.
-// We also include an option to put a chain code if the original
-// wallet followed BIP-32 for key derivation.
+/// Given a secret key, computes the data needed to make
+/// `DKLs23` signatures under the corresponding public key.
+/// 
+/// The output is a vector of [`Party`]'s which should be
+/// distributed to different users.
+/// 
+/// We also include an option to put a chain code if the original
+/// wallet followed BIP-32 for key derivation ([read more](super::derivation)).
 #[must_use]
 pub fn re_key(
     parameters: &Parameters,
@@ -47,7 +51,7 @@ pub fn re_key(
         polynomial.push(Scalar::random(rand::thread_rng()));
     }
 
-    // Zero-sharing.
+    // Zero shares.
 
     // We compute the common seed each pair of parties must save.
     // The vector below should interpreted as follows: its first entry

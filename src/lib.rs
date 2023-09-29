@@ -2,7 +2,8 @@ pub mod protocols;
 pub mod utilities;
 
 // The following constants should not be changed!
-// They are taken from the implementation of DKLs19.
+// They are taken from the implementation of DKLs19:
+// https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs
 
 /// Computational security parameter `lambda_c` from `DKLs23`.
 /// We take it to be the same as the parameter `kappa`.

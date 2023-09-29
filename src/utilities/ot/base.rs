@@ -1,10 +1,21 @@
+//! Base OT.
+//!
+//! This file implements an oblivious transfer (OT) which will serve as a base
+//! for the OT extension protocol.
+//!
+//! As suggested in page 30 of `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>),
+//! we implement the endemic OT protocol of Zhou et al., which can be found on
+//! Section 3 of <https://eprint.iacr.org/2022/1525.pdf>.
+//! 
+//! There are two phases for each party and one communication round between
+//! them. Both Phase 1 and Phase 2 can be done concurrently for the sender
+//! and the receiver.
+//
+//! There is also an initialization function which should be executed during
+//! Phase 1. It saves some values that can be reused if the protocol is applied
+//! several times. As this will be our case for the OT extension, there are
+//! "batch" variants for each of the phases.
 use k256::elliptic_curve::Field;
-/// This file implements an oblivious transfer (OT) which will serve as a base
-/// for the OT extension protocol.
-///
-/// As suggested in page 30 of `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>),
-/// we implement the endemic OT protocol of Zhou et al., which can be found on
-/// Section 3 of <https://eprint.iacr.org/2022/1525.pdf>.
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -16,8 +27,7 @@ use crate::SECURITY;
 
 // SENDER DATA
 
-// Sender after initialization.
-
+/// Sender's data and methods for the base OT protocol.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OTSender {
     pub s: Scalar,
@@ -26,30 +36,21 @@ pub struct OTSender {
 
 // RECEIVER DATA
 
-// Receiver after initialization.
-
+/// Seed kept by the receiver.
 pub type Seed = [u8; SECURITY as usize];
 
+/// Receiver's data and methods for the base OT protocol.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OTReceiver {
     pub seed: Seed,
 }
 
-// The following implements the protocol as in Section 3 of the paper.
-//
-// There are two phases for each party and one communication round between
-// them. Both Phase 1 and Phase 2 can be done concurrently for the sender
-// and the receiver.
-//
-// We also create an initialization function which should be executed during
-// Phase 1. It saves some values that can be reused if the protocol is applied
-// several times. As this will be our case for the OT extension, there are also
-// "batch" variants for each of the phases.
-
 impl OTSender {
-    // Initialization - According to first paragraph on page 18,
+    // According to first paragraph on page 18,
     // the sender can reuse the secret s and the proof of discrete
     // logarithm. Thus, we isolate this part from the rest for efficiency.
+
+    /// Initializes the protocol for a given session id.
     #[must_use]
     pub fn init(session_id: &[u8]) -> OTSender {
         // We sample a nonzero random scalar.
@@ -68,6 +69,8 @@ impl OTSender {
 
     // Phase 1 - The sender transmits z = s * generator and the proof
     // of discrete logarithm. Note that z is contained in the proof.
+
+    /// Generates a proof to be sent to the receiver.
     #[must_use]
     pub fn run_phase1(&self) -> DLogProof {
         self.proof.clone()
@@ -80,9 +83,13 @@ impl OTSender {
     // He receives the receiver's seed and encryption proof (which contains u and v).
 
     // Phase 2 - We verify the receiver's data and compute the output.
+
+    /// Using the seed and the encryption proof transmitted by the receiver,
+    /// the two output messages are computed.
+    /// 
     /// # Errors
     ///
-    /// Will return `Err` if the proof of discrete logarithm fails.
+    /// Will return `Err` if the encryption proof fails.
     pub fn run_phase2(
         &self,
         session_id: &[u8],
@@ -126,6 +133,9 @@ impl OTSender {
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
+
+    /// Executes `run_phase2` for each encryption proof in `enc_proofs`.
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if one of the executions fails.
@@ -158,6 +168,8 @@ impl OTReceiver {
     // Initialization - According to first paragraph on page 18,
     // the sender can reuse the seed. Thus, we isolate this part
     // from the rest for efficiency.
+
+    /// Initializes the protocol.
     #[must_use]
     pub fn init() -> OTReceiver {
         let seed = rand::thread_rng().gen::<Seed>();
@@ -166,6 +178,9 @@ impl OTReceiver {
     }
 
     // Phase 1 - We sample the secret values and provide proof.
+
+    /// Given a choice bit, returns a secret scalar (to be kept)
+    /// and an encryption proof (to be sent to the sender).
     #[must_use]
     pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
         // We sample the secret scalar r.
@@ -189,6 +204,8 @@ impl OTReceiver {
     }
 
     // Phase 1 batch version: used for multiple executions (e.g. OT extension).
+
+    /// Executes `run_phase1` for each choice bit in `bits`.
     #[must_use]
     pub fn run_phase1_batch(
         &self,
@@ -222,9 +239,12 @@ impl OTReceiver {
     // first depends only on the initialization values and can be done
     // once, while the second is different for each iteration.
 
+    /// Verifies the discrete logarithm proof sent by the sender
+    /// and returns the point concerned in the proof.
+    /// 
     /// # Errors
     ///
-    /// Will return `Err` if the proof of discrete logarithm fails.
+    /// Will return `Err` if the proof fails.
     pub fn run_phase2_step1(
         &self,
         session_id: &[u8],
@@ -245,6 +265,8 @@ impl OTReceiver {
         Ok(z)
     }
 
+    /// With the secret value `r` from Phase 1 and with the point `z`
+    /// from the previous step, the output message is computed.
     #[must_use]
     pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
         // We compute the message.
@@ -260,6 +282,10 @@ impl OTReceiver {
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).
+
+    /// Executes `run_phase2_step1` once and `run_phase2_step2` for every
+    /// secret scalar in `vec_r` from Phase 1.
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if one of the executions fails.

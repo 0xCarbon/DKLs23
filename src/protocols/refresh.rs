@@ -1,22 +1,87 @@
-/// This file implements a refresh protocol: periodically, all parties
-/// engage in a protocol to re-randomize their secret values (while, of
-/// course, still maintaining the same public key).
-///
-/// The most direct way of doing this is simply executing DKG and restricting
-/// the possible random values so that we don't change our address. We
-/// implement this procedure under the name of "complete refresh".
-///
-/// DKG also initializes the multiplication protocol, but we may take
-/// advantage of the fact the we have already initialized this protocol
-/// before. If we use this data for refresh, we don't need to execute
-/// the OT protocols and we may save some time and some rounds. This
-/// approach is implemented in another refresh protocol.
-///
-/// ATTENTION: The protocols here work for any instance of Party, including
-/// for derived addresses. However, refreshing a derivation is not such a
-/// good idea because the refreshed derivation becomes essentially independent
-/// of the master node. We recommend that only master nodes are refreshed
-/// and derivations are calculated as needed afterwards.
+//! Protocols for refreshing key shares when wanted/needed.
+//! 
+//! This file implements a refresh protocol: periodically, all parties
+//! engage in a protocol to re-randomize their secret values (while, of
+//! course, still maintaining the same public key).
+//!
+//! The most direct way of doing this is simply executing DKG and restricting
+//! the possible random values so that we don't change our address. We
+//! implement this procedure under the name of "complete refresh".
+//!
+//! DKG also initializes the multiplication protocol, but we may take
+//! advantage of the fact the we have already initialized this protocol
+//! before. If we use this data for refresh, we don't need to execute
+//! the OT protocols and we may save some time and some rounds. This
+//! approach is implemented in another refresh protocol.
+//!
+//! ATTENTION: The protocols here work for any instance of Party, including
+//! for derived addresses. However, refreshing a derivation is not such a
+//! good idea because the refreshed derivation becomes essentially independent
+//! of the master node. We recommend that only master nodes are refreshed
+//! and derivations are calculated as needed afterwards.
+//! 
+//! # Complete refresh
+//!
+//! In this case, we recompute all data from the parties. Hence, we essentially
+//! rerun DKG but we force the final public key to be the original one.
+//!
+//! To adapt the DKG protocol, we change [Step 1](super::dkg::step1): instead of sampling any random
+//! polynomial, each party generates a polynomial whose constant term is zero.
+//! In this way, the key generation provides each party with a point on a polynomial
+//! whose constant term (the "secret key") is zero. This new point is just a correction
+//! factor and must be added to the original `poly_point` variable. This refreshes each
+//! key share while preserving the same public key.
+//!
+//! Each party cannot trust that their adversaries really chose a polynomial
+//! with zero constant term. Therefore, we must add a new consistency check in
+//! [Phase 4](super::dkg::phase4): after recovering the auxiliary public key, each party must check that
+//! it is equal to the zero point on the curve. This ensures that the correction
+//! factors will not change the public key.
+//! 
+//! # A faster refresh
+//! 
+//! During a complete refresh, we initialize the multiplication protocol
+//! from scratch. Instead, we can use our previous data to more efficiently
+//! refresh this initialization. This results in a faster refresh and,
+//! depending on the multiplication protocol, fewer communication rounds.
+//!
+//! We will base this implementation on the article "Refresh When You Wake Up:
+//! Proactive Threshold Wallets with Offline Devices" (<https://eprint.iacr.org/2019/1328.pdf>)
+//! More specifically, we use their ideas from Section 8 (and Appendix E).
+//!
+//! In their protocol, a common random string is sampled by each pair of
+//! parties. They achieve this by using their "coin tossing functionality".
+//! Note that their suggestion of implementation for this functionality is
+//! very similar to the way our zero shares protocol computes its seeds.
+//!
+//! Hence, our new refresh protocol will work as follows: we run DKG
+//! ignoring any procedure related to the multiplication protocol (and we
+//! do the same modifications we did for the complete refresh). During
+//! the fourth phase, the initialization for the zero shares protocol
+//! generates its seeds. We reuse them to apply the Beaver trick (described
+//! in the article) to refresh the OT instances used for multiplication.
+//! 
+//! # Nomenclature
+//! 
+//! For the messages structs, we will use the following nomenclature:
+//!
+//! **Transmit** messages refer to only one counterparty, hence
+//! we must produce a whole vector of them. Each message in this 
+//! vector contains the party index to whom we should send it.
+//!
+//! **Broadcast** messages refer to all counterparties at once,
+//! hence we only need to produce a unique instance of it.
+//! This message is broadcasted to all parties.
+//! 
+//! ATTENTION: we broadcast the message to ourselves as well!
+//!
+//! **Keep** messages refer to only one counterparty, hence
+//! we must keep a whole vector of them. In this implementation,
+//! we use a `BTreeMap` instead of a vector, where one can put
+//! some party index in the key to retrieve the corresponding data.
+//!
+//! **Unique keep** messages refer to all counterparties at once,
+//! hence we only need to keep a unique instance of it.
 use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
@@ -35,17 +100,23 @@ use crate::protocols::dkg::{
 };
 use crate::protocols::{Abort, PartiesMessage, Party};
 
-///////// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
+// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
 
 // "Transmit" messages refer to only one counterparty, hence
 // we must send a whole vector of them.
 
+/// Transmit - (Faster) Refresh.
+/// 
+/// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone)]
 pub struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
 
+/// Transmit - (Faster) Refresh.
+/// 
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone)]
 pub struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
@@ -53,45 +124,34 @@ pub struct TransmitRefreshPhase3to4 {
     pub salt: Vec<u8>,
 }
 
-////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
+// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
 
-// "Keep" messages refer to only one counterparty, hence
-// we must keep a whole vector of them.
-
+/// Keep - (Faster) Refresh.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone)]
 pub struct KeepRefreshPhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
 
+/// Keep - (Faster) Refresh.
+///
+/// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone)]
 pub struct KeepRefreshPhase3to4 {
     pub seed: zero_shares::Seed,
 }
 
-//////////////////////////
-
-// We implement now two refresh protocols.
-
+/// Implementations related to refresh protocols ([read more](self)).
 impl Party {
+
     // COMPLETE REFRESH
 
-    // In this case, we recompute all data from the parties. Hence, we essentially
-    // rerun DKG but we force the final public key to be the original one.
-
-    // To adapt the DKG protocol, we change Step 1: instead of sampling any random
-    // polynomial, each party generates a polynomial whose constant term is zero.
-    // In this way, the key generation provides each party with a point on a polynomial
-    // whose constant term (the "secret key") is zero. This new point is just a correction
-    // factor and must be added to the original poly_point variable. This refreshes each
-    // key share while preserving the same public key.
-
-    // Each party cannot trust that their adversaries really chose a polynomial
-    // with zero constant term. Therefore, we must add a new consistency check in
-    // Phase 4: after recovering the auxiliary public key, each party must check that
-    // it is equal to the zero point on the curve. This ensures that the correction
-    // factors will not change the public key.
-
+    /// Works as [Phase 1](super::dkg::phase1) in DKG, but with
+    /// the alterations needed for the refresh protocol.
+    /// 
+    /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_complete_phase1(&self) -> Vec<Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
@@ -107,6 +167,12 @@ impl Party {
         step2(&self.parameters, &secret_polynomial)
     }
 
+    /// Works as [Phase 2](super::dkg::phase2) in DKG, but the
+    /// derivation part is omitted.
+    /// 
+    /// The output should be dealt in the same way. The only
+    /// difference is that we will refer to the scalar`poly_point`
+    /// as `correction_value`.
     #[must_use]
     pub fn refresh_complete_phase2(
         &self,
@@ -157,6 +223,10 @@ impl Party {
         (correction_value, proof_commitment, zero_keep, zero_transmit)
     }
 
+    /// Works as [Phase 3](super::dkg::phase3) in DKG, but the
+    /// derivation part is omitted.
+    /// 
+    /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_complete_phase3(
         &self,
@@ -268,10 +338,17 @@ impl Party {
         (zero_keep, zero_transmit, mul_keep, mul_transmit)
     }
 
+    /// Works as [Phase 4](super::dkg::phase4) in DKG, but the
+    /// derivation part is omitted. Moreover, the variable
+    /// `poly_point` is now called `correction_value`.
+    /// 
+    /// The output is a new instance of [`Party`] which is the
+    /// previous one refreshed.
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if the verifying public key is not trivial,
-    /// if a message is not meant for the party, if the zero sharing
+    /// if a message is not meant for the party, if the zero shares
     /// protocol fails when verifying the seeds or if the multiplication
     /// protocol fails.
     pub fn refresh_complete_phase4(
@@ -469,27 +546,10 @@ impl Party {
 
     // A FASTER REFRESH
 
-    // During a complete refresh, we initialize the multiplication protocol
-    // from scratch. Instead, we can use our previous data to more efficiently
-    // refresh this initialization. This results in a faster refresh and,
-    // depending on the multiplication protocol, fewer communication rounds.
-
-    // We will base this implementation on the article "Refresh When You Wake Up:
-    // Proactive Threshold Wallets with Offline Devices" (https://eprint.iacr.org/2019/1328.pdf)
-    // More specifically, we use their ideas from Section 8 (and Appendix E).
-
-    // In their protocol, a common random string is sampled by each pair of
-    // parties. They achieve this by using their "coin tossing functionality".
-    // Note that their suggestion of implementation for this functionality is
-    // very similar to the way our zero sharing protocol computes its seeds.
-
-    // Hence, our new refresh protocol will work as follows: we run DKG
-    // ignoring any procedure related to the multiplication protocol (and we
-    // do the same modifications we did for the complete refresh). During
-    // the fourth phase, the initialization for the zero sharing protocol
-    // generates its seeds. We reuse them to apply the Beaver trick (described
-    // in the article) to refresh the OT instances used for multiplication.
-
+    /// Works as [Phase 1](super::dkg::phase1) in DKG, but with
+    /// the alterations needed for the refresh protocol.
+    /// 
+    /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_phase1(&self) -> Vec<Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
@@ -505,6 +565,12 @@ impl Party {
         step2(&self.parameters, &secret_polynomial)
     }
 
+    /// Works as [Phase 2](super::dkg::phase2) in DKG, but the
+    /// derivation part is omitted.
+    /// 
+    /// The output should be dealt in the same way. The only
+    /// difference is that we will refer to the scalar`poly_point`
+    /// as `correction_value`.
     #[must_use]
     pub fn refresh_phase2(
         &self,
@@ -552,6 +618,10 @@ impl Party {
         (correction_value, proof_commitment, keep, transmit)
     }
 
+    /// Works as [Phase 3](super::dkg::phase3) in DKG, but the
+    /// multiplication and derivation parts are omitted.
+    /// 
+    /// The output should be dealt in the same way.
     #[must_use]
     pub fn refresh_phase3(
         &self,
@@ -589,10 +659,17 @@ impl Party {
         (keep, transmit)
     }
 
+    /// Works as [Phase 4](super::dkg::phase4) in DKG, but the
+    /// multiplication and derivation parts are omitted. Moreover,
+    /// the variable `poly_point` is now called `correction_value`.
+    /// 
+    /// The output is a new instance of [`Party`] which is the
+    /// previous one refreshed.
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if the verifying public key is not trivial,
-    /// if a message is not meant for the party or if the zero sharing
+    /// if a message is not meant for the party or if the zero shares
     /// protocol fails when verifying the seeds.
     ///
     /// # Panics
@@ -814,7 +891,7 @@ impl Party {
             );
         }
 
-        // This finishes the initialization for the zero sharing protocol.
+        // This finishes the initialization for the zero shares protocol.
         let zero_share = ZeroShare::initialize(seeds);
 
         // For key derivation, we just update poly_point.

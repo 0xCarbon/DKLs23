@@ -123,7 +123,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_zero_sharing() {
+    fn test_zero_shares() {
         let number_parties: u8 = 8; //This number can be changed. If so, change executing_parties below.
 
         //Parties generate the initial seeds and the commitments.

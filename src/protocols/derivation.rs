@@ -1,14 +1,16 @@
-/// This file implements a key derivation mechanism for threshold wallets
-/// based on BIP-32 (<https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>).
-/// Each party can derive their key share individually so that the secret
-/// key reconstructed corresponds to the derivation (via BIP-32) of the
-/// original secret key.
-///
-/// We follow mainly this repository:
-/// <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
-///
-/// ATTENTION: Since no party has the full secret key, it is not convenient
-/// to do hardened derivation. Thus, we only implement normal derivation.
+//! Adaptation of BIP-32 to the threshold setting.
+//! 
+//! This file implements a key derivation mechanism for threshold wallets
+//! based on BIP-32 (<https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>).
+//! Each party can derive their key share individually so that the secret
+//! key reconstructed corresponds to the derivation (via BIP-32) of the
+//! original secret key.
+//!
+//! We follow mainly this repository:
+//! <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
+//!
+//! ATTENTION: Since no party has the full secret key, it is not convenient
+//! to do hardened derivation. Thus, we only implement normal derivation.
 use bitcoin_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 
 use k256::elliptic_curve::{ops::Reduce, Curve};
@@ -20,16 +22,23 @@ use crate::utilities::hashes::point_to_bytes;
 
 use super::dkg::compute_eth_address;
 
+/// Fingerprint of a key as in BIP-32.
+/// 
+/// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
 pub type Fingerprint = [u8; 4];
+/// Chaincode of a key as in BIP-32.
+/// 
+/// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
 pub type ChainCode = [u8; 32];
 
-// A struct for errors in this file.
+/// Represents an error during the derivation protocol.
 #[derive(Clone)]
 pub struct ErrorDeriv {
     pub description: String,
 }
 
 impl ErrorDeriv {
+    /// Creates an instance of `ErrorDeriv`.
     #[must_use]
     pub fn new(description: &str) -> ErrorDeriv {
         ErrorDeriv {
@@ -38,27 +47,41 @@ impl ErrorDeriv {
     }
 }
 
-// This struct contains all the data needed for derivation.
-// The values that are really needed are only the last three,
-// but we also include the other ones if someone wants to retrieve
-// the full extended public key as in BIP-32. The only field
-// missing is the one for the network, but it can be easily
-// inferred from context.
+/// Contains all the data needed for derivation.
+///
+/// The values that are really needed are only `poly_point`,
+/// `pk` and `chain_code`, but we also include the other ones
+/// if someone wants to retrieve the full extended public key
+/// as in BIP-32. The only field missing is the one for the
+/// network, but it can be easily inferred from context.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DerivData {
+    /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,
+    /// Index used to obtain this key from its parent.
     pub child_number: u32,
+    /// Identifier of the parent key.
     pub parent_fingerprint: Fingerprint,
+    /// Behaves as the secret key share.
     pub poly_point: Scalar,
+    /// Public key.
     pub pk: AffinePoint,
+    /// Extra entropy given by BIP-32.
     pub chain_code: ChainCode,
 }
 
-const MAX_DEPTH: u8 = 255;
-const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
+/// Maximum depth.
+pub const MAX_DEPTH: u8 = 255;
+/// Maximum child number.
+/// 
+/// This is the limit since we are not implementing hardened derivation.
+pub const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
 
 impl DerivData {
-    /// Adaptation of function `ckd_pub_tweak` from the repository:
+    /// Computes the "tweak" needed to derive a secret key. In the process,
+    /// it also produces the chain code and the parent fingerprint.
+    /// 
+    /// This is an adaptation of `ckd_pub_tweak` from the repository:
     /// <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
     ///
     /// # Errors
@@ -98,9 +121,11 @@ impl DerivData {
         Ok((tweak, chain_code, fingerprint))
     }
 
+    /// Derives an instance of `DerivData` given a child number.
+    /// 
     /// # Errors
     ///
-    /// Will return `Err` if depth is already at the maximum value,
+    /// Will return `Err` if the depth is already at the maximum value,
     /// if the child number is invalid or if `child_tweak` fails.
     /// It will also fail if the new public key is invalid (very unlikely).
     pub fn derive_child(&self, child_number: u32) -> Result<DerivData, ErrorDeriv> {
@@ -138,6 +163,13 @@ impl DerivData {
         })
     }
 
+    /// Derives an instance of `DerivData` following a path
+    /// on the "key tree".
+    /// 
+    /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>
+    /// for the description of a possible path (and don't forget that
+    /// hardened derivations are not implemented).
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if the path is invalid or if `derive_child` fails.
@@ -155,7 +187,11 @@ impl DerivData {
 
 // We implement the derivation functions for Party as well.
 
+/// Implementations related to BIP-32 derivation ([read more](self)).
 impl Party {
+
+    /// Derives an instance of `Party` given a child number.
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_child` fails.
@@ -185,6 +221,13 @@ impl Party {
         })
     }
 
+    /// Derives an instance of `Party` following a path
+    /// on the "key tree".
+    /// 
+    /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>
+    /// for the description of a possible path (and don't forget that
+    /// hardened derivations are not implemented).
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_from_path` fails.
@@ -215,12 +258,9 @@ impl Party {
     }
 }
 
-// We take a path as in BIP-32 (for normal derivation),
-// and transform it into a vector of child numbers.
-/// # Errors
-///
-/// Will return `Err` if the path is not valid.
-///
+/// Takes a path as in BIP-32 (for normal derivation),
+/// and transforms it into a vector of child numbers.
+/// 
 /// # Errors
 ///
 /// Will return `Err` if the path is not valid or empty.

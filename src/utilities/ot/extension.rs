@@ -1,19 +1,40 @@
-/// This file implements an Oblivious Transfer Extension (OTE) that realizes
-/// Functionality 3 in `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>). It is
-/// used for the multiplication protocol (see multiplication.rs).
-///
-/// As `DKLs23` suggested, we use Roy's `SoftSpokenOT` (<https://eprint.iacr.org/2022/192.pdf>).
-/// However, we do not follow this paper directly. Instead, we use the KOS paper
-/// available at <https://eprint.iacr.org/2015/546.pdf>. In the corrected version,
-/// they present an alternative for their original protocol (which was used by DKLs,
-/// but was not as secure as expected) using `SoftSpokenOT` (see Fig. 10 in KOS).
-///
-/// In order to reduce the round count, we apply the Fiat-Shamir heuristic, as `DKLs23`
-/// instructs. We also include an additional phase in the protocol given by KOS. It
-/// comes from Protocol 9 of the `DKLs18` paper (<https://eprint.iacr.org/2018/499.pdf>).
-/// It is needed to transform the outputs to the desired form. Finally, `DKLs23` asks
-/// for a "forced-reuse" implementation. Essentially, the bits chosen by the receiver are
-/// used multiple times by the sender with different input correlations.
+//! Extension protocol.
+//!
+//! This file implements an Oblivious Transfer Extension (OTE) that realizes
+//! Functionality 3 in `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>). It is
+//! used for the multiplication protocol (see multiplication.rs).
+//!
+//! As `DKLs23` suggested, we use Roy's `SoftSpokenOT` (<https://eprint.iacr.org/2022/192.pdf>).
+//! However, we do not follow this paper directly. Instead, we use the `KOS` paper
+//! available at <https://eprint.iacr.org/2015/546.pdf>. In the corrected version,
+//! they present an alternative for their original protocol (which was used by `DKLs`,
+//! but was not as secure as expected) using `SoftSpokenOT` (see Fig. 10 in `KOS`).
+//!
+//! In order to reduce the round count, we apply the Fiat-Shamir heuristic, as `DKLs23`
+//! instructs. We also include an additional step in the protocol given by `KOS`. It
+//! comes from Protocol 9 of the `DKLs18` paper (<https://eprint.iacr.org/2018/499.pdf>).
+//! It is needed to transform the outputs to the desired form.
+//! 
+//! # Remark: the OT width
+//! 
+//! We implement the "forced-reuse" technique suggested in DKLs23.
+//! As they say: "Alice performs the steps of the protocol for each input in
+//! her vector, but uses a single batch of Bob’s OT instances for all of them,
+//! concatenating the corresponding OT payloads to form one batch of payloads
+//! with lengths proportionate to her input vector length."
+//!
+//! Actually, this approach is implicitly used in DKLs19. This can be seen,
+//! for example, in the two following implementations:
+//! 
+//! <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>
+//! 
+//! <https://github.com/docknetwork/crypto/blob/main/oblivious_transfer/src/ot_extensions/kos_ote.rs>
+//!
+//! In both of them, the sender supplies a vector of 2-tuples of correlations against
+//! a unique vector of choice bits by the receiver. This number "2" is called in the
+//! first implementation as the "OT width". We shall use the same terminology. Here,
+//! instead of taking a vector of k-tuples of correlations, we equivalently deal with
+//! k vectors of single correlations, where k is the OT width.
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 
@@ -25,29 +46,46 @@ use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::ErrorOT;
 
+// CONSTANTS
 // You should not change these numbers!
 // If you do, some parts of the code must be changed.
+
+/// Computational security parameter.
 pub const KAPPA: u16 = RAW_SECURITY;
-pub const OT_SECURITY: u16 = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
+/// Statistical security parameter used in `KOS`.
+/// 
+/// This particular number comes from the implementation of `DKLs19`:
+/// <https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>.
+/// 
+/// It has to divide [`BATCH_SIZE`]!
+pub const OT_SECURITY: u16 = 128 + STAT_SECURITY;
+/// The extension execute this number of OT's.
+/// 
+/// This particular number is the one used in the [multiplication protocol](super::super::multiplication).
 pub const BATCH_SIZE: u16 = RAW_SECURITY + 2 * STAT_SECURITY;
+/// Constant `l'` as in Fig. 10 of `KOS`.
 pub const EXTENDED_BATCH_SIZE: u16 = BATCH_SIZE + OT_SECURITY;
 
-pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
-pub type FieldElement = [u8; (OT_SECURITY / 8) as usize]; //The same for OT_SECURITY
+/// Output of pseudo-random generator.
+pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
+/// Encodes an element in the field of 2^`OT_SECURITY` elements.
+pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
+/// Sender's data and methods for the OTE protocol.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OTESender {
-    pub correlation: Vec<bool>, //We will deal with bits separately
+    pub correlation: Vec<bool>, // We will deal with bits separately
     pub seeds: Vec<HashOutput>,
 }
 
+/// Receiver's data and methods for the OTE protocol.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OTEReceiver {
     pub seeds0: Vec<HashOutput>,
     pub seeds1: Vec<HashOutput>,
 }
 
-// This struct is for better readability of the code.
+/// Data transmitted by the receiver to the sender after his first phase.
 #[derive(Clone)]
 pub struct OTEDataToSender {
     pub u: Vec<PRGOutput>,
@@ -64,6 +102,12 @@ impl OTESender {
     // Attention: The roles are reversed during this part!
     // Hence, a sender in the extension initializes as a receiver in the base OT.
 
+    /// Starts the initialization.
+    /// 
+    /// In this case, it initializes and runs **as a receiver** the first phase
+    /// of the base OT ([`KAPPA`] times).
+    /// 
+    /// See [`OTReceiver`](super::base::OTReceiver) for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
         let ot_receiver = OTReceiver::init();
@@ -79,9 +123,15 @@ impl OTESender {
         (ot_receiver, correlation, vec_r, enc_proofs)
     }
 
+    /// Finishes the initialization.
+    /// 
+    /// The inputs are the instance of [`OTReceiver`](super::base::OTReceiver) generated
+    /// in the previous round and everything needed to finish the OT base protocol
+    /// (see the description of the aforementioned struct).
+    /// 
     /// # Errors
     ///
-    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
+    /// Will return `Err` if the base OT fails (see the file above).
     pub fn init_phase2(
         ot_receiver: &OTReceiver,
         session_id: &[u8],
@@ -98,29 +148,24 @@ impl OTESender {
     // PROTOCOL
     // We now follow the main steps in Fig. 10 of KOS.
     // The suggestions given in the DKLs papers are also implemented.
+    // See the description at the beginning of this file for more details.
 
-    // IMPORTANT: we implement the "forced-reuse" technique suggested in DKLs23.
-    // As they say: "Alice performs the steps of the protocol for each input in
-    // her vector, but uses a single batch of Bob’s OT instances for all of them,
-    // concatenating the corresponding OT payloads to form one batch of payloads
-    // with lengths proportionate to her input vector length."
-
-    // Actually, this approach is implicitly used in DKLs19. This can be seen,
-    // for example, in the two following implementations:
-    // <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>
-    // <https://github.com/docknetwork/crypto/blob/main/oblivious_transfer/src/ot_extensions/kos_ote.rs>
-
-    // In both of them, the sender supplies a vector of 2-tuples of correlations against
-    // a unique vector of choice bits by the receiver. This number "2" is called in the
-    // first implementation as the "OT width". We shall use the same terminology. Here,
-    // instead of taking a vector of k-tuples of correlations, we equivalently deal with
-    // k vectors of single correlations, where k is the OT width.
-
-    // Input: Correlations for the points and values transmitted by the receiver.
-    // Output: Protocol's output and a value to be sent to the receiver.
+    /// Runs the sender's protocol.
+    /// 
+    /// Input: OT width (see the remark [here](super::extension)), correlations for
+    /// the points and values transmitted by the receiver. In this case, a correlation
+    /// vector contains [`BATCH_SIZE`] scalars and `input_correlations` contains `ot_width`
+    /// correlation vectors.
+    /// 
+    /// Output: Protocol's output and data to be sent to the receiver.
+    /// The usual output would be just a vector of [`BATCH_SIZE`] scalars.
+    /// However, we are executing the protocol `ot_width` times, so the result
+    /// is a vector containing `ot_width` such vectors.
+    /// 
     /// # Errors
     ///
-    /// Will return  `Err` if the consistency check using the receiver values fails.
+    /// Will return  `Err` if `input_correlations` does not have the correct length
+    /// or if the consistency check using the receiver values fails.
     pub fn run(
         &self,
         session_id: &[u8],
@@ -355,6 +400,12 @@ impl OTEReceiver {
     // Attention: The roles are reversed during this part!
     // Hence, a receiver in the extension initializes as a sender in the base OT.
 
+    /// Starts the initialization.
+    /// 
+    /// In this case, it initializes and runs **as a sender** the first phase
+    /// of the base OT ([`KAPPA`] times).
+    /// 
+    /// See [`OTSender`](super::base::OTSender) for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof) {
         let ot_sender = OTSender::init(session_id);
@@ -364,9 +415,15 @@ impl OTEReceiver {
         (ot_sender, dlog_proof)
     }
 
+    /// Finishes the initialization.
+    /// 
+    /// The inputs are the instance of [`OTSender`](super::base::OTSender) generated
+    /// in the previous round and everything needed to finish the OT base protocol
+    /// (see the description of the aforementioned struct).
+    /// 
     /// # Errors
     ///
-    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
+    /// Will return `Err` if the base OT fails (see the file above).
     pub fn init_phase2(
         ot_sender: &OTSender,
         session_id: &[u8],
@@ -382,8 +439,13 @@ impl OTEReceiver {
     // PROTOCOL
     // We now follow the main steps in Fig. 10 of KOS.
 
-    // Input: Choice bits.
-    // Output: Extended seeds (used in the next phase) and values to be sent to the sender.
+    /// Runs the first phase of the receiver's protocol.
+    /// 
+    /// Note that it is the receiver who starts the OTE protocol.
+    /// 
+    /// Input: [`BATCH_SIZE`] choice bits.
+    /// 
+    /// Output: Extended seeds (used in the next phase) and data to be sent to the sender.
     #[must_use]
     pub fn run_phase1(
         &self,
@@ -547,8 +609,16 @@ impl OTEReceiver {
         (extended_seeds0, data_to_sender)
     }
 
-    // Input: Previous inputs and the vector of values tau sent by the sender.
-    // Output: Protocol's output.
+    /// Finishes the receiver's protocol and gives his output.
+    /// 
+    /// Input: Previous inputs, the OT width (see the remark [here](super::extension)),
+    /// the extended_seeds from the previous phase and the vector of values tau sent
+    /// by the sender.
+    /// 
+    /// Output: Protocol's output. The usual output would be just a vector of [`BATCH_SIZE`]
+    /// scalars. However, we are executing the protocol `ot_width` times, so the result
+    /// is a vector containing `ot_width` such vectors.
+    /// 
     /// # Errors
     ///
     /// Will return `Err` if the length of `vector_of_tau` is not `ot_width`.
@@ -634,14 +704,16 @@ impl OTEReceiver {
 
 // EXTRA FUNCTIONS
 
-/// This function receives a `KAPPA` by `EXTENDED_BATCH_SIZE` matrix of booleans,
-/// takes the first `BATCH_SIZE` columns and compute the transpose matrix, which
-/// has `BATCH_SIZE` rows and `KAPPA` columns.
+/// Transposes a given matrix.
+/// 
+/// This function receives a [`KAPPA`] by [`EXTENDED_BATCH_SIZE`] matrix of booleans,
+/// takes the first [`BATCH_SIZE`] columns and computes the transpose matrix, which
+/// has [`BATCH_SIZE`] rows and [`KAPPA`] columns.
 ///
 /// The only problem is that the rows in the input and output are grouped in
 /// bytes, so we have to take some care. For this conversion, we think of
 /// the rows as a little-endian representation of a number. For example, the row
-/// [1110000010100000] corresponds to [7, 5] in bytes (and not [224,160]).
+/// \[1110000010100000\] corresponds to \[7, 5\] in bytes (and not \[224,160\]).
 ///
 /// This code was essentially copied from the function `transposeBooleanMatrix` here:
 /// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
@@ -683,7 +755,7 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
     output
 }
 
-/// This function implements multiplication in the finite field of order 2^208.
+/// Multiplication in the finite field of order 2^[`OT_SECURITY`]].
 ///
 /// We follow <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
 ///
@@ -693,7 +765,7 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
 ///
 /// # Panics
 ///
-/// Will panic if `left` or `right` doesn't have the correct size, that is `OT_SECURITY` = 208 bits.
+/// Will panic if `left` or `right` doesn't have the correct size, that is [`OT_SECURITY`] = 208 bits.
 #[must_use]
 pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
     // Constants W and t from Section 2.3 in the book.
