@@ -987,6 +987,7 @@ mod tests {
 
         let mut sender_outputs_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(ot_width as usize);
         let mut receiver_outputs_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(ot_width as usize);
+
         for iteration in 0..ot_width {
             for i in 0..BATCH_SIZE {
                 //Depending on the choice the receiver made, the sum of the outputs should

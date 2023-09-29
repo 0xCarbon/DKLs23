@@ -1,7 +1,6 @@
 //! `DKLs23` main protocols and related ones.
 //!
 //! Some structs appearing in most of the protocols are defined here.
-
 use std::collections::BTreeMap;
 
 use k256::{AffinePoint, Scalar};
@@ -36,6 +35,7 @@ pub struct Party {
     /// Public key.
     pub pk: AffinePoint,
 
+
     /// Used for computing shares of zero during signing.
     pub zero_share: ZeroShare,
 
@@ -51,7 +51,6 @@ pub struct Party {
     pub eth_address: String,
 }
 
-/// Used for abort messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Abort {
     /// Index of the party generating the abort message.
