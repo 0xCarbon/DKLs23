@@ -1,16 +1,23 @@
-/// This file implements the commitment functionality needed for `DKLs23`.
-/// We follow the approach suggested on page 7 of the paper.
+//! Commit and decommit protocols.
+//!
+//! This file implements the commitment functionality needed for `DKLs23`.
+//! We follow the approach suggested on page 7 of their paper
+//! (<https://eprint.iacr.org/2023/765.pdf>).
+
 use crate::utilities::hashes::{hash, point_to_bytes, HashOutput};
 use k256::AffinePoint;
 use rand::Rng;
 
-//Computational security parameter lambda_c from DKLs23 (divided by 8)
+// Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
 
-//Given a message, this function generates a random salt of size 2*lambda_c
-//and computes the corresponding commitment.
-//The sender should first communicate the commitment. When he wants to decommit,
-//he sends the message together with the salt.
+/// Commits to a given message.
+///
+/// Given a message, this function generates a random salt of size `2*lambda_c`
+/// and computes the corresponding commitment.
+///
+/// The sender should first communicate the commitment. When he wants to decommit,
+/// he sends the message together with the salt.
 #[must_use]
 pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
     //The paper instructs the salt to have 2*lambda_c bits.
@@ -22,22 +29,28 @@ pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
     (commitment, salt.to_vec())
 }
 
-//After having received the commitment and later the message and the salt, the receiver
-//should verify if these data are compatible.
+/// Verifies a commitment for a message.
+///
+/// After having received the commitment and later the message and the salt, the receiver
+/// verifies if these data are compatible.
 #[must_use]
 pub fn verify_commitment(msg: &[u8], commitment: &HashOutput, salt: &[u8]) -> bool {
     let expected_commitment = hash(msg, salt);
     *commitment == expected_commitment
 }
 
-//During the signing protocol, parties should be able to commit to points on the elliptic curve.
-//Thus, for convenience, we adapt the previous functions to this case.
+/// Commits to a given point.
+///
+///  This is the same as [`commit`], but it receives a point on the elliptic curve instead.
 #[must_use]
 pub fn commit_point(point: &AffinePoint) -> (HashOutput, Vec<u8>) {
     let point_as_bytes = point_to_bytes(point);
     commit(&point_as_bytes)
 }
 
+/// Verifies a commitment for a point.
+///
+/// This is the same as [`verify_commitment`], but it receives a point on the elliptic curve instead.
 #[must_use]
 pub fn verify_commitment_point(point: &AffinePoint, commitment: &HashOutput, salt: &[u8]) -> bool {
     let point_as_bytes = point_to_bytes(point);
@@ -48,6 +61,7 @@ pub fn verify_commitment_point(point: &AffinePoint, commitment: &HashOutput, sal
 mod tests {
     use super::*;
 
+    /// Tests if committing and de-committing work.
     #[test]
     fn test_commit_decommit() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
@@ -55,6 +69,8 @@ mod tests {
         assert!(verify_commitment(&msg, &commitment, &salt));
     }
 
+    /// Commits to a message and changes it on purpose
+    /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_msg() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
@@ -63,6 +79,8 @@ mod tests {
         assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
+    /// Commits to a message and changes the commitment on purpose
+    /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_commitment() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();
@@ -71,6 +89,8 @@ mod tests {
         assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
+    /// Commits to a message and changes the salt on purpose
+    /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_salt() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();

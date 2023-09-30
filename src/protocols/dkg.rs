@@ -1,16 +1,59 @@
-/// This file implements Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>,
-/// as instructed in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>). It is
-/// the distributed key generation which setups the main signing protocol.
-///
-/// During the protocol, we also initialize the functionalities that will
-/// be used during signing. Their implementations can be found in the files
-/// `zero_shares.rs` and `multiplication.rs`.
+//! Distributed Key Generation protocol.
+//!
+//!  This file implements Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>,
+//! as instructed in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>). It is
+//! the distributed key generation which setups the main signing protocol.
+//!
+//! During the protocol, we also initialize the functionalities that will
+//! be used during signing.
+//!
+//! # Phases
+//!
+//! We group the steps in phases. A phase consists of all steps that can be
+//! executed in order without the need of communication. Phases should be
+//! intercalated with communication rounds: broadcasts and/or private messages
+//! containing the session id.
+//!
+//! We also include here the initialization procedures of Functionalities 3.4
+//! and 3.5 of `DKLs23`. The first one comes from [here](crate::utilities::zero_shares)
+//! and needs two communication rounds (hence, it starts on Phase 2). The second one
+//! comes from [here](crate::utilities::multiplication) and needs one communication round
+//! (hence, it starts on Phase 3).
+//!
+//! For key derivation (following BIP-32: <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>),
+//! parties must agree on a common chain code for their shared master key. Using the
+//! commitment functionality, we need two communication rounds, so this part starts
+//! only on Phase 2.
+//!
+//! # Nomenclature
+//!
+//! For the initialization structs, we will use the following nomenclature:
+//!
+//! **Transmit** messages refer to only one counterparty, hence
+//! we must produce a whole vector of them. Each message in this
+//! vector contains the party index to whom we should send it.
+//!
+//! **Broadcast** messages refer to all counterparties at once,
+//! hence we only need to produce a unique instance of it.
+//! This message is broadcasted to all parties.
+//!
+//! ATTENTION: we broadcast the message to ourselves as well!
+//!
+//! **Keep** messages refer to only one counterparty, hence
+//! we must keep a whole vector of them. In this implementation,
+//! we use a `BTreeMap` instead of a vector, where one can put
+//! some party index in the key to retrieve the corresponding data.
+//!
+//! **Unique keep** messages refer to all counterparties at once,
+//! hence we only need to keep a unique instance of it.
+
 use std::collections::BTreeMap;
 
 use hex;
-use k256::elliptic_curve::{point::AffineCoordinates, Field};
+use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
 use rand::Rng;
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -18,13 +61,17 @@ use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Abort, Parameters, PartiesMessage, Party};
 
 use crate::utilities::commits;
-use crate::utilities::hashes::HashOutput;
+use crate::utilities::hashes::{point_to_bytes, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::zero_shares::{self, ZeroShare};
 
-// This struct is used during key generation
+/// Used during key generation.
+///
+/// After Phase 2, only the values `index` and `commitment` are broadcasted.
+///
+/// The `proof` is broadcasted after Phase 3.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProofCommitment {
     pub index: u8,
@@ -32,8 +79,7 @@ pub struct ProofCommitment {
     pub commitment: HashOutput,
 }
 
-// This struct contains the data needed to start
-// key generation and that are used during the phases.
+/// Data needed to start key generation and is used during the phases.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SessionData {
     pub parameters: Parameters,
@@ -41,30 +87,20 @@ pub struct SessionData {
     pub session_id: Vec<u8>,
 }
 
-// For the initialization structs, we will use the following nomenclature:
+// INITIALIZING ZERO SHARES PROTOCOL.
 
-// "Transmit" messages refer to only one counterparty, hence
-// we must send a whole vector of them.
-
-// "Broadcast" messages refer to all counterparties at once,
-// hence we only need to send a unique instance of it.
-// ATTENTION: we broadcast the message to ourselves as well.
-
-// "Keep" messages refer to only one counterparty, hence
-// we must keep a whole vector of them.
-
-// "Unique keep" messages refer to all counterparties at once,
-// hence we only need to keep a unique instance of it.
-
-////////// INITIALIZING ZERO SHARING PROTOCOL.
-
-// Transmit
+/// Transmit - Initialization of zero shares protocol.
+///
+/// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
 
+/// Transmit - Initialization of zero shares protocol.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
@@ -72,21 +108,28 @@ pub struct TransmitInitZeroSharePhase3to4 {
     pub salt: Vec<u8>,
 }
 
-// Keep
+/// Keep - Initialization of zero shares protocol.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
 
+/// Keep - Initialization of zero shares protocol.
+///
+/// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase3to4 {
     pub seed: zero_shares::Seed,
 }
 
-////////// INITIALIZING TWO-PARTY MULTIPLICATION PROTOCOL.
+// INITIALIZING TWO-PARTY MULTIPLICATION PROTOCOL.
 
-// Transmit
+/// Transmit - Initialization of multiplication protocol.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
@@ -98,7 +141,9 @@ pub struct TransmitInitMulPhase3to4 {
     pub seed: ot::base::Seed,
 }
 
-// Keep
+/// Keep - Initialization of multiplication protocol.
+///
+/// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitMulPhase3to4 {
     pub ot_sender: ot::base::OTSender,
@@ -109,15 +154,20 @@ pub struct KeepInitMulPhase3to4 {
     pub vec_r: Vec<Scalar>,
 }
 
-////////// INITIALIZING KEY DERIVATION (VIA BIP-32).
+// INITIALIZING KEY DERIVATION (VIA BIP-32).
 
-// Broadcast
+/// Broadcast - Initialization for key derivation.
+///
+/// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase2to4 {
     pub sender_index: u8,
     pub cc_commitment: HashOutput,
 }
 
+/// Broadcast - Initialization for key derivation.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase3to4 {
     pub sender_index: u8,
@@ -125,21 +175,23 @@ pub struct BroadcastDerivationPhase3to4 {
     pub cc_salt: Vec<u8>,
 }
 
-// Unique keep
+/// Unique keep - Initialization for key derivation.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UniqueKeepDerivationPhase2to3 {
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
 // DISTRIBUTED KEY GENERATION (DKG)
 
 // STEPS
-// We implement each step of the protocol.
+// We implement each step of the DKLs23 protocol.
 
-// Step 1 - Generate random polynomial of degree t-1.
+/// Generates a random polynomial of degree t-1.
+///
+/// This is Step 1 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
 pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
     // We represent the polynomial by its coefficients.
@@ -151,7 +203,15 @@ pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
     polynomial
 }
 
-// Step 2 - Evaluate the polynomial from the previous step at every point.
+/// Evaluates the polynomial from the previous step at every point.
+///
+/// If `p_i` denotes such polynomial, then the output is of the form
+/// \[`p_i(1)`, `p_i(2)`, ..., `p_i(n)`\] in this order, where `n` = `parameters.share_count`.
+///
+/// The value `p_i(j)` should be transmitted to the party with index `j`.
+/// Here, `i` denotes our index, so we should keep `p_i(i)` for the future.
+///
+/// This is Step 2 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
 pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
     let mut points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
@@ -173,9 +233,18 @@ pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
     points
 }
 
-// Step 3 - Compute poly_point (p(i) in the paper) and the corresponding "public key" (P(i) in the paper).
-// It also commits to a zero-knowledge proof that p(i) is the discrete logarithm of P(i).
-// The session id is used for the proof.
+/// Computes `poly_point` and the corresponding "public key" together with a zero-knowledge proof.
+///
+/// The variable `poly_fragments` is just a vector containing (in any order)
+/// the scalars received from the other parties after the previous step.
+///
+/// The commitment from [`ProofCommitment`] should be broadcasted at this point.
+///
+/// This is Step 3 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
+/// There, `poly_point` is denoted by `p(i)` and the "public key" is `P(i)`.
+///
+/// The Step 4 of the protocol is broadcasting the rest of [`ProofCommitment`] after
+/// having received all commitments.
 #[must_use]
 pub fn step3(
     party_index: u8,
@@ -194,10 +263,16 @@ pub fn step3(
     (poly_point, proof_commitment)
 }
 
-// Step 4 is a communication round (see the description below).
-
-// Step 5 - Each party validates the other proofs. They also recover the "public keys fragments" from the other parties.
-// Finally, a consistency check is done. In the process, the public key is computed (Step 6).
+/// Validates the other proofs, runs a consistency check
+/// and computes the public key.
+///
+/// The variable `proofs_commitments` is just a vector containing (in any order)
+/// the instances of [`ProofCommitment`] received from the other parties after the
+/// previous step (including ours).
+///
+/// This is Step 5 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
+/// Step 6 is essentially the same, so it is also done here.
+///
 /// # Errors
 ///
 /// Will return `Err` if one of the proofs/commitments doesn't
@@ -272,23 +347,22 @@ pub fn step5(
     Ok(pk)
 }
 
-// Step 6 was done during the previous step.
-
 // PHASES
-// We group the steps in phases. A phase consists of all steps that can be executed in order without the need of communication.
-// Phases should be intercalated with communication rounds: broadcasts and/or private messages containing the session id.
 
-// We also include here the initialization procedures of Functionalities 3.4 and 3.5 of DKLs23 (https://eprint.iacr.org/2023/765.pdf).
-// The first one comes from the file zero_shares.rs and needs two communication rounds (hence, it starts on Phase 2).
-// The second one comes from the file multiplication.rs and needs one communication round (hence, it starts on Phase 3).
-
-// For key derivation (following BIP-32: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki), parties must agree
-// on a common chain code for their shared master key. Using the commitment functionality, we need two communication rounds,
-// so this part starts only on Phase 2.
-
-// Phase 1 = Steps 1 and 2
-// Input (DKG): Parameters for the key generation.
-// Output (DKG): Evaluation of a random polynomial at every party index.
+/// Phase 1 = [`step1`] and [`step2`].
+///
+/// # Input
+///
+/// Parameters for the key generation.
+///
+/// # Output
+///
+/// Evaluation of a random polynomial at every party index.
+/// The j-th coordinate of the output vector must be sent
+/// to the party with index j.
+///
+/// ATTENTION: In particular, we keep the coordinate corresponding
+/// to our party index for the next phase.
 #[must_use]
 pub fn phase1(data: &SessionData) -> Vec<Scalar> {
     // DKG
@@ -302,11 +376,21 @@ pub fn phase1(data: &SessionData) -> Vec<Scalar> {
 // At the end, Party i should have received all fragments indexed by i.
 // They should add up to p(i), where p is a polynomial not depending on i.
 
-// Phase 2 = Step 3
-// Input (DKG): Fragments received from communication and session id.
-// Input (Init): Session data.
-// Output (DKG): p(i) and a proof of discrete logarithm with commitment.
-// Output (Init): Some data to keep and to transmit.
+/// Phase 2 = [`step3`].
+///
+/// # Input
+///
+/// Fragments received from the previous phase.
+///
+/// # Output
+///
+/// The variable `poly_point` (= `p(i)`), which should be kept, and a proof of
+/// discrete logarithm with commitment. You should transmit the commitment
+/// now and, after finishing Phase 3, you send the rest. Remember to also
+/// save a copy of your [`ProofCommitment`] for the final phase.
+///
+/// There is also some initialization data to keep and to transmit, following the
+/// conventions [here](self).
 #[must_use]
 pub fn phase2(
     data: &SessionData,
@@ -377,12 +461,19 @@ pub fn phase2(
 // Communication round 2
 // DKG: Party i broadcasts his commitment to the proof and receive the other commitments.
 //
-// Init: Each party transmits messages for the zero sharing protocol (one for each party)
+// Init: Each party transmits messages for the zero shares protocol (one for each party)
 // and broadcasts a message for key derivation (the same for every party).
 
-// Phase 3 = No steps in DKG (just initialization)
-// Input (Init): Session data and the values kept from previous round.
-// Output (Init): Some data to keep and to transmit.
+/// Phase 3 = No steps in DKG (just initialization).
+///
+/// # Input
+///
+/// Initialization data kept from the previous phase.
+///
+/// # Output
+///
+/// Some initialization data to keep and to transmit, following the
+/// conventions [here](self).
 #[must_use]
 pub fn phase3(
     data: &SessionData,
@@ -438,6 +529,7 @@ pub fn phase3(
         // We first compute a new session id.
         // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
         let mul_sid_receiver = [
+            "Multiplication protocol".as_bytes(),
             &data.party_index.to_be_bytes(),
             &i.to_be_bytes(),
             &data.session_id[..],
@@ -452,6 +544,7 @@ pub fn phase3(
         // New session id as above.
         // Note that the indexes are now in the opposite order.
         let mul_sid_sender = [
+            "Multiplication protocol".as_bytes(),
             &i.to_be_bytes(),
             &data.party_index.to_be_bytes(),
             &data.session_id[..],
@@ -513,13 +606,30 @@ pub fn phase3(
 // Communication round 3
 // DKG: We execute Step 4 of the protocol: after having received all commitments, each party broadcasts his proof.
 //
-// Init: Each party transmits messages for the zero sharing and multiplication protocols (one for each party)
+// Init: Each party transmits messages for the zero shares and multiplication protocols (one for each party)
 // and broadcasts a message for key derivation (the same for every party).
 
-// Phase 4 = Steps 5 and 6
-// Input (DKG): Proofs and commitments received from communication + parameters, party index, session id, poly_point.
-// Input (Init): Parameters, values kept and transmitted in previous phases.
-// Output: Instance of Party ready to sign.
+/// Phase 4 = [`step5`].
+///
+/// # Input
+///
+/// The `poly_point` scalar generated in Phase 2;
+///
+/// A vector containing (in any order) the [`ProofCommitment`]'s
+/// received from the other parties (including ours);
+///
+/// The initialization data kept from the previous phases;
+///
+/// The initialization data received from the other parties in
+/// the previous phases. They must be grouped in vectors (in any
+/// order) according to the type or, in the case of the messages
+/// related to derivation BIP-32, in a `BTreeMap` where the key
+/// represents the index of the party that transmitted the message.
+///
+/// # Output
+///
+/// An instance of [`Party`] ready to execute the other protocols.
+///
 /// # Errors
 ///
 /// Will return `Err` if a message is not meant for the party
@@ -645,6 +755,7 @@ pub fn phase4(
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
             let mul_sid_receiver = [
+                "Multiplication protocol".as_bytes(),
                 &my_index.to_be_bytes(),
                 &their_index.to_be_bytes(),
                 &data.session_id[..],
@@ -672,6 +783,7 @@ pub fn phase4(
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
             let mul_sid_sender = [
+                "Multiplication protocol".as_bytes(),
                 &their_index.to_be_bytes(),
                 &my_index.to_be_bytes(),
                 &data.session_id[..],
@@ -756,21 +868,28 @@ pub fn phase4(
     Ok(party)
 }
 
-// For convenience, we are going to include the Ethereum address.
+/// Computes the Ethereum address given a public key.
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
-    // Here, we will compute the address using the compressed form of pk.
-    let x_value = pk.x();
-    let x_as_bytes = x_value.as_slice();
-    let prefix = if bool::from(pk.y_is_odd()) { 3 } else { 2 };
+    // In order to compute the address, we need the x and y coordinates
+    // of the point pk. However, k256 does not let us access y directly.
+    // Hence, will use the library secp256k1 to compute this value.
 
-    let mut compressed_pk = [0u8; 33];
-    compressed_pk[0] = prefix;
-    compressed_pk[1..].copy_from_slice(x_as_bytes);
+    // First, let us represent pk in compressed form.
+    let compressed_pk = point_to_bytes(pk);
+
+    // We now use the other library to get the y value.
+    let pk_alternative = PublicKey::from_slice(&compressed_pk)
+        .expect("We are inserting a point known to be on the curve!");
+    let uncompressed_pk_with_prefix = pk_alternative.serialize_uncompressed();
+
+    // Finally, here is pk in uncompressed form without the prefix 04.
+    let mut uncompressed_pk = [0u8; 64];
+    uncompressed_pk.copy_from_slice(&uncompressed_pk_with_prefix[1..]);
 
     // We compute the Keccak256 of the point.
     let mut hasher = Keccak256::new();
-    hasher.update(compressed_pk);
+    hasher.update(uncompressed_pk);
 
     // We save the last 20 bytes represented in hexadecimal.
     let address_bytes = &hasher.finalize()[12..];
@@ -796,8 +915,9 @@ mod tests {
 
     // The initializations are checked after these tests (see below).
 
+    /// Tests if the main steps of the protocol do not generate
+    /// an unexpected [`Abort`] in the 2-of-2 scenario.
     #[test]
-    // 2-of-2 scenario.
     fn test_dkg_t2_n2() {
         let parameters = Parameters {
             threshold: 2,
@@ -835,8 +955,10 @@ mod tests {
         assert!(p2_result.is_ok());
     }
 
+    /// Tests if the main steps of the protocol do not generate
+    /// an unexpected [`Abort`] in the t-of-n scenario, where
+    /// t and n are small random values.
     #[test]
-    // General t-of-n scenario
     fn test_dkg_random() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
@@ -889,8 +1011,14 @@ mod tests {
         }
     }
 
+    /// Tests if the main steps of the protocol generate
+    /// the expected public key.
+    ///
+    /// In this case, we remove the randomness of [Step 1](step1)
+    /// by providing fixed values.
+    ///
+    /// This functions treats the 2-of-2 scenario.
     #[test]
-    // We remove the randomness from Phase 1. This allows us to compute the public key.
     fn test1_dkg_t2_n2_fixed_polynomials() {
         let parameters = Parameters {
             threshold: 2,
@@ -933,6 +1061,7 @@ mod tests {
         assert_eq!(p2_pk, expected_pk);
     }
 
+    /// Variation on [`test1_dkg_t2_n2_fixed_polynomials`].
     #[test]
     fn test2_dkg_t2_n2_fixed_polynomials() {
         let parameters = Parameters {
@@ -976,6 +1105,8 @@ mod tests {
         assert_eq!(p2_pk, expected_pk);
     }
 
+    /// The same as [`test1_dkg_t2_n2_fixed_polynomials`]
+    /// but in the 3-of-5 scenario.
     #[test]
     fn test_dkg_t3_n5_fixed_polynomials() {
         let parameters = Parameters {
@@ -1074,6 +1205,10 @@ mod tests {
     // parties are being simulated one after the other, but they
     // should actually execute the protocol simultaneously.
 
+    /// Tests if the whole DKG protocol (with initializations)
+    /// does not generate an unexpected [`Abort`].
+    ///
+    /// The correctness of the protocol is verified on `test_dkg_and_signing`.
     #[test]
     fn test_dkg_initialization() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
@@ -1256,19 +1391,21 @@ mod tests {
         }
     }
 
+    /// Tests if [`compute_eth_address`] correctly
+    /// computes the Ethereum address for a fixed public key.
     #[test]
     fn test_compute_eth_address() {
         // You should test different values using, for example,
-        // https://paulmillr.com/noble/ and https://emn178.github.io/online-tools/keccak_256.html.
+        // https://www.rfctools.com/ethereum-address-test-tool/.
         let sk = Scalar::reduce(U256::from_be_hex(
-            "cc545f6edbac6c62def9205033629e553acb1fceb95c171cf389c636ce4613a2",
+            "0249815B0D7E186DB61E7A6AAD6226608BB1C48B309EA8903CAB7A7283DA64A5",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();
 
         let address = compute_eth_address(&pk);
         assert_eq!(
             address,
-            "0x8be92babaa139ecf60145f822520b68cebb44711".to_string()
+            "0x2afddfdf813e567a6f357da818b16e2dae08599f".to_string()
         );
     }
 }

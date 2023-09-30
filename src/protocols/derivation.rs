@@ -1,34 +1,45 @@
-/// This file implements a key derivation mechanism for threshold wallets
-/// based on BIP-32 (<https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>).
-/// Each party can derive their key share individually so that the secret
-/// key reconstructed corresponds to the derivation (via BIP-32) of the
-/// original secret key.
-///
-/// We follow mainly this repository:
-/// <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
-///
-/// ATTENTION: Since no party has the full secret key, it is not convenient
-/// to do hardened derivation. Thus, we only implement normal derivation.
+//! Adaptation of BIP-32 to the threshold setting.
+//!
+//! This file implements a key derivation mechanism for threshold wallets
+//! based on BIP-32 (<https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>).
+//! Each party can derive their key share individually so that the secret
+//! key reconstructed corresponds to the derivation (via BIP-32) of the
+//! original secret key.
+//!
+//! We follow mainly this repository:
+//! <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
+//!
+//! ATTENTION: Since no party has the full secret key, it is not convenient
+//! to do hardened derivation. Thus, we only implement normal derivation.
+
 use bitcoin_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 
-use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates, Curve};
+use k256::elliptic_curve::{ops::Reduce, Curve};
 use k256::{AffinePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::Party;
+use crate::utilities::hashes::point_to_bytes;
 
 use super::dkg::compute_eth_address;
 
+/// Fingerprint of a key as in BIP-32.
+///
+/// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
 pub type Fingerprint = [u8; 4];
+/// Chaincode of a key as in BIP-32.
+///
+/// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
 pub type ChainCode = [u8; 32];
 
-// A struct for errors in this file.
+/// Represents an error during the derivation protocol.
 #[derive(Clone)]
 pub struct ErrorDeriv {
     pub description: String,
 }
 
 impl ErrorDeriv {
+    /// Creates an instance of `ErrorDeriv`.
     #[must_use]
     pub fn new(description: &str) -> ErrorDeriv {
         ErrorDeriv {
@@ -37,27 +48,41 @@ impl ErrorDeriv {
     }
 }
 
-// This struct contains all the data needed for derivation.
-// The values that are really needed are only the last three,
-// but we also include the other ones if someone wants to retrieve
-// the full extended public key as in BIP-32. The only field
-// missing is the one for the network, but it can be easily
-// inferred from context.
+/// Contains all the data needed for derivation.
+///
+/// The values that are really needed are only `poly_point`,
+/// `pk` and `chain_code`, but we also include the other ones
+/// if someone wants to retrieve the full extended public key
+/// as in BIP-32. The only field missing is the one for the
+/// network, but it can be easily inferred from context.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DerivData {
+    /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,
+    /// Index used to obtain this key from its parent.
     pub child_number: u32,
+    /// Identifier of the parent key.
     pub parent_fingerprint: Fingerprint,
+    /// Behaves as the secret key share.
     pub poly_point: Scalar,
+    /// Public key.
     pub pk: AffinePoint,
+    /// Extra entropy given by BIP-32.
     pub chain_code: ChainCode,
 }
 
-const MAX_DEPTH: u8 = 255;
-const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
+/// Maximum depth.
+pub const MAX_DEPTH: u8 = 255;
+/// Maximum child number.
+///
+/// This is the limit since we are not implementing hardened derivation.
+pub const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
 
 impl DerivData {
-    /// Adaptation of function `ckd_pub_tweak` from the repository:
+    /// Computes the "tweak" needed to derive a secret key. In the process,
+    /// it also produces the chain code and the parent fingerprint.
+    ///
+    /// This is an adaptation of `ckd_pub_tweak` from the repository:
     /// <https://github.com/rust-bitcoin/rust-bitcoin/blob/master/bitcoin/src/bip32.rs>.
     ///
     /// # Errors
@@ -69,7 +94,7 @@ impl DerivData {
     ) -> Result<(Scalar, ChainCode, Fingerprint), ErrorDeriv> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
 
-        let pk_as_bytes = serialize_point_compressed(&self.pk);
+        let pk_as_bytes = point_to_bytes(&self.pk);
         hmac_engine.input(&pk_as_bytes);
         hmac_engine.input(&child_number.to_be_bytes());
 
@@ -97,9 +122,11 @@ impl DerivData {
         Ok((tweak, chain_code, fingerprint))
     }
 
+    /// Derives an instance of `DerivData` given a child number.
+    ///
     /// # Errors
     ///
-    /// Will return `Err` if depth is already at the maximum value,
+    /// Will return `Err` if the depth is already at the maximum value,
     /// if the child number is invalid or if `child_tweak` fails.
     /// It will also fail if the new public key is invalid (very unlikely).
     pub fn derive_child(&self, child_number: u32) -> Result<DerivData, ErrorDeriv> {
@@ -137,6 +164,13 @@ impl DerivData {
         })
     }
 
+    /// Derives an instance of `DerivData` following a path
+    /// on the "key tree".
+    ///
+    /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>
+    /// for the description of a possible path (and don't forget that
+    /// hardened derivations are not implemented).
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the path is invalid or if `derive_child` fails.
@@ -154,7 +188,10 @@ impl DerivData {
 
 // We implement the derivation functions for Party as well.
 
+/// Implementations related to BIP-32 derivation ([read more](self)).
 impl Party {
+    /// Derives an instance of `Party` given a child number.
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_child` fails.
@@ -184,6 +221,13 @@ impl Party {
         })
     }
 
+    /// Derives an instance of `Party` following a path
+    /// on the "key tree".
+    ///
+    /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>
+    /// for the description of a possible path (and don't forget that
+    /// hardened derivations are not implemented).
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_from_path` fails.
@@ -214,20 +258,8 @@ impl Party {
     }
 }
 
-// This function serializes an affine point on the elliptic curve into compressed form.
-#[must_use]
-pub fn serialize_point_compressed(point: &AffinePoint) -> Vec<u8> {
-    let mut result = Vec::with_capacity(33);
-    result.push(if bool::from(point.y_is_odd()) { 3 } else { 2 });
-    result.extend_from_slice(point.x().as_slice());
-    result
-}
-
-// We take a path as in BIP-32 (for normal derivation),
-// and transform it into a vector of child numbers.
-/// # Errors
-///
-/// Will return `Err` if the path is not valid.
+/// Takes a path as in BIP-32 (for normal derivation),
+/// and transforms it into a vector of child numbers.
 ///
 /// # Errors
 ///
@@ -275,16 +307,21 @@ mod tests {
     use rand::Rng;
     use std::collections::BTreeMap;
 
+    /// Tests if the method `derive_from_path` from [`DerivData`]
+    /// works properly by checking its output against a known value.
+    ///
+    /// Since this function calls the other methods in this struct,
+    /// they are implicitly tested as well.
     #[test]
     fn test_derivation() {
         // The following values were calculated at random with: https://bitaps.com/bip32.
         // You should test other values as well.
         let sk = Scalar::reduce(U256::from_be_hex(
-            "7119a4064db44307dbb97dcc1a34fac7cf152cc35ad65dbc97649e3e250a22d3",
+            "6728f18f7163f7a0c11cc0ad53140afb4e345d760f966176865a860041549903",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();
         let chain_code: ChainCode =
-            hex::decode("5190725e347a7ef19bb857525bfbc491f80ec355864b95661129dc1e5970002f")
+            hex::decode("6f990adb9337033001af2487a8617f68586c4ea17433492bbf1659f6e4cf9564")
                 .unwrap()
                 .try_into()
                 .unwrap();
@@ -298,6 +335,7 @@ mod tests {
             chain_code,
         };
 
+        // You should try other paths as well.
         let path = "m/0/1/2/3";
         let try_derive = data.derive_from_path(path);
 
@@ -308,25 +346,26 @@ mod tests {
             Ok(child) => {
                 assert_eq!(child.depth, 4);
                 assert_eq!(child.child_number, 3);
-                assert_eq!(hex::encode(child.parent_fingerprint), "7586c333");
+                assert_eq!(hex::encode(child.parent_fingerprint), "9502bb8b");
                 assert_eq!(
                     hex::encode(scalar_to_bytes(&child.poly_point)),
-                    "c4e854f80cac8d8c8d1fc4830c76761a6bea70568c773ddf6b73da911f940fb1"
+                    "bdebf4ed48fae0b5b3ed6671496f7e1d741996dbb30d79f990933892c8ed316a"
                 );
                 assert_eq!(
-                    hex::encode(serialize_point_compressed(&child.pk)),
-                    "0221120b5ae5375ddc16605a2a265c61b59a04911ab699fcecf7568f8c19b15fc2"
+                    hex::encode(point_to_bytes(&child.pk)),
+                    "037c892dca96d4c940aafb3a1e65f470e43fba57b3146efeb312c2a39a208fffaa"
                 );
                 assert_eq!(
                     hex::encode(child.chain_code),
-                    "5901a52851d8e2864ef676308f0c9449fb0ec050151af259582ef2faf75f046d"
+                    "c6536c2f5c232aa7613652831b7a3b21e97f4baa3114a3837de3764759f5b2aa"
                 );
             }
         }
     }
 
+    /// Tests if the key shares are still capable of executing
+    /// the signing protocol after being derived.
     #[test]
-    // This test verifies if the key shares continue working.
     fn test_derivation_and_signing() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);

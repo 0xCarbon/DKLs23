@@ -1,5 +1,30 @@
-/// This file implements the signing phase of Protocol 3.6 from `DKLs23`
-/// (<https://eprint.iacr.org/2023/765.pdf>). It is the core of this repository.
+//! `DKLs23` signing protocol.
+//!
+//! This file implements the signing phase of Protocol 3.6 from `DKLs23`
+//! (<https://eprint.iacr.org/2023/765.pdf>). It is the core of this repository.
+//!
+//! # Nomenclature
+//!
+//! For the messages structs, we will use the following nomenclature:
+//!
+//! **Transmit** messages refer to only one counterparty, hence
+//! we must produce a whole vector of them. Each message in this
+//! vector contains the party index to whom we should send it.
+//!
+//! **Broadcast** messages refer to all counterparties at once,
+//! hence we only need to produce a unique instance of it.
+//! This message is broadcasted to all parties.
+//!
+//! ATTENTION: we broadcast the message to ourselves as well!
+//!
+//! **Keep** messages refer to only one counterparty, hence
+//! we must keep a whole vector of them. In this implementation,
+//! we use a `BTreeMap` instead of a vector, where one can put
+//! some party index in the key to retrieve the corresponding data.
+//!
+//! **Unique keep** messages refer to all counterparties at once,
+//! hence we only need to keep a unique instance of it.
+
 use std::collections::BTreeMap;
 
 use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates, Curve, Field};
@@ -14,20 +39,20 @@ use crate::utilities::hashes::{hash_as_scalar, HashOutput};
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
 use crate::utilities::ot::extension::OTEDataToSender;
 
-// This struct contains the data needed to start
-// the signature and that are used during the phases.
-
+/// Data needed to start the signature and is used during the phases.
 pub struct SignData {
     pub sign_id: Vec<u8>,
+    /// Vector containing the indices of the parties participating in the protocol (without us).
     pub counterparties: Vec<u8>,
+    /// Message to sign in bytes.
     pub message_to_sign: Vec<u8>,
 }
 
-////////// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
+// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
 
-// "Transmit" messages refer to only one counterparty, hence
-// we must send a whole vector of them.
-
+/// Transmit - Signing.
+///
+/// The message is produced/sent during Phase 1 and used in Phase 2.
 #[derive(Clone)]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
@@ -35,6 +60,9 @@ pub struct TransmitPhase1to2 {
     pub mul_transmit: OTEDataToSender,
 }
 
+/// Transmit - Signing.
+///
+/// The message is produced/sent during Phase 2 and used in Phase 3.
 #[derive(Clone)]
 pub struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
@@ -47,21 +75,20 @@ pub struct TransmitPhase2to3 {
     pub mul_transmit: MulDataToReceiver,
 }
 
-// "Broadcast" messages refer to all counterparties at once,
-// hence we only need to send a unique instance of it.
-// ATTENTION: we broadcast the message to ourselves as well.
-
+/// Broadcast - Signing.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone)]
 pub struct Broadcast3to4 {
     pub u: Scalar,
     pub w: Scalar,
 }
 
-////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
+// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
 
-// "Keep" messages refer to only one counterparty, hence
-// we must keep a whole vector of them.
-
+/// Keep - Signing.
+///
+/// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone)]
 pub struct KeepPhase1to2 {
     pub salt: Vec<u8>,
@@ -69,6 +96,9 @@ pub struct KeepPhase1to2 {
     pub mul_keep: MulDataToKeepReceiver,
 }
 
+/// Keep - Signing.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone)]
 pub struct KeepPhase2to3 {
     pub c_u: Scalar,
@@ -78,9 +108,9 @@ pub struct KeepPhase2to3 {
     pub chi: Scalar,
 }
 
-// "Unique keep" messages refer to all counterparties at once,
-// hence we only need to keep a unique instance of it.
-
+/// Unique keep - Signing.
+///
+/// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone)]
 pub struct UniqueKeep1to2 {
     pub instance_key: Scalar,
@@ -89,6 +119,9 @@ pub struct UniqueKeep1to2 {
     pub zeta: Scalar,
 }
 
+/// Unique keep - Signing.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone)]
 pub struct UniqueKeep2to3 {
     pub instance_key: Scalar,
@@ -98,12 +131,17 @@ pub struct UniqueKeep2to3 {
     pub public_share: AffinePoint,
 }
 
-//////////////////////////
-
 // SIGNING PROTOCOL
 // We now follow Protocol 3.6 of DKLs23.
 
+/// Implementations related to the `DKLs23` signing protocol ([read more](self)).
 impl Party {
+    /// Phase 1 for signing: Steps 4, 5 and 6 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The outputs should be kept or transmitted according to the conventions
+    /// [here](self).
+    ///
     /// # Panics
     ///
     /// Will panic if the number of counterparties in `data` is incompatible.
@@ -145,10 +183,11 @@ impl Party {
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             // We also use both the sign id and the DKG id.
             let mul_sid = [
-                self.party_index.to_be_bytes().to_vec(),
-                counterparty.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &self.party_index.to_be_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -178,14 +217,19 @@ impl Party {
             });
         }
 
-        // Zero-sharing functionality.
+        // Zero-shares functionality.
         // We put it here because it doesn't depend on counter parties.
 
         // We first compute a session id.
         // Now, different to DKLs23, we won't put the indexes from the parties
         // because the sign id refers only to this set of parties, hence
         // it's simpler and almost equivalent to take just the following:
-        let zero_sid = [self.session_id.clone(), data.sign_id.clone()].concat();
+        let zero_sid = [
+            "Zero shares protocol".as_bytes(),
+            &self.session_id,
+            &data.sign_id,
+        ]
+        .concat();
 
         let zeta = self.zero_share.compute(&data.counterparties, &zero_sid);
 
@@ -204,6 +248,15 @@ impl Party {
     // Communication round 1
     // Transmit the messages.
 
+    /// Phase 2 for signing: Step 7 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The inputs come from the previous phase. The messages received
+    /// should be gathered in a vector (in any order).
+    ///
+    /// The outputs should be kept or transmitted according to the conventions
+    /// [here](self).
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the multiplication protocol fails.
@@ -263,10 +316,11 @@ impl Party {
             // Let us retrieve the session id for multiplication.
             // Note that the roles are now reversed.
             let mul_sid = [
-                counterparty.to_be_bytes().to_vec(),
-                self.party_index.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.party_index.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -345,6 +399,16 @@ impl Party {
     // Communication round 2
     // Transmit the messages.
 
+    /// Phase 3 for signing: Steps 8 and 9 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The inputs come from the previous phase. The messages received
+    /// should be gathered in a vector (in any order).
+    ///
+    /// The first output is already the value `r` from the ECDSA signature.
+    /// The second output should be broadcasted according to the conventions
+    /// [here](self).
+    ///
     /// # Errors
     ///
     /// Will return `Err` if some commitment doesn't verify, if the multiplication
@@ -397,10 +461,11 @@ impl Party {
             // Let us retrieve the session id for multiplication.
             // Note that we reverse the roles again.
             let mul_sid = [
-                self.party_index.to_be_bytes().to_vec(),
-                counterparty.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &self.party_index.to_be_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -500,6 +565,16 @@ impl Party {
     // Communication round 3
     // Broadcast the messages (including to ourselves).
 
+    /// Phase 4 for signing: Step 10 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The inputs come from the previous phase. The messages received
+    /// should be gathered in a vector (in any order). Note that our
+    /// broadcasted message from the previous round should also appear
+    /// here.
+    ///
+    /// The output is the value `s` from the ECDSA signature.
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the final ECDSA signature is invalid.
@@ -534,7 +609,9 @@ impl Party {
     }
 }
 
-// This function is the verifying function from usual ECDSA.
+/// Usual verifying function from ECDSA.
+///
+/// It receives a message already in bytes.
 #[must_use]
 pub fn verify_ecdsa_signature(
     msg: &[u8],
@@ -580,6 +657,9 @@ mod tests {
     use crate::protocols::*;
     use rand::Rng;
 
+    /// Tests if the signing protocol generates a valid ECDSA signature.
+    ///
+    /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_signing() {
         // Disclaimer: this implementation is not the most efficient,
@@ -734,10 +814,12 @@ mod tests {
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
     }
 
+    /// Tests if the signing protocol generates a valid ECDSA signature
+    /// and that it is the same one as we would get if we knew the
+    /// secret key shared by the parties.
+    ///
+    /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
-    // This function compares the signature generated during
-    // the protocol with the usual signature someone would
-    // compute for ECDSA.
     fn test_signing_against_ecdsa() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
@@ -920,11 +1002,11 @@ mod tests {
         assert_eq!(signature, expected_signature);
     }
 
+    /// Tests DKG and signing together. The main purpose is to
+    /// verify whether the initialization protocols from DKG are working.
+    ///
+    /// It is a combination of `test_dkg_initialization` and [`test_signing`].
     #[test]
-    // This function tests DKG and signing. The main purpose is to
-    // verify whether the initialization protocols from DKG are working.
-    //
-    // It is a combination of test_dkg_initialization and test_signing.
     fn test_dkg_and_signing() {
         // DKG (as in test_dkg_initialization)
 

@@ -1,9 +1,12 @@
-/// This file realizes Functionality 3.5 in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>).
-/// It is based upon the OT extension protocol in the file `ot/extension.rs`.
-///
-/// As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
-/// The first paper also gives some orientations on how to implement the protocol
-/// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
+//! Random Vector OLE functionality from `DKLs23`.
+//!
+//! This file realizes Functionality 3.5 in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>).
+//! It is based upon the OT extension protocol [here](super::ot::extension).
+//!
+//! As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
+//! The first paper also gives some orientations on how to implement the protocol
+//! in only two-rounds (see page 8 and Section 5.1) which we adopt here.
+
 use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
@@ -17,26 +20,28 @@ use crate::utilities::ot::extension::{
 };
 use crate::utilities::ot::ErrorOT;
 
-// Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
+/// Constant `L` from Functionality 3.5 in `DKLs23` used for signing in Protocol 3.6.
 pub const L: u8 = 2;
 
-// This represents the number of times the OT extension protocol will be
-// called using the same value chosen by the receiver.
+/// This represents the number of times the OT extension protocol will be
+/// called using the same value chosen by the receiver.
 pub const OT_WIDTH: u8 = 2 * L;
 
+/// Sender's data and methods for the multiplication protocol.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MulSender {
     pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
+/// Receiver's data and methods for the multiplication protocol.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MulReceiver {
     pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
 }
 
-// These structs are for better readability of the code.
+/// Data transmitted by the sender to the receiver after his phase.
 #[derive(Clone)]
 pub struct MulDataToReceiver {
     pub vector_of_tau: Vec<Vec<Scalar>>,
@@ -45,6 +50,7 @@ pub struct MulDataToReceiver {
     pub gamma_sender: Vec<Scalar>,
 }
 
+/// Data kept by the receiver between phases.
 #[derive(Clone)]
 pub struct MulDataToKeepReceiver {
     pub b: Scalar,
@@ -54,12 +60,13 @@ pub struct MulDataToKeepReceiver {
     pub chi_hat: Vec<Scalar>,
 }
 
-// We create a new struct for errors in this protocol.
+/// Represents an error during the multiplication protocol.
 pub struct ErrorMul {
     pub description: String,
 }
 
 impl ErrorMul {
+    /// Creates an instance of `ErrorMul`.
     #[must_use]
     pub fn new(description: &str) -> ErrorMul {
         ErrorMul {
@@ -77,15 +84,23 @@ impl MulSender {
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
 
+    /// Starts the initialization of the protocol.
+    ///
+    /// See [`OTESender`](super::ot::extension::OTESender) for explanation.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
         OTESender::init_phase1(session_id)
     }
 
-    // The nonce will be sent by the receiver for the computation of the public gadget vector.
+    /// Finishes the initialization of the protocol.
+    ///
+    /// The inputs here come from [`OTESender`](super::ot::extension::OTESender),
+    /// except for `nonce`, which was sent by the receiver for the
+    /// computation of the public gadget vector.
+    ///
     /// # Errors
     ///
-    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
+    /// Will return `Err` if the initialization fails (see the file above).
     pub fn init_phase2(
         ot_receiver: &OTReceiver,
         session_id: &[u8],
@@ -122,11 +137,15 @@ impl MulSender {
     // the same as the parameter l from DKLs23. To highlight the difference,
     // we will always denote the DKLs23 parameter by a capital L.
 
-    // Input: Protocol's input and data coming from receiver.
-    // Output: Protocol's output and data to receiver.
+    /// Runs the sender's protocol.
+    ///
+    /// Input: [`L`] instances of `Scalar` and data coming from receiver.
+    ///
+    /// Output: Protocol's output and data to receiver.
+    ///
     /// # Errors
     ///
-    /// Will return `Err` if the underlying OT extension fails (see `ot/extension.rs`).
+    /// Will return `Err` if the underlying OT extension fails (see [`OTESender`](super::ot::extension::OTESender)).
     pub fn run(
         &self,
         session_id: &[u8],
@@ -185,9 +204,9 @@ impl MulSender {
         // in the file ot/extension.rs already deals with these repetitions,
         // we just have to specify this quantity (the "OT width").
 
-        let result = self
-            .ote_sender
-            .run(session_id, OT_WIDTH, &correlations, data);
+        let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
+
+        let result = self.ote_sender.run(&ote_sid, OT_WIDTH, &correlations, data);
 
         let ot_outputs: Vec<Vec<Scalar>>;
         let vector_of_tau: Vec<Vec<Scalar>>; // Used by the receiver to finish the OT protocol.
@@ -306,6 +325,13 @@ impl MulReceiver {
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
 
+    /// Starts the initialization of the protocol.
+    ///
+    /// See [`OTEReceiver`](super::ot::extension::OTEReceiver) for explanation.
+    ///
+    /// The `Scalar` does not come from the OT extension. It is just
+    /// a nonce for the generation of the public gadget vector. It should
+    /// be kept for the next phase and transmitted to the sender.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof, Scalar) {
         let (ot_sender, proof) = OTEReceiver::init_phase1(session_id);
@@ -318,9 +344,14 @@ impl MulReceiver {
         (ot_sender, proof, nonce)
     }
 
+    /// Finishes the initialization of the protocol.
+    ///
+    /// The inputs here come from [`OTEReceiver`](super::ot::extension::OTEReceiver),
+    /// except for `nonce`, which was generated during the previous phase.
+    ///
     /// # Errors
     ///
-    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
+    /// Will return `Err` if the initialization fails (see the file above).
     pub fn init_phase2(
         ot_sender: &OTSender,
         session_id: &[u8],
@@ -355,9 +386,13 @@ impl MulReceiver {
     // the same as the parameter l from DKLs23. To highlight the difference,
     // we will always denote the DKLs23 parameter by a capital L.
 
-    // Input: Only the session id.
-    // Output: First of protocol's outputs, data to keep for next phase and data to the sender.
-    // (Recall that the receiver gets the random factor from the multiplication as output.)
+    /// Runs the first phase of the receiver's protocol.
+    ///
+    /// Note that it is the receiver who starts the multiplication protocol.
+    ///
+    /// The random factor coming from the protocol is already returned here.
+    /// There are two other outputs: one to be kept for the next phase
+    /// and one to be sent to the sender (related to the OT extension).
     #[must_use]
     pub fn run_phase1(
         &self,
@@ -389,8 +424,9 @@ impl MulReceiver {
         // cannot get the output immediately. This will only be computed
         // at the beginning of the next phase for the receiver.
 
-        let (extended_seeds, data_to_sender) =
-            self.ote_receiver.run_phase1(session_id, &choice_bits);
+        let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
+
+        let (extended_seeds, data_to_sender) = self.ote_receiver.run_phase1(&ote_sid, &choice_bits);
 
         // Step 4 - We compute the shared random values.
 
@@ -431,11 +467,15 @@ impl MulReceiver {
         (b, data_to_keep, data_to_sender)
     }
 
-    // Input: Data from previous phase and data from sender.
-    // Output: Second of protocol's outputs.
+    /// Finishes the receiver's protocol and gives his output.
+    ///
+    /// The inputs are the data kept from the previous phase and
+    /// the data transmitted by the sender.
+    ///
     /// # Errors
     ///
-    /// Will return `Err` if the consistency check using the receiver values fails.
+    /// Will return `Err` if the consistency check using the sender values fails
+    /// or if the underlying OT extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
     pub fn run_phase2(
         &self,
         session_id: &[u8],
@@ -448,8 +488,10 @@ impl MulReceiver {
         // so we will have 2*L outputs (we refer to this number as
         // the "OT width").
 
+        let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
+
         let result = self.ote_receiver.run_phase2(
-            session_id,
+            &ote_sid,
             OT_WIDTH,
             &data_kept.choice_bits,
             &data_kept.extended_seeds,
@@ -457,9 +499,7 @@ impl MulReceiver {
         );
 
         let ot_outputs: Vec<Vec<Scalar>> = match result {
-            Ok(out) => {
-                out
-            }
+            Ok(out) => out,
             Err(error) => {
                 return Err(ErrorMul::new(&format!(
                     "OTE error during multiplication: {:?}",
@@ -538,6 +578,8 @@ mod tests {
     use super::*;
     use rand::Rng;
 
+    /// Tests if the outputs for the multiplication protocol
+    /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_multiplication() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();

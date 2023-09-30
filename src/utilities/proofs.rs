@@ -1,14 +1,39 @@
+//! Zero-knowledge proofs required by the protocols.
+//!
+//! This file implements some protocols for zero-knowledge proofs over the
+//! curve secp256k1.
+//!
+//! The main protocol is for proofs of discrete logarithms. It is used during
+//! key generation in the `DKLs23` protocol (<https://eprint.iacr.org/2023/765.pdf>).
+//!
+//! For the base OT in the OT extension, we use the endemic protocol of Zhou et al.
+//! (see Section 3 of <https://eprint.iacr.org/2022/1525.pdf>). Thus, we also include
+//! another zero knowledge proof employing the Chaum-Pedersen protocol, the
+//! OR-composition and the Fiat-Shamir transform (as in their paper).
+//!
+//! # Discrete Logarithm Proof
+//!
+//! We implement Schnorr's protocol together with a randomized Fischlin transform
+//! (see [`DLogProof`]).
+//!
+//! We base our implementation on Figures 23 and 27 of Zhou et al.
+//!
+//! For convenience, instead of writing the protocol directly, we wrote first an
+//! implementation of the usual Schnorr's protocol, which is interactive (see [`InteractiveDLogProof`]).
+//! Since it will be used for the non-interactive version, we made same particular choices
+//! that would not make much sense if this interactive proof were used alone.
+//!
+//! # Encryption Proof
+//!
+//! The OT protocol of Zhou et al. uses an `ElGamal` encryption at some point
+//! and it needs a zero-knowledge proof to verify its correctness.
+//!
+//! This implementation follows their paper: see page 17 and Appendix B.
+//!
+//! IMPORTANT: As specified in page 30 of `DKLs23`, we instantiate the protocols
+//! above over the same elliptic curve group used in our main protocol.
+
 use k256::elliptic_curve::{ops::Reduce, Field};
-/// This file implements some protocols for zero-knowledge proofs over the
-/// curve secp256k1.
-///
-/// The main protocol is for proofs of discrete logarithms. It is used during
-/// key generation in the `DKLs23` protocol (<https://eprint.iacr.org/2023/765.pdf>).
-///
-/// For the base OT in the OT extension, we use the endemic protocol of Zhou et al.
-/// (see Section 3 of <https://eprint.iacr.org/2023/765.pdf>). Thus, we also include
-/// another zero knowledge proof employing the Chaum-Pedersen protocol, the
-/// OR-composition and the Fiat-Shamir transform (as in their paper).
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -16,23 +41,14 @@ use std::collections::HashSet;
 
 use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, scalar_to_bytes, HashOutput};
 
-// Constants for the randomized Fischlin transform.
+/// Constants for the randomized Fischlin transform.
 pub const R: u16 = 64;
 pub const L: u16 = 4;
 pub const T: u16 = 32;
 
-// DISCRETE LOGARITHM PROOF
-//
-// We implement Schnorr's protocol together with a randomized Fischlin transform.
-//
-// We base our implementation on Figures 23 and 27 of https://eprint.iacr.org/2022/1525.pdf.
-//
-// For convenience, instead of writing the protocol directly, we wrote first an
-// implementation of the usual Schnorr's protocol, which is interactive. Since
-// it will be used for the non-interactive version, we made same particular choices
-// that would not make much sense if this interactive proof were used alone.
+// DISCRETE LOGARITHM PROOF.
 
-// Schnorr's protocol (interactive).
+/// Schnorr's protocol (interactive).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InteractiveDLogProof {
     pub challenge: Vec<u8>,
@@ -40,7 +56,9 @@ pub struct InteractiveDLogProof {
 }
 
 impl InteractiveDLogProof {
-    // Step 1 - Sample the random commitments.
+    /// Step 1 - Samples the random commitments.
+    ///
+    /// The `Scalar` is kept secret while the `AffinePoint` is transmitted.
     #[must_use]
     pub fn prove_step1() -> (Scalar, AffinePoint) {
         // We sample a nonzero random scalar.
@@ -54,8 +72,10 @@ impl InteractiveDLogProof {
         (scalar_rand_commitment, point_rand_commitment)
     }
 
-    // Step 2 - Compute the response for a given challenge.
-    // Here, scalar is the witness for the proof.
+    /// Step 2 - Computes the response for a given challenge.
+    ///
+    /// Here, `scalar` is the witness for the proof and `scalar_rand_commitment`
+    /// is the secret value from the previous step.
     #[must_use]
     pub fn prove_step2(
         scalar: &Scalar,
@@ -79,13 +99,15 @@ impl InteractiveDLogProof {
         }
     }
 
-    // Verification of a proof. "point" is the point used for the proof.
-    // We didn't include it in the struct in order to not make unnecessary
-    // repetitions in the next protocol.
-    //
-    // Attention: the challenge should enter as a parameter here, but in the
-    // next protocol, it will come from the prover, so we decided to save it
-    // inside the struct.
+    /// Verification of a proof.
+    ///
+    /// The variable `point` is the point used for the proof.
+    /// We didn't include it in the struct in order to not make unnecessary
+    /// repetitions in the main protocol.
+    ///
+    /// Attention: the challenge should enter as a parameter here, but in the
+    /// next protocol, it will come from the prover, so we decided to save it
+    /// inside the struct.
     #[must_use]
     pub fn verify(&self, point: &AffinePoint, point_rand_commitment: &AffinePoint) -> bool {
         // For convenience, we are using a challenge in bytes.
@@ -105,7 +127,23 @@ impl InteractiveDLogProof {
     }
 }
 
-// Schnorr's protocol (non-interactive via randomized Fischlin transform).
+/// Schnorr's protocol (non-interactive via randomized Fischlin transform).
+///
+/// In order to remove interaction, we employ the "randomized Fischlin transform"
+/// described in Figure 9 of <https://eprint.iacr.org/2022/393.pdf>. However, we will
+/// follow the approach in Figure 27 of <https://eprint.iacr.org/2022/1525.pdf>.
+/// It seems to come from Section 5.1 of the first paper.
+///
+/// There are some errors in this description (for example, `xi_i` and `xi_{i+r/2}`
+/// are always the empty set), and thus we adapt Figure 9 of the first article. There is
+/// still a problem: the paper says to choose `r` and `l` such that, in particular, `rl = 2^lambda`.
+/// If `lambda = 256`, then `r` or `l` are astronomically large and the protocol becomes
+/// computationally infeasible. We will use instead the condition `rl = lambda`.
+/// We believe this is what the authors wanted, since this condition appears
+/// in most of the rest of the first paper.
+///
+/// With `lambda = 256`, we chose `r = 64` and `l = 4` (higher values of `l` were too slow).
+/// In this case, the constant `t` from the paper is equal to 32.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DLogProof {
     pub point: AffinePoint,
@@ -114,22 +152,7 @@ pub struct DLogProof {
 }
 
 impl DLogProof {
-    // Non-interactive version of the previous proof.
-    //
-    // In order to do so, we employ the "randomized Fischlin transform" described
-    // in Figure 9 of https://eprint.iacr.org/2022/393.pdf. However, we will
-    // follow the approach in Figure 27 of https://eprint.iacr.org/2022/1525.pdf.
-    // It seems to come from Section 5.1 of the first paper. There are some errors
-    // in this description (for example, xi_i and xi_{i+r/2} are always the empty set),
-    // and thus we adapt Figure 9 of the first article. There is still a problem:
-    // the paper says to choose r and l such that, in particular, rl = 2^lambda.
-    // If lambda = 256, then r or l are astronomically large and the protocol becomes
-    // computationally infeasible. We will use instead the condition rl = lambda.
-    // We believe this is what the authors wanted, since this condition appears
-    // in most of the rest of the first paper.
-    //
-    // With lambda = 256, we chose r = 64 and l = 4 (higher values of l were too slow).
-    // In this case, the constant t from the paper is equal to 32.
+    /// Computes a proof for the witness `scalar`.
     #[must_use]
     pub fn prove(scalar: &Scalar, session_id: &[u8]) -> DLogProof {
         // We execute Step 1 r times.
@@ -258,7 +281,9 @@ impl DLogProof {
         }
     }
 
-    //Verification of a proof of discrete logarithm. Note that the point to be verified is in proof.
+    /// Verification of a proof of discrete logarithm.
+    ///
+    /// Note that the point to be verified is in `proof`.
     #[must_use]
     pub fn verify(proof: &DLogProof, session_id: &[u8]) -> bool {
         // We first verify that all vectors have the correct length.
@@ -333,7 +358,11 @@ impl DLogProof {
         true
     }
 
-    //Proof with commitment (which is a hash)
+    /// Produces an instance of `DLogProof` (for the witness `scalar`)
+    /// together with a commitment (its hash).
+    ///
+    /// The commitment is transmitted first and the proof is sent later
+    /// when needed.
     #[must_use]
     pub fn prove_commit(scalar: &Scalar, session_id: &[u8]) -> (DLogProof, HashOutput) {
         let proof = Self::prove(scalar, session_id);
@@ -374,7 +403,7 @@ impl DLogProof {
         (proof, commitment)
     }
 
-    //Verify a proof checking the commitment
+    /// Verifies a proof and checks it against the commitment.
     #[must_use]
     pub fn decommit_verify(proof: &DLogProof, commitment: &HashOutput, session_id: &[u8]) -> bool {
         //Computes the expected commitment
@@ -415,25 +444,15 @@ impl DLogProof {
 }
 
 // ENCRYPTION PROOF
-//
-// The OT protocol of Zhou et al. uses an ElGamal encryption at some point
-// and it needs a zero-knowledge proof to verify its correctness.
-//
-// This implementation follows their paper (https://eprint.iacr.org/2022/1525.pdf):
-// see page 17 and Appendix B.
-//
-//
-// IMPORTANT: As specified in page 30 of DKLs23 (https://eprint.iacr.org/2023/765.pdf),
-// we instantiate the protocols above over the same elliptic curve group
-// used in our main protocol.
 
-// We start with the Chaum-Pedersen protocol (interactive version).
+/// Represents the random commitments for the Chaum-Pedersen protocol.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RandomCommitments {
     pub rc_g: AffinePoint,
     pub rc_h: AffinePoint,
 }
 
+/// Chaum-Pedersen protocol (interactive version).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CPProof {
     pub base_g: AffinePoint, // Parameters for the proof.
@@ -451,7 +470,9 @@ impl CPProof {
     // This means that the challenge is a parameter chosen by the verifier and is not
     // calculated via Fiat-Shamir.
 
-    // Step 1 - Sample the random commitments.
+    /// Step 1 - Samples the random commitments.
+    ///
+    /// The `Scalar` is kept secret while the `RandomCommitments` is transmitted.
     #[must_use]
     pub fn prove_step1(base_g: &AffinePoint, base_h: &AffinePoint) -> (Scalar, RandomCommitments) {
         // We sample a nonzero random scalar.
@@ -471,8 +492,10 @@ impl CPProof {
         (scalar_rand_commitment, rand_commitments)
     }
 
-    // Step 2 - Compute the response for a given challenge.
-    // Here, scalar is the witness for the proof.
+    /// Step 2 - Compute the response for a given challenge.
+    ///
+    /// Here, `scalar` is the witness for the proof and `scalar_rand_commitment`
+    /// is the secret value from the previous step.
     #[must_use]
     pub fn prove_step2(
         base_g: &AffinePoint,
@@ -498,8 +521,11 @@ impl CPProof {
         }
     }
 
-    // Verification of a proof. Note that the data to be verified is in the variable proof.
-    // The verifier must know the challenge (in the interactive version, he chooses it).
+    /// Verification of a proof.
+    ///
+    /// Note that the data to be verified is in the variable `proof`.
+    ///
+    /// The verifier must know the challenge (in this interactive version, he chooses it).
     #[must_use]
     pub fn verify(&self, rand_commitments: &RandomCommitments, challenge: &Scalar) -> bool {
         // We compare the values that should agree.
@@ -511,10 +537,13 @@ impl CPProof {
         (point_verify_g == rand_commitments.rc_g) && (point_verify_h == rand_commitments.rc_h)
     }
 
-    // For the OR-composition, we will need to be able to simulate a proof without having
-    // a witness. The only way to do this is to sample the challenge ourselves and use it
-    // to compute the other values. We then return the challenge used, the commitments
-    // and the corresponding proof.
+    /// Simulates a "fake" proof which passes the `verify` method.
+    ///
+    /// To do so, the prover samples the challenge and uses it to compute
+    /// the other values. This method returns the challenge used, the commitments
+    /// and the corresponding proof.
+    ///
+    /// This is needed during the OR-composition protocol (see [`EncProof`]).
     #[must_use]
     pub fn simulate(
         base_g: &AffinePoint,
@@ -550,11 +579,14 @@ impl CPProof {
     }
 }
 
-// The actual proof for the OT protocol.
+/// Encryption proof used during the Endemic OT protocol of Zhou et al.
+///
+/// See page 17 of <https://eprint.iacr.org/2022/1525.pdf>.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncProof {
-    pub proof0: CPProof, // EncProof is a proof that proof0 or proof1
-    pub proof1: CPProof, // really proves what it says.
+    /// EncProof is a proof that `proof0` or `proof1` really proves what it says.
+    pub proof0: CPProof,
+    pub proof1: CPProof,
 
     pub commitments0: RandomCommitments,
     pub commitments1: RandomCommitments,
@@ -564,6 +596,10 @@ pub struct EncProof {
 }
 
 impl EncProof {
+    /// Computes a proof for the witness `scalar`.
+    ///
+    /// The variable `bit` indicates which one of the proofs is really
+    /// proved by `scalar`. The other one is simulated.
     #[must_use]
     pub fn prove(session_id: &[u8], base_h: &AffinePoint, scalar: &Scalar, bit: bool) -> EncProof {
         // PRELIMINARIES
@@ -707,6 +743,9 @@ impl EncProof {
         }
     }
 
+    /// Verification of an encryption proof.
+    ///
+    /// Note that the data to be verified is in `proof`.
     #[must_use]
     pub fn verify(&self, session_id: &[u8]) -> bool {
         // We check if the proofs are compatible.
@@ -758,7 +797,14 @@ impl EncProof {
             && self.proof1.verify(&self.commitments1, &self.challenge1)
     }
 
-    // For convenience and to avoid confusion with the change of order.
+    /// Extracts `u` and `v` from an instance of `EncProof`.
+    ///
+    /// Be careful: the notation for `u` and `v` here is the
+    /// same as the one used in the paper by Zhou et al. at page 17.
+    /// Unfortunately, `u` and `v` appear in the other order in
+    /// their description of the Chaum-Pedersen protocol.
+    /// Hence, `u` and `v` here are not the same as `point_u`
+    /// and `point_v` in [`CPProof`].
     #[must_use]
     pub fn get_u_and_v(&self) -> (AffinePoint, AffinePoint) {
         (self.proof0.point_v, self.proof0.point_u)
@@ -771,6 +817,7 @@ mod tests {
 
     // DLogProof
 
+    /// Tests if proving and verifying work for [`DLogProof`].
     #[test]
     fn test_dlog_proof() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -779,6 +826,8 @@ mod tests {
         assert!(DLogProof::verify(&proof, &session_id));
     }
 
+    /// Generates a [`DLogProof`] and changes it on purpose
+    /// to see if the verify function detects.
     #[test]
     fn test_dlog_proof_fail_proof() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -788,6 +837,8 @@ mod tests {
         assert!(!(DLogProof::verify(&proof, &session_id)));
     }
 
+    /// Tests if proving and verifying work for [`DLogProof`]
+    /// in the case with commitment.
     #[test]
     fn test_dlog_proof_commit() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -796,6 +847,8 @@ mod tests {
         assert!(DLogProof::decommit_verify(&proof, &commitment, &session_id));
     }
 
+    /// Generates a [`DLogProof`] with commitment and changes
+    /// the proof on purpose to see if the verify function detects.
     #[test]
     fn test_dlog_proof_commit_fail_proof() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -805,6 +858,8 @@ mod tests {
         assert!(!(DLogProof::decommit_verify(&proof, &commitment, &session_id)));
     }
 
+    /// Generates a [`DLogProof`] with commitment and changes
+    /// the commitment on purpose to see if the verify function detects.
     #[test]
     fn test_dlog_proof_commit_fail_commitment() {
         let scalar = Scalar::random(rand::thread_rng());
@@ -820,6 +875,7 @@ mod tests {
 
     // CPProof
 
+    /// Tests if proving and verifying work for [`CPProof`].
     #[test]
     fn test_cp_proof() {
         let log_base_g = Scalar::random(rand::thread_rng());
@@ -851,6 +907,7 @@ mod tests {
         assert!(verification);
     }
 
+    /// Tests if simulating a fake proof and verifying work for [`CPProof`].
     #[test]
     fn test_cp_proof_simulate() {
         let log_base_g = Scalar::random(rand::thread_rng());
@@ -875,6 +932,7 @@ mod tests {
 
     // EncProof
 
+    /// Tests if proving and verifying work for [`EncProof`].
     #[test]
     fn test_enc_proof() {
         // We sample the initial values.
