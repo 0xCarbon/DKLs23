@@ -35,7 +35,6 @@ pub struct Party {
     /// Public key.
     pub pk: AffinePoint,
 
-
     /// Used for computing shares of zero during signing.
     pub zero_share: ZeroShare,
 

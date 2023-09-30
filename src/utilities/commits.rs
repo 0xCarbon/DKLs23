@@ -61,7 +61,7 @@ pub fn verify_commitment_point(point: &AffinePoint, commitment: &HashOutput, sal
 mod tests {
     use super::*;
 
-    /// Tests if committing and decommitting work.
+    /// Tests if committing and de-committing work.
     #[test]
     fn test_commit_decommit() {
         let msg = rand::thread_rng().gen::<[u8; 32]>();

@@ -1,3 +1,4 @@
+Alore
 DDH
 ckd
 ote
@@ -22,6 +23,7 @@ Zhou
 hasher
 Shamir
 decommit
+Chaincode
 dlog
 Keccak
 counterparties

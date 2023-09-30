@@ -40,7 +40,7 @@ impl ZeroShare {
     /// Generates and commits a seed to another party using the commitment functionality.
     ///
     /// The variables `seed` and `salt` should be kept, while `commitment` is transmitted.
-    /// At the time of decommitment, these secret values are revealed.
+    /// At the time of de-commitment, these secret values are revealed.
     #[must_use]
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
         let seed = rand::thread_rng().gen::<Seed>(); // This function doesn't work for higher SECURITY.
@@ -79,7 +79,7 @@ impl ZeroShare {
         }
     }
 
-    /// Finishes the initialiation procedure.
+    /// Finishes the initialization procedure.
     ///
     /// All the `SeedPair`'s relating to the same party are gathered.
     #[must_use]

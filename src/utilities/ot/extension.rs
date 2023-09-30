@@ -973,15 +973,12 @@ mod tests {
             &vector_of_tau,
         );
 
-        let receiver_outputs: Vec<Vec<Scalar>>;
-        match receiver_result {
-            Ok(t_b) => {
-                receiver_outputs = t_b;
-            }
+        let receiver_outputs = match receiver_result {
+            Ok(t_b) => t_b,
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
             }
-        }
+        };
 
         // Verification that the protocol did what it should do.
 

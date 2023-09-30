@@ -386,7 +386,7 @@ pub fn phase1(data: &SessionData) -> Vec<Scalar> {
 ///
 /// The variable `poly_point` (= `p(i)`), which should be kept, and a proof of
 /// discrete logarithm with commitment. You should transmit the commitment
-/// now and, after fininshing Phase 3, you send the rest. Remember to also
+/// now and, after finishing Phase 3, you send the rest. Remember to also
 /// save a copy of your [`ProofCommitment`] for the final phase.
 ///
 /// There is also some initialization data to keep and to transmit, following the
