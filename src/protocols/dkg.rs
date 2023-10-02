@@ -1,14 +1,56 @@
-/// This file implements Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>,
-/// as instructed in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>). It is
-/// the distributed key generation which setups the main signing protocol.
-///
-/// During the protocol, we also initialize the functionalities that will
-/// be used during signing. Their implementations can be found in the files
-/// `zero_shares.rs` and `multiplication.rs`.
-use std::collections::HashMap;
+//! Distributed Key Generation protocol.
+//!
+//!  This file implements Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>,
+//! as instructed in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>). It is
+//! the distributed key generation which setups the main signing protocol.
+//!
+//! During the protocol, we also initialize the functionalities that will
+//! be used during signing.
+//!
+//! # Phases
+//!
+//! We group the steps in phases. A phase consists of all steps that can be
+//! executed in order without the need of communication. Phases should be
+//! intercalated with communication rounds: broadcasts and/or private messages
+//! containing the session id.
+//!
+//! We also include here the initialization procedures of Functionalities 3.4
+//! and 3.5 of `DKLs23`. The first one comes from [here](crate::utilities::zero_shares)
+//! and needs two communication rounds (hence, it starts on Phase 2). The second one
+//! comes from [here](crate::utilities::multiplication) and needs one communication round
+//! (hence, it starts on Phase 3).
+//!
+//! For key derivation (following BIP-32: <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>),
+//! parties must agree on a common chain code for their shared master key. Using the
+//! commitment functionality, we need two communication rounds, so this part starts
+//! only on Phase 2.
+//!
+//! # Nomenclature
+//!
+//! For the initialization structs, we will use the following nomenclature:
+//!
+//! **Transmit** messages refer to only one counterparty, hence
+//! we must produce a whole vector of them. Each message in this
+//! vector contains the party index to whom we should send it.
+//!
+//! **Broadcast** messages refer to all counterparties at once,
+//! hence we only need to produce a unique instance of it.
+//! This message is broadcasted to all parties.
+//!
+//! ATTENTION: we broadcast the message to ourselves as well!
+//!
+//! **Keep** messages refer to only one counterparty, hence
+//! we must keep a whole vector of them. In this implementation,
+//! we use a `BTreeMap` instead of a vector, where one can put
+//! some party index in the key to retrieve the corresponding data.
+//!
+//! **Unique keep** messages refer to all counterparties at once,
+//! hence we only need to keep a unique instance of it.
+
+use std::collections::BTreeMap;
 
 use hex;
-use k256::elliptic_curve::{point::AffineCoordinates, Field};
+use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
 use rand::Rng;
 use secp256k1::PublicKey;
@@ -26,7 +68,11 @@ use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::zero_shares::{self, ZeroShare};
 
-// This struct is used during key generation
+/// Used during key generation.
+///
+/// After Phase 2, only the values `index` and `commitment` are broadcasted.
+///
+/// The `proof` is broadcasted after Phase 3.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProofCommitment {
     pub index: u8,
@@ -34,8 +80,7 @@ pub struct ProofCommitment {
     pub commitment: HashOutput,
 }
 
-// This struct contains the data needed to start
-// key generation and that are used during the phases.
+/// Data needed to start key generation and is used during the phases.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SessionData {
     pub parameters: Parameters,
@@ -43,30 +88,20 @@ pub struct SessionData {
     pub session_id: Vec<u8>,
 }
 
-// For the initialization structs, we will use the following nomenclature:
+// INITIALIZING ZERO SHARES PROTOCOL.
 
-// "Transmit" messages refer to only one counterparty, hence
-// we must send a whole vector of them.
-
-// "Broadcast" messages refer to all counterparties at once,
-// hence we only need to send a unique instance of it.
-// ATTENTION: we broadcast the message to ourselves as well.
-
-// "Keep" messages refer to only one counterparty, hence
-// we must keep a whole vector of them.
-
-// "Unique keep" messages refer to all counterparties at once,
-// hence we only need to keep a unique instance of it.
-
-////////// INITIALIZING ZERO SHARING PROTOCOL.
-
-// Transmit
+/// Transmit - Initialization of zero shares protocol.
+///
+/// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
 
+/// Transmit - Initialization of zero shares protocol.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
@@ -74,21 +109,28 @@ pub struct TransmitInitZeroSharePhase3to4 {
     pub salt: Vec<u8>,
 }
 
-// Keep
+/// Keep - Initialization of zero shares protocol.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
 
+/// Keep - Initialization of zero shares protocol.
+///
+/// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase3to4 {
     pub seed: zero_shares::Seed,
 }
 
-////////// INITIALIZING TWO-PARTY MULTIPLICATION PROTOCOL.
+// INITIALIZING TWO-PARTY MULTIPLICATION PROTOCOL.
 
-// Transmit
+/// Transmit - Initialization of multiplication protocol.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
@@ -100,7 +142,9 @@ pub struct TransmitInitMulPhase3to4 {
     pub seed: ot::base::Seed,
 }
 
-// Keep
+/// Keep - Initialization of multiplication protocol.
+///
+/// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeepInitMulPhase3to4 {
     pub ot_sender: ot::base::OTSender,
@@ -111,15 +155,20 @@ pub struct KeepInitMulPhase3to4 {
     pub vec_r: Vec<Scalar>,
 }
 
-////////// INITIALIZING KEY DERIVATION (VIA BIP-32).
+// INITIALIZING KEY DERIVATION (VIA BIP-32).
 
-// Broadcast
+/// Broadcast - Initialization for key derivation.
+///
+/// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase2to4 {
     pub sender_index: u8,
     pub cc_commitment: HashOutput,
 }
 
+/// Broadcast - Initialization for key derivation.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase3to4 {
     pub sender_index: u8,
@@ -127,44 +176,56 @@ pub struct BroadcastDerivationPhase3to4 {
     pub cc_salt: Vec<u8>,
 }
 
-// Unique keep
+/// Unique keep - Initialization for key derivation.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UniqueKeepDerivationPhase2to3 {
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
 // DISTRIBUTED KEY GENERATION (DKG)
 
 // STEPS
-// We implement each step of the protocol.
+// We implement each step of the DKLs23 protocol.
 
-// Step 1 - Generate random polynomial of degree t-1.
+/// Generates a random polynomial of degree t-1.
+///
+/// This is Step 1 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
 pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
     // We represent the polynomial by its coefficients.
-    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold.into());
+    let mut rng = rand::thread_rng(); // Reuse RNG
+    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
     for _ in 0..parameters.threshold {
-        polynomial.push(Scalar::random(rand::thread_rng()));
+        polynomial.push(Scalar::random(&mut rng)); // Pass the RNG explicitly
     }
-
     polynomial
 }
 
-// Step 2 - Evaluate the polynomial from the previous step at every point.
+/// Evaluates the polynomial from the previous step at every point.
+///
+/// If `p_i` denotes such polynomial, then the output is of the form
+/// \[`p_i(1)`, `p_i(2)`, ..., `p_i(n)`\] in this order, where `n` = `parameters.share_count`.
+///
+/// The value `p_i(j)` should be transmitted to the party with index `j`.
+/// Here, `i` denotes our index, so we should keep `p_i(i)` for the future.
+///
+/// This is Step 2 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
 pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
-    let mut points: Vec<Scalar> = Vec::with_capacity(parameters.share_count.into());
+    let mut points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
+    let last_index = (parameters.threshold - 1) as usize;
 
     for j in 1..=parameters.share_count {
-        // We compute the polynomial evaluated at j.
-        let mut evaluation_at_j = Scalar::ZERO;
-        let mut power_of_j = Scalar::ONE;
-        for i in 0..parameters.threshold {
-            evaluation_at_j += polynomial[i as usize] * power_of_j;
-            power_of_j *= Scalar::from(u32::from(j));
+        let j_scalar = Scalar::from(u32::from(j)); // Direct conversion
+
+        // Using Horner's method for polynomial evaluation
+        let mut evaluation_at_j = polynomial[last_index];
+
+        for &coefficient in polynomial[..last_index].iter().rev() {
+            evaluation_at_j = evaluation_at_j * j_scalar + coefficient;
         }
 
         points.push(evaluation_at_j);
@@ -173,9 +234,18 @@ pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
     points
 }
 
-// Step 3 - Compute poly_point (p(i) in the paper) and the corresponding "public key" (P(i) in the paper).
-// It also commits to a zero-knowledge proof that p(i) is the discrete logarithm of P(i).
-// The session id is used for the proof.
+/// Computes `poly_point` and the corresponding "public key" together with a zero-knowledge proof.
+///
+/// The variable `poly_fragments` is just a vector containing (in any order)
+/// the scalars received from the other parties after the previous step.
+///
+/// The commitment from [`ProofCommitment`] should be broadcasted at this point.
+///
+/// This is Step 3 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
+/// There, `poly_point` is denoted by `p(i)` and the "public key" is `P(i)`.
+///
+/// The Step 4 of the protocol is broadcasting the rest of [`ProofCommitment`] after
+/// having received all commitments.
 #[must_use]
 pub fn step3(
     party_index: u8,
@@ -194,22 +264,34 @@ pub fn step3(
     (poly_point, proof_commitment)
 }
 
-// Step 4 is a communication round (see the description below).
-
-// Step 5 - Each party validates the other proofs. They also recover the "public keys fragments" from the other parties.
-// Finally, a consistency check is done. In the process, the public key is computed (Step 6).
+/// Validates the other proofs, runs a consistency check
+/// and computes the public key.
+///
+/// The variable `proofs_commitments` is just a vector containing (in any order)
+/// the instances of [`ProofCommitment`] received from the other parties after the
+/// previous step (including ours).
+///
+/// This is Step 5 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
+/// Step 6 is essentially the same, so it is also done here.
+///
 /// # Errors
 ///
 /// Will return `Err` if one of the proofs/commitments doesn't
 /// verify or if the consistency check for the public key fails.
+///
+/// # Panics
+///
+/// Will panic if the list of indices in `proofs_commitments`
+/// are not the numbers from 1 to `parameters.share_count`.
 pub fn step5(
     parameters: &Parameters,
     party_index: u8,
     session_id: &[u8],
     proofs_commitments: &[ProofCommitment],
 ) -> Result<AffinePoint, Abort> {
-    let mut committed_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into()); //The "public key fragments"
-                                                                                                    // Verify the proofs and gather the committed points.
+    let mut committed_points: BTreeMap<u8, AffinePoint> = BTreeMap::new(); //The "public key fragments"
+
+    // Verify the proofs and gather the committed points.
     for party_j in proofs_commitments {
         if party_j.index != party_index {
             let verification =
@@ -221,7 +303,7 @@ pub fn step5(
                 ));
             }
         }
-        committed_points.push(party_j.proof.point);
+        committed_points.insert(party_j.index, party_j.proof.point);
     }
 
     // Initializes what will be the public key.
@@ -235,19 +317,24 @@ pub fn step5(
         for j in i..(i + parameters.threshold) {
             // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
             // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polynomial from Step 3.
+            let j_scalar = Scalar::from(u32::from(j));
             let mut lj_numerator = Scalar::ONE;
             let mut lj_denominator = Scalar::ONE;
+
             for k in i..(i + parameters.threshold) {
                 if k != j {
-                    lj_numerator *= Scalar::from(u32::from(k));
-                    lj_denominator *= Scalar::from(u32::from(k)) - Scalar::from(u32::from(j));
+                    let k_scalar = Scalar::from(u32::from(k));
+                    lj_numerator *= k_scalar;
+                    lj_denominator *= k_scalar - j_scalar;
                 }
             }
-            let lj = lj_numerator * (lj_denominator.invert().unwrap());
 
-            let lj_times_point = committed_points[(j - 1) as usize] * lj; // j-1 because index starts at 0
+            let lj = lj_numerator * (lj_denominator.invert().unwrap());
+            let lj_times_point = *committed_points.get(&j).unwrap() * lj;
+
             current_pk = (lj_times_point + current_pk).to_affine();
         }
+
         // The first value is taken as the public key. It should coincide with the next values.
         if i == 1 {
             pk = current_pk;
@@ -261,23 +348,22 @@ pub fn step5(
     Ok(pk)
 }
 
-// Step 6 was done during the previous step.
-
 // PHASES
-// We group the steps in phases. A phase consists of all steps that can be executed in order without the need of communication.
-// Phases should be intercalated with communication rounds: broadcasts and/or private messages containing the session id.
 
-// We also include here the initialization procedures of Functionalities 3.4 and 3.5 of DKLs23 (https://eprint.iacr.org/2023/765.pdf).
-// The first one comes from the file zero_shares.rs and needs two communication rounds (hence, it starts on Phase 2).
-// The second one comes from the file multiplication.rs and needs one communication round (hence, it starts on Phase 3).
-
-// For key derivation (following BIP-32: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki), parties must agree
-// on a common chain code for their shared master key. Using the commitment functionality, we need two communication rounds,
-// so this part starts only on Phase 2.
-
-// Phase 1 = Steps 1 and 2
-// Input (DKG): Parameters for the key generation.
-// Output (DKG): Evaluation of a random polynomial at every party index.
+/// Phase 1 = [`step1`] and [`step2`].
+///
+/// # Input
+///
+/// Parameters for the key generation.
+///
+/// # Output
+///
+/// Evaluation of a random polynomial at every party index.
+/// The j-th coordinate of the output vector must be sent
+/// to the party with index j.
+///
+/// ATTENTION: In particular, we keep the coordinate corresponding
+/// to our party index for the next phase.
 #[must_use]
 pub fn phase1(data: &SessionData) -> Vec<Scalar> {
     // DKG
@@ -291,11 +377,21 @@ pub fn phase1(data: &SessionData) -> Vec<Scalar> {
 // At the end, Party i should have received all fragments indexed by i.
 // They should add up to p(i), where p is a polynomial not depending on i.
 
-// Phase 2 = Step 3
-// Input (DKG): Fragments received from communication and session id.
-// Input (Init): Session data.
-// Output (DKG): p(i) and a proof of discrete logarithm with commitment.
-// Output (Init): Some data to keep and to transmit.
+/// Phase 2 = [`step3`].
+///
+/// # Input
+///
+/// Fragments received from the previous phase.
+///
+/// # Output
+///
+/// The variable `poly_point` (= `p(i)`), which should be kept, and a proof of
+/// discrete logarithm with commitment. You should transmit the commitment
+/// now and, after finishing Phase 3, you send the rest. Remember to also
+/// save a copy of your [`ProofCommitment`] for the final phase.
+///
+/// There is also some initialization data to keep and to transmit, following the
+/// conventions [here](self).
 #[must_use]
 pub fn phase2(
     data: &SessionData,
@@ -303,7 +399,7 @@ pub fn phase2(
 ) -> (
     Scalar,
     ProofCommitment,
-    HashMap<u8, KeepInitZeroSharePhase2to3>,
+    BTreeMap<u8, KeepInitZeroSharePhase2to3>,
     Vec<TransmitInitZeroSharePhase2to4>,
     UniqueKeepDerivationPhase2to3,
     BroadcastDerivationPhase2to4,
@@ -313,11 +409,10 @@ pub fn phase2(
 
     // Initialization - Zero shares.
 
-    // We will use HashMap to keep messages: the key indicates the party to whom the message refers.
-    let mut zero_keep: HashMap<u8, KeepInitZeroSharePhase2to3> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
-    let mut zero_transmit: Vec<TransmitInitZeroSharePhase2to4> =
-        Vec::with_capacity((data.parameters.share_count - 1).into());
+    // We will use BTreeMap to keep messages: the key indicates the party to whom the message refers.
+    let mut zero_keep = BTreeMap::new();
+    let mut zero_transmit = Vec::with_capacity((data.parameters.share_count - 1) as usize);
+
     for i in 1..=data.parameters.share_count {
         if i == data.party_index {
             continue;
@@ -327,28 +422,27 @@ pub fn phase2(
         let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
 
         // We first send the commitments. We keep the rest to send later.
-        let keep = KeepInitZeroSharePhase2to3 { seed, salt };
-        let transmit = TransmitInitZeroSharePhase2to4 {
+        zero_keep.insert(i, KeepInitZeroSharePhase2to3 { seed, salt });
+        zero_transmit.push(TransmitInitZeroSharePhase2to4 {
             parties: PartiesMessage {
                 sender: data.party_index,
                 receiver: i,
             },
             commitment,
-        };
-
-        zero_keep.insert(i, keep);
-        zero_transmit.push(transmit);
+        });
     }
 
     // Initialization - BIP-32.
+
     // Each party samples a random auxiliary chain code.
-    let aux_chain_code = rand::thread_rng().gen::<ChainCode>();
+    let aux_chain_code: ChainCode = rand::thread_rng().gen();
     let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
 
     let bip_keep = UniqueKeepDerivationPhase2to3 {
         aux_chain_code,
         cc_salt,
     };
+
     // For simplicity, this message should be sent to us too.
     let bip_broadcast = BroadcastDerivationPhase2to4 {
         sender_index: data.party_index,
@@ -368,30 +462,37 @@ pub fn phase2(
 // Communication round 2
 // DKG: Party i broadcasts his commitment to the proof and receive the other commitments.
 //
-// Init: Each party transmits messages for the zero sharing protocol (one for each party)
+// Init: Each party transmits messages for the zero shares protocol (one for each party)
 // and broadcasts a message for key derivation (the same for every party).
 
-// Phase 3 = No steps in DKG (just initialization)
-// Input (Init): Session data and the values kept from previous round.
-// Output (Init): Some data to keep and to transmit.
+/// Phase 3 = No steps in DKG (just initialization).
+///
+/// # Input
+///
+/// Initialization data kept from the previous phase.
+///
+/// # Output
+///
+/// Some initialization data to keep and to transmit, following the
+/// conventions [here](self).
 #[must_use]
 pub fn phase3(
     data: &SessionData,
-    zero_kept: &HashMap<u8, KeepInitZeroSharePhase2to3>,
+    zero_kept: &BTreeMap<u8, KeepInitZeroSharePhase2to3>,
     bip_kept: &UniqueKeepDerivationPhase2to3,
 ) -> (
-    HashMap<u8, KeepInitZeroSharePhase3to4>,
+    BTreeMap<u8, KeepInitZeroSharePhase3to4>,
     Vec<TransmitInitZeroSharePhase3to4>,
-    HashMap<u8, KeepInitMulPhase3to4>,
+    BTreeMap<u8, KeepInitMulPhase3to4>,
     Vec<TransmitInitMulPhase3to4>,
     BroadcastDerivationPhase3to4,
 ) {
     // Initialization - Zero shares.
-    let mut zero_keep: HashMap<u8, KeepInitZeroSharePhase3to4> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
-    let mut zero_transmit: Vec<TransmitInitZeroSharePhase3to4> =
-        Vec::with_capacity((data.parameters.share_count - 1).into());
-    for (target_party, message_kept) in zero_kept {
+    let share_count = (data.parameters.share_count - 1) as usize;
+    let mut zero_keep = BTreeMap::new();
+    let mut zero_transmit = Vec::with_capacity(share_count);
+
+    for (&target_party, message_kept) in zero_kept.iter() {
         // The messages kept contain the seed and the salt.
         // They have to be transmitted to the target party.
         // We keep the seed with us for the next phase.
@@ -401,23 +502,23 @@ pub fn phase3(
         let transmit = TransmitInitZeroSharePhase3to4 {
             parties: PartiesMessage {
                 sender: data.party_index,
-                receiver: *target_party,
+                receiver: target_party,
             },
             seed: message_kept.seed,
             salt: message_kept.salt.clone(),
         };
 
-        zero_keep.insert(*target_party, keep);
+        zero_keep.insert(target_party, keep);
         zero_transmit.push(transmit);
     }
 
     // Initialization - Two-party multiplication.
     // Each party prepares initialization both as
     // a receiver and as a sender.
-    let mut mul_keep: HashMap<u8, KeepInitMulPhase3to4> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
-    let mut mul_transmit: Vec<TransmitInitMulPhase3to4> =
-        Vec::with_capacity((data.parameters.share_count - 1).into());
+    // Initialization - Two-party multiplication.
+    let mut mul_keep = BTreeMap::new();
+    let mut mul_transmit = Vec::with_capacity(share_count);
+
     for i in 1..=data.parameters.share_count {
         if i == data.party_index {
             continue;
@@ -429,6 +530,7 @@ pub fn phase3(
         // We first compute a new session id.
         // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
         let mul_sid_receiver = [
+            "Multiplication protocol".as_bytes(),
             &data.party_index.to_be_bytes(),
             &i.to_be_bytes(),
             &data.session_id[..],
@@ -443,6 +545,7 @@ pub fn phase3(
         // New session id as above.
         // Note that the indexes are now in the opposite order.
         let mul_sid_sender = [
+            "Multiplication protocol".as_bytes(),
             &i.to_be_bytes(),
             &data.party_index.to_be_bytes(),
             &data.session_id[..],
@@ -504,13 +607,30 @@ pub fn phase3(
 // Communication round 3
 // DKG: We execute Step 4 of the protocol: after having received all commitments, each party broadcasts his proof.
 //
-// Init: Each party transmits messages for the zero sharing and multiplication protocols (one for each party)
+// Init: Each party transmits messages for the zero shares and multiplication protocols (one for each party)
 // and broadcasts a message for key derivation (the same for every party).
 
-// Phase 4 = Steps 5 and 6
-// Input (DKG): Proofs and commitments received from communication + parameters, party index, session id, poly_point.
-// Input (Init): Parameters, values kept and transmitted in previous phases.
-// Output: Instance of Party ready to sign.
+/// Phase 4 = [`step5`].
+///
+/// # Input
+///
+/// The `poly_point` scalar generated in Phase 2;
+///
+/// A vector containing (in any order) the [`ProofCommitment`]'s
+/// received from the other parties (including ours);
+///
+/// The initialization data kept from the previous phases;
+///
+/// The initialization data received from the other parties in
+/// the previous phases. They must be grouped in vectors (in any
+/// order) according to the type or, in the case of the messages
+/// related to derivation BIP-32, in a `BTreeMap` where the key
+/// represents the index of the party that transmitted the message.
+///
+/// # Output
+///
+/// An instance of [`Party`] ready to execute the other protocols.
+///
 /// # Errors
 ///
 /// Will return `Err` if a message is not meant for the party
@@ -519,19 +639,19 @@ pub fn phase3(
 ///
 /// # Panics
 ///
-/// Will panic if the list of keys in the `HashMap`'s are incompatible
+/// Will panic if the list of keys in the `BTreeMap`'s are incompatible
 /// with the party indices in the received vectors.
 pub fn phase4(
     data: &SessionData,
     poly_point: &Scalar,
     proofs_commitments: &[ProofCommitment],
-    zero_kept: &HashMap<u8, KeepInitZeroSharePhase3to4>,
+    zero_kept: &BTreeMap<u8, KeepInitZeroSharePhase3to4>,
     zero_received_phase2: &[TransmitInitZeroSharePhase2to4],
     zero_received_phase3: &[TransmitInitZeroSharePhase3to4],
-    mul_kept: &HashMap<u8, KeepInitMulPhase3to4>,
+    mul_kept: &BTreeMap<u8, KeepInitMulPhase3to4>,
     mul_received: &[TransmitInitMulPhase3to4],
-    bip_received_phase2: &HashMap<u8, BroadcastDerivationPhase2to4>,
-    bip_received_phase3: &HashMap<u8, BroadcastDerivationPhase3to4>,
+    bip_received_phase2: &BTreeMap<u8, BroadcastDerivationPhase2to4>,
+    bip_received_phase3: &BTreeMap<u8, BroadcastDerivationPhase3to4>,
 ) -> Result<Party, Abort> {
     // DKG
     let pk = step5(
@@ -569,7 +689,7 @@ pub fn phase4(
 
     // Initialization - Zero shares.
     let mut seeds: Vec<zero_shares::SeedPair> =
-        Vec::with_capacity((data.parameters.share_count - 1).into());
+        Vec::with_capacity((data.parameters.share_count - 1) as usize);
     for (target_party, message_kept) in zero_kept {
         for message_received_2 in zero_received_phase2 {
             for message_received_3 in zero_received_phase3 {
@@ -615,10 +735,8 @@ pub fn phase4(
     let zero_share = ZeroShare::initialize(seeds);
 
     // Initialization - Two-party multiplication.
-    let mut mul_receivers: HashMap<u8, MulReceiver> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
-    let mut mul_senders: HashMap<u8, MulSender> =
-        HashMap::with_capacity((data.parameters.share_count - 1).into());
+    let mut mul_receivers: BTreeMap<u8, MulReceiver> = BTreeMap::new();
+    let mut mul_senders: BTreeMap<u8, MulSender> = BTreeMap::new();
     for (target_party, message_kept) in mul_kept {
         for message_received in mul_received {
             let my_index = message_received.parties.receiver;
@@ -643,6 +761,7 @@ pub fn phase4(
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
             let mul_sid_receiver = [
+                "Multiplication protocol".as_bytes(),
                 &my_index.to_be_bytes(),
                 &their_index.to_be_bytes(),
                 &data.session_id[..],
@@ -670,6 +789,7 @@ pub fn phase4(
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
             let mul_sid_sender = [
+                "Multiplication protocol".as_bytes(),
                 &their_index.to_be_bytes(),
                 &my_index.to_be_bytes(),
                 &data.session_id[..],
@@ -703,7 +823,7 @@ pub fn phase4(
     // It will be given by the XOR of the auxiliary chain codes.
     let mut chain_code: ChainCode = [0; 32];
     for i in 1..=data.parameters.share_count {
-        // We take the messages in the correct order (that's why the HashMap).
+        // We take the messages in the correct order (that's why the BTreeMap).
         let verification = commits::verify_commitment(
             &bip_received_phase3.get(&i).unwrap().aux_chain_code,
             &bip_received_phase2.get(&i).unwrap().cc_commitment,
@@ -801,8 +921,9 @@ mod tests {
 
     // The initializations are checked after these tests (see below).
 
+    /// Tests if the main steps of the protocol do not generate
+    /// an unexpected [`Abort`] in the 2-of-2 scenario.
     #[test]
-    // 2-of-2 scenario.
     fn test_dkg_t2_n2() {
         let parameters = Parameters {
             threshold: 2,
@@ -840,8 +961,10 @@ mod tests {
         assert!(p2_result.is_ok());
     }
 
+    /// Tests if the main steps of the protocol do not generate
+    /// an unexpected [`Abort`] in the t-of-n scenario, where
+    /// t and n are small random values.
     #[test]
-    // General t-of-n scenario
     fn test_dkg_random() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
@@ -854,17 +977,17 @@ mod tests {
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
-        let mut phase1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count.into());
+        let mut phase1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for _ in 0..parameters.share_count {
             let party_phase1 = step2(&parameters, &step1(&parameters));
-            assert_eq!(party_phase1.len(), parameters.share_count.into());
+            assert_eq!(party_phase1.len(), parameters.share_count as usize);
             phase1.push(party_phase1);
         }
 
         // Communication round 1
         // We transpose the matrix
         let mut poly_fragments = vec![
-            Vec::<Scalar>::with_capacity(parameters.share_count.into());
+            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
             parameters.share_count as usize
         ];
         for row_i in phase1 {
@@ -875,7 +998,7 @@ mod tests {
 
         // Phase 2 (Step 3) + Communication rounds 2 and 3
         let mut proofs_commitments: Vec<ProofCommitment> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let party_i_phase2 = step3(i + 1, &session_id, &poly_fragments[i as usize]);
             let (_, party_i_proof_commitment) = party_i_phase2;
@@ -884,7 +1007,7 @@ mod tests {
 
         // Phase 4 (Step 5)
         let mut result_parties: Vec<Result<AffinePoint, Abort>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             result_parties.push(step5(&parameters, i + 1, &session_id, &proofs_commitments));
         }
@@ -894,8 +1017,14 @@ mod tests {
         }
     }
 
+    /// Tests if the main steps of the protocol generate
+    /// the expected public key.
+    ///
+    /// In this case, we remove the randomness of [Step 1](step1)
+    /// by providing fixed values.
+    ///
+    /// This functions treats the 2-of-2 scenario.
     #[test]
-    // We remove the randomness from Phase 1. This allows us to compute the public key.
     fn test1_dkg_t2_n2_fixed_polynomials() {
         let parameters = Parameters {
             threshold: 2,
@@ -938,6 +1067,7 @@ mod tests {
         assert_eq!(p2_pk, expected_pk);
     }
 
+    /// Variation on [`test1_dkg_t2_n2_fixed_polynomials`].
     #[test]
     fn test2_dkg_t2_n2_fixed_polynomials() {
         let parameters = Parameters {
@@ -981,6 +1111,8 @@ mod tests {
         assert_eq!(p2_pk, expected_pk);
     }
 
+    /// The same as [`test1_dkg_t2_n2_fixed_polynomials`]
+    /// but in the 3-of-5 scenario.
     #[test]
     fn test_dkg_t3_n5_fixed_polynomials() {
         let parameters = Parameters {
@@ -1036,7 +1168,7 @@ mod tests {
 
         // Phase 2 (Step 3) + Communication rounds 2 and 3
         let mut proofs_commitments: Vec<ProofCommitment> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let party_i_phase2 = step3(i + 1, &session_id, &poly_fragments[i as usize]);
             let (_, party_i_proof_commitment) = party_i_phase2;
@@ -1045,12 +1177,12 @@ mod tests {
 
         // Phase 4 (Step 5)
         let mut results: Vec<Result<AffinePoint, Abort>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             results.push(step5(&parameters, i + 1, &session_id, &proofs_commitments));
         }
 
-        let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into());
+        let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count as usize);
         for result in results {
             match result {
                 Ok(pk) => {
@@ -1079,6 +1211,10 @@ mod tests {
     // parties are being simulated one after the other, but they
     // should actually execute the protocol simultaneously.
 
+    /// Tests if the whole DKG protocol (with initializations)
+    /// does not generate an unexpected [`Abort`].
+    ///
+    /// The correctness of the protocol is verified on `test_dkg_and_signing`.
     #[test]
     fn test_dkg_initialization() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
@@ -1091,7 +1227,7 @@ mod tests {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
-        let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count.into());
+        let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             all_data.push(SessionData {
                 parameters: parameters.clone(),
@@ -1101,7 +1237,7 @@ mod tests {
         }
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count.into());
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let out1 = phase1(&all_data[i as usize]);
 
@@ -1111,7 +1247,7 @@ mod tests {
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
         let mut poly_fragments = vec![
-            Vec::<Scalar>::with_capacity(parameters.share_count.into());
+            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
             parameters.share_count as usize
         ];
         for row_i in dkg_1 {
@@ -1121,17 +1257,16 @@ mod tests {
         }
 
         // Phase 2
-        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count.into());
+        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
         let mut proofs_commitments: Vec<ProofCommitment> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut zero_kept_2to3: Vec<HashMap<u8, KeepInitZeroSharePhase2to3>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut bip_broadcast_2to4: HashMap<u8, BroadcastDerivationPhase2to4> =
-            HashMap::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4> = BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5, out6) =
                 phase2(&all_data[i as usize], &poly_fragments[i as usize]);
@@ -1141,18 +1276,18 @@ mod tests {
             zero_kept_2to3.push(out3);
             zero_transmit_2to4.push(out4);
             bip_kept_2to3.push(out5);
-            bip_broadcast_2to4.insert(i + 1, out6); // This variable should be grouped into a HashMap.
+            bip_broadcast_2to4.insert(i + 1, out6); // This variable should be grouped into a BTreeMap.
         }
 
         // Communication round 2
         let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             // We don't need to transmit the commitments because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
             let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
-                Vec::with_capacity((parameters.share_count - 1).into());
+                Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_2to4 {
                 for message in party {
                     // Check if this message should be sent to us.
@@ -1165,19 +1300,18 @@ mod tests {
         }
 
         // bip_transmit_2to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a HashMap.
+        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 3
-        let mut zero_kept_3to4: Vec<HashMap<u8, KeepInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut mul_kept_3to4: Vec<HashMap<u8, KeepInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut bip_broadcast_3to4: HashMap<u8, BroadcastDerivationPhase3to4> =
-            HashMap::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4> = BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5) = phase3(
                 &all_data[i as usize],
@@ -1189,20 +1323,20 @@ mod tests {
             zero_transmit_3to4.push(out2);
             mul_kept_3to4.push(out3);
             mul_transmit_3to4.push(out4);
-            bip_broadcast_3to4.insert(i + 1, out5); // This variable should be grouped into a HashMap.
+            bip_broadcast_3to4.insert(i + 1, out5); // This variable should be grouped into a BTreeMap.
         }
 
         // Communication round 3
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             // We don't need to transmit the proofs because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
             let mut new_row: Vec<TransmitInitZeroSharePhase3to4> =
-                Vec::with_capacity((parameters.share_count - 1).into());
+                Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_3to4 {
                 for message in party {
                     // Check if this message should be sent to us.
@@ -1214,7 +1348,7 @@ mod tests {
             zero_received_3to4.push(new_row);
 
             let mut new_row: Vec<TransmitInitMulPhase3to4> =
-                Vec::with_capacity((parameters.share_count - 1).into());
+                Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
                     // Check if this message should be sent to us.
@@ -1227,10 +1361,10 @@ mod tests {
         }
 
         // bip_transmit_3to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a HashMap.
+        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
-        let mut parties: Vec<Party> = Vec::with_capacity((parameters.share_count).into());
+        let mut parties: Vec<Party> = Vec::with_capacity((parameters.share_count) as usize);
         for i in 0..parameters.share_count {
             let result = phase4(
                 &all_data[i as usize],
@@ -1263,6 +1397,8 @@ mod tests {
         }
     }
 
+    /// Tests if [`compute_eth_address`] correctly
+    /// computes the Ethereum address for a fixed public key.
     #[test]
     fn test_compute_eth_address() {
         // You should test different values using, for example,

@@ -1,6 +1,31 @@
-/// This file implements the signing phase of Protocol 3.6 from `DKLs23`
-/// (<https://eprint.iacr.org/2023/765.pdf>). It is the core of this repository.
-use std::collections::HashMap;
+//! `DKLs23` signing protocol.
+//!
+//! This file implements the signing phase of Protocol 3.6 from `DKLs23`
+//! (<https://eprint.iacr.org/2023/765.pdf>). It is the core of this repository.
+//!
+//! # Nomenclature
+//!
+//! For the messages structs, we will use the following nomenclature:
+//!
+//! **Transmit** messages refer to only one counterparty, hence
+//! we must produce a whole vector of them. Each message in this
+//! vector contains the party index to whom we should send it.
+//!
+//! **Broadcast** messages refer to all counterparties at once,
+//! hence we only need to produce a unique instance of it.
+//! This message is broadcasted to all parties.
+//!
+//! ATTENTION: we broadcast the message to ourselves as well!
+//!
+//! **Keep** messages refer to only one counterparty, hence
+//! we must keep a whole vector of them. In this implementation,
+//! we use a `BTreeMap` instead of a vector, where one can put
+//! some party index in the key to retrieve the corresponding data.
+//!
+//! **Unique keep** messages refer to all counterparties at once,
+//! hence we only need to keep a unique instance of it.
+
+use std::collections::BTreeMap;
 
 use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
@@ -8,7 +33,6 @@ use serde::{Deserialize, Serialize};
 
 use hex;
 
-// use super::super::log;
 use crate::protocols::{Abort, PartiesMessage, Party};
 
 use crate::utilities::commits::{commit_point, verify_commitment_point};
@@ -16,21 +40,21 @@ use crate::utilities::hashes::{hash_as_scalar, HashOutput};
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
 use crate::utilities::ot::extension::OTEDataToSender;
 
-// This struct contains the data needed to start
-// the signature and that are used during the phases.
-
+/// Data needed to start the signature and is used during the phases.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignData {
     pub sign_id: Vec<u8>,
+    /// Vector containing the indices of the parties participating in the protocol (without us).
     pub counterparties: Vec<u8>,
+    /// Message to sign in bytes.
     pub message_to_sign: Vec<u8>,
 }
 
-////////// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
+// STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
 
-// "Transmit" messages refer to only one counterparty, hence
-// we must send a whole vector of them.
-
+/// Transmit - Signing.
+///
+/// The message is produced/sent during Phase 1 and used in Phase 2.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
@@ -38,6 +62,9 @@ pub struct TransmitPhase1to2 {
     pub mul_transmit: OTEDataToSender,
 }
 
+/// Transmit - Signing.
+///
+/// The message is produced/sent during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
@@ -50,21 +77,20 @@ pub struct TransmitPhase2to3 {
     pub mul_transmit: MulDataToReceiver,
 }
 
-// "Broadcast" messages refer to all counterparties at once,
-// hence we only need to send a unique instance of it.
-// ATTENTION: we broadcast the message to ourselves as well.
-
+/// Broadcast - Signing.
+///
+/// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Broadcast3to4 {
     pub u: Scalar,
     pub w: Scalar,
 }
 
-////////// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
+// STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
 
-// "Keep" messages refer to only one counterparty, hence
-// we must keep a whole vector of them.
-
+/// Keep - Signing.
+///
+/// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct KeepPhase1to2 {
     pub salt: Vec<u8>,
@@ -72,6 +98,9 @@ pub struct KeepPhase1to2 {
     pub mul_keep: MulDataToKeepReceiver,
 }
 
+/// Keep - Signing.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct KeepPhase2to3 {
     pub c_u: Scalar,
@@ -81,9 +110,9 @@ pub struct KeepPhase2to3 {
     pub chi: Scalar,
 }
 
-// "Unique keep" messages refer to all counterparties at once,
-// hence we only need to keep a unique instance of it.
-
+/// Unique keep - Signing.
+///
+/// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct UniqueKeep1to2 {
     pub instance_key: Scalar,
@@ -92,6 +121,9 @@ pub struct UniqueKeep1to2 {
     pub zeta: Scalar,
 }
 
+/// Unique keep - Signing.
+///
+/// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct UniqueKeep2to3 {
     pub instance_key: Scalar,
@@ -101,12 +133,17 @@ pub struct UniqueKeep2to3 {
     pub public_share: AffinePoint,
 }
 
-//////////////////////////
-
 // SIGNING PROTOCOL
 // We now follow Protocol 3.6 of DKLs23.
 
+/// Implementations related to the `DKLs23` signing protocol ([read more](self)).
 impl Party {
+    /// Phase 1 for signing: Steps 4, 5 and 6 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The outputs should be kept or transmitted according to the conventions
+    /// [here](self).
+    ///
     /// # Panics
     ///
     /// Will panic if the number of counterparties in `data` is incompatible.
@@ -116,7 +153,7 @@ impl Party {
         data: &SignData,
     ) -> (
         UniqueKeep1to2,
-        HashMap<u8, KeepPhase1to2>,
+        BTreeMap<u8, KeepPhase1to2>,
         Vec<TransmitPhase1to2>,
     ) {
         // Step 4 - We check if we have the correct number of counter parties.
@@ -126,8 +163,6 @@ impl Party {
             "The number of signing parties is not right!"
         );
 
-        eprintln!("server share: {:?}", hex::encode(self.pk.x().as_slice()));
-
         // Step 5 - We sample our secret data.
         let instance_key = Scalar::random(rand::thread_rng());
         let inversion_mask = Scalar::random(rand::thread_rng());
@@ -136,10 +171,9 @@ impl Party {
 
         // Step 6 - We prepare the messages to keep and to send.
 
-        let mut keep: HashMap<u8, KeepPhase1to2> =
-            HashMap::with_capacity((self.parameters.threshold - 1).into());
+        let mut keep: BTreeMap<u8, KeepPhase1to2> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase1to2> =
-            Vec::with_capacity((self.parameters.threshold - 1).into());
+            Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for counterparty in &data.counterparties {
             // Commit functionality.
             let (commitment, salt) = commit_point(&instance_point);
@@ -151,10 +185,11 @@ impl Party {
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             // We also use both the sign id and the DKG id.
             let mul_sid = [
-                self.party_index.to_be_bytes().to_vec(),
-                counterparty.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &self.party_index.to_be_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -184,14 +219,19 @@ impl Party {
             });
         }
 
-        // Zero-sharing functionality.
+        // Zero-shares functionality.
         // We put it here because it doesn't depend on counter parties.
 
         // We first compute a session id.
         // Now, different to DKLs23, we won't put the indexes from the parties
         // because the sign id refers only to this set of parties, hence
         // it's simpler and almost equivalent to take just the following:
-        let zero_sid = [self.session_id.clone(), data.sign_id.clone()].concat();
+        let zero_sid = [
+            "Zero shares protocol".as_bytes(),
+            &self.session_id,
+            &data.sign_id,
+        ]
+        .concat();
 
         let zeta = self.zero_share.compute(&data.counterparties, &zero_sid);
 
@@ -210,24 +250,33 @@ impl Party {
     // Communication round 1
     // Transmit the messages.
 
+    /// Phase 2 for signing: Step 7 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The inputs come from the previous phase. The messages received
+    /// should be gathered in a vector (in any order).
+    ///
+    /// The outputs should be kept or transmitted according to the conventions
+    /// [here](self).
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the multiplication protocol fails.
     ///
     /// # Panics
     ///
-    /// Will panic if the list of keys in the `HashMap`'s are incompatible
+    /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
     pub fn sign_phase2(
         &self,
         data: &SignData,
         unique_kept: &UniqueKeep1to2,
-        kept: &HashMap<u8, KeepPhase1to2>,
+        kept: &BTreeMap<u8, KeepPhase1to2>,
         received: &[TransmitPhase1to2],
     ) -> Result<
         (
             UniqueKeep2to3,
-            HashMap<u8, KeepPhase2to3>,
+            BTreeMap<u8, KeepPhase2to3>,
             Vec<TransmitPhase2to3>,
         ),
         Abort,
@@ -261,10 +310,9 @@ impl Party {
         let input = vec![unique_kept.instance_key, key_share];
 
         // Now, we compute the variables related to each counter party.
-        let mut keep: HashMap<u8, KeepPhase2to3> =
-            HashMap::with_capacity((self.parameters.threshold - 1).into());
+        let mut keep: BTreeMap<u8, KeepPhase2to3> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase2to3> =
-            Vec::with_capacity((self.parameters.threshold - 1).into());
+            Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for message in received {
             // Index for the counterparty.
             let counterparty = message.parties.sender;
@@ -276,10 +324,11 @@ impl Party {
             // Let us retrieve the session id for multiplication.
             // Note that the roles are now reversed.
             let mul_sid = [
-                counterparty.to_be_bytes().to_vec(),
-                self.party_index.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.party_index.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -358,6 +407,16 @@ impl Party {
     // Communication round 2
     // Transmit the messages.
 
+    /// Phase 3 for signing: Steps 8 and 9 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The inputs come from the previous phase. The messages received
+    /// should be gathered in a vector (in any order).
+    ///
+    /// The first output is already the value `r` from the ECDSA signature.
+    /// The second output should be broadcasted according to the conventions
+    /// [here](self).
+    ///
     /// # Errors
     ///
     /// Will return `Err` if some commitment doesn't verify, if the multiplication
@@ -366,13 +425,13 @@ impl Party {
     ///
     /// # Panics
     ///
-    /// Will panic if the list of keys in the `HashMap`'s are incompatible
+    /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
     pub fn sign_phase3(
         &self,
         data: &SignData,
         unique_kept: &UniqueKeep2to3,
-        kept: &HashMap<u8, KeepPhase2to3>,
+        kept: &BTreeMap<u8, KeepPhase2to3>,
         received: &[TransmitPhase2to3],
     ) -> Result<(String, Broadcast3to4), Abort> {
         // Steps 8 and 9
@@ -387,15 +446,6 @@ impl Party {
         let mut second_sum_v = Scalar::ZERO;
 
         for message in received {
-            // log(&format!(
-            //     "public_share server: {:?}",
-            //     hex::encode(message.public_share.x().as_slice())
-            // ));
-            // log(&format!(
-            //     "public_share client: {:?}",
-            //     hex::encode(self.pk.x().as_slice())
-            // ));
-
             // Index for the counterparty.
             let counterparty = message.parties.sender;
             let current_kept = kept.get(&counterparty).unwrap();
@@ -419,10 +469,11 @@ impl Party {
             // Let us retrieve the session id for multiplication.
             // Note that we reverse the roles again.
             let mul_sid = [
-                self.party_index.to_be_bytes().to_vec(),
-                counterparty.to_be_bytes().to_vec(),
-                self.session_id.clone(),
-                data.sign_id.clone(),
+                "Multiplication protocol".as_bytes(),
+                &self.party_index.to_be_bytes(),
+                &counterparty.to_be_bytes(),
+                &self.session_id,
+                &data.sign_id,
             ]
             .concat();
 
@@ -528,6 +579,16 @@ impl Party {
     // Communication round 3
     // Broadcast the messages (including to ourselves).
 
+    /// Phase 4 for signing: Step 10 from
+    /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
+    ///
+    /// The inputs come from the previous phase. The messages received
+    /// should be gathered in a vector (in any order). Note that our
+    /// broadcasted message from the previous round should also appear
+    /// here.
+    ///
+    /// The output is the value `s` from the ECDSA signature.
+    ///
     /// # Errors
     ///
     /// Will return `Err` if the final ECDSA signature is invalid.
@@ -562,7 +623,9 @@ impl Party {
     }
 }
 
-// This function is the verifying function from usual ECDSA.
+/// Usual verifying function from ECDSA.
+///
+/// It receives a message already in bytes.
 #[must_use]
 pub fn verify_ecdsa_signature(
     msg: &[u8],
@@ -619,6 +682,9 @@ mod tests {
     use crate::protocols::*;
     use rand::Rng;
 
+    /// Tests if the signing protocol generates a valid ECDSA signature.
+    ///
+    /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_signing() {
         // Disclaimer: this implementation is not the most efficient,
@@ -648,8 +714,7 @@ mod tests {
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
 
         // Each party prepares their data for this signing session.
-        let mut all_data: HashMap<u8, SignData> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -666,48 +731,36 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: HashMap<u8, UniqueKeep1to2> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_1to2: HashMap<u8, HashMap<u8, KeepPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap());
 
-            eprintln!("unique_keep: {:?}", unique_keep);
-            eprintln!("keep: {:?}", keep);
-            eprintln!("transmit: {:?}", transmit);
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
             transmit_1to2.insert(party_index, transmit);
         }
 
         // Communication round 1
-        let mut received_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase1to2> =
-                Vec::with_capacity((parameters.threshold - 1).into());
-            for (_, messages) in &transmit_1to2 {
-                for message in messages {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == party_index {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            received_1to2.insert(party_index, new_row);
+        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+
+        for &party_index in &executing_parties {
+            let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+
+            received_1to2.insert(party_index, messages_for_party);
         }
 
         // Phase 2
-        let mut unique_kept_2to3: HashMap<u8, UniqueKeep2to3> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_2to3: HashMap<u8, HashMap<u8, KeepPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -728,26 +781,23 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase2to3> =
-                Vec::with_capacity((parameters.threshold - 1).into());
-            for (_, messages) in &transmit_2to3 {
-                for message in messages {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == party_index {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            received_2to3.insert(party_index, new_row);
+        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+
+        for &party_index in &executing_parties {
+            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+
+            received_2to3.insert(party_index, messages_for_party);
         }
 
         // Phase 3
-        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold.into());
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
         let mut broadcast_3to4: Vec<Broadcast3to4> =
-            Vec::with_capacity(parameters.threshold.into());
+            Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
@@ -789,10 +839,12 @@ mod tests {
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
     }
 
+    /// Tests if the signing protocol generates a valid ECDSA signature
+    /// and that it is the same one as we would get if we knew the
+    /// secret key shared by the parties.
+    ///
+    /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
-    // This function compares the signature generated during
-    // the protocol with the usual signature someone would
-    // compute for ECDSA.
     fn test_signing_against_ecdsa() {
         let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
         let offset = rand::thread_rng().gen_range(0..=5);
@@ -816,8 +868,7 @@ mod tests {
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
 
         // Each party prepares their data for this signing session.
-        let mut all_data: HashMap<u8, SignData> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -834,12 +885,9 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: HashMap<u8, UniqueKeep1to2> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_1to2: HashMap<u8, HashMap<u8, KeepPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap());
@@ -850,29 +898,23 @@ mod tests {
         }
 
         // Communication round 1
-        let mut received_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase1to2> =
-                Vec::with_capacity((parameters.threshold - 1).into());
-            for (_, messages) in &transmit_1to2 {
-                for message in messages {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == party_index {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            received_1to2.insert(party_index, new_row);
+        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+
+        for &party_index in &executing_parties {
+            let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+
+            received_1to2.insert(party_index, messages_for_party);
         }
 
         // Phase 2
-        let mut unique_kept_2to3: HashMap<u8, UniqueKeep2to3> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_2to3: HashMap<u8, HashMap<u8, KeepPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -893,26 +935,23 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase2to3> =
-                Vec::with_capacity((parameters.threshold - 1).into());
-            for (_, messages) in &transmit_2to3 {
-                for message in messages {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == party_index {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            received_2to3.insert(party_index, new_row);
+        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+
+        for &party_index in &executing_parties {
+            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+
+            received_2to3.insert(party_index, messages_for_party);
         }
 
         // Phase 3
-        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold.into());
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
         let mut broadcast_3to4: Vec<Broadcast3to4> =
-            Vec::with_capacity(parameters.threshold.into());
+            Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
@@ -948,15 +987,12 @@ mod tests {
             &x_coord,
             &broadcast_3to4,
         );
-        let signature: String;
-        match result {
+        let signature = match result {
             Err(abort) => {
                 panic!("Party {} aborted: {:?}", abort.index, abort.description);
             }
-            Ok(s) => {
-                signature = s;
-            }
-        }
+            Ok(s) => s,
+        };
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
 
         // ECDSA (computations that would be done if there were only one person)
@@ -968,7 +1004,7 @@ mod tests {
         }
 
         // We compare the total "instance point" with the parties' calculations.
-        let total_instance_point = (AffinePoint::GENERATOR * &total_instance_key).to_affine();
+        let total_instance_point = (AffinePoint::GENERATOR * total_instance_key).to_affine();
         let expected_x_coord = hex::encode(total_instance_point.x().as_slice());
         assert_eq!(x_coord, expected_x_coord);
 
@@ -991,11 +1027,11 @@ mod tests {
         assert_eq!(signature, expected_signature);
     }
 
+    /// Tests DKG and signing together. The main purpose is to
+    /// verify whether the initialization protocols from DKG are working.
+    ///
+    /// It is a combination of `test_dkg_initialization` and [`test_signing`].
     #[test]
-    // This function tests DKG and signing. The main purpose is to
-    // verify whether the initialization protocols from DKG are working.
-    //
-    // It is a combination of test_dkg_initialization and test_signing.
     fn test_dkg_and_signing() {
         // DKG (as in test_dkg_initialization)
 
@@ -1009,7 +1045,7 @@ mod tests {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
-        let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count.into());
+        let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             all_data.push(SessionData {
                 parameters: parameters.clone(),
@@ -1019,7 +1055,7 @@ mod tests {
         }
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count.into());
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let out1 = phase1(&all_data[i as usize]);
 
@@ -1029,7 +1065,7 @@ mod tests {
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
         let mut poly_fragments = vec![
-            Vec::<Scalar>::with_capacity(parameters.share_count.into());
+            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
             parameters.share_count as usize
         ];
         for row_i in dkg_1 {
@@ -1039,17 +1075,16 @@ mod tests {
         }
 
         // Phase 2
-        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count.into());
+        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
         let mut proofs_commitments: Vec<ProofCommitment> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut zero_kept_2to3: Vec<HashMap<u8, KeepInitZeroSharePhase2to3>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut bip_broadcast_2to4: HashMap<u8, BroadcastDerivationPhase2to4> =
-            HashMap::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4> = BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5, out6) =
                 phase2(&all_data[i as usize], &poly_fragments[i as usize]);
@@ -1059,18 +1094,18 @@ mod tests {
             zero_kept_2to3.push(out3);
             zero_transmit_2to4.push(out4);
             bip_kept_2to3.push(out5);
-            bip_broadcast_2to4.insert(i + 1, out6); // This variable should be grouped into a HashMap.
+            bip_broadcast_2to4.insert(i + 1, out6); // This variable should be grouped into a BTreeMap.
         }
 
         // Communication round 2
         let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             // We don't need to transmit the commitments because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
             let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
-                Vec::with_capacity((parameters.share_count - 1).into());
+                Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_2to4 {
                 for message in party {
                     // Check if this message should be sent to us.
@@ -1083,19 +1118,18 @@ mod tests {
         }
 
         // bip_transmit_2to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a HashMap.
+        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 3
-        let mut zero_kept_3to4: Vec<HashMap<u8, KeepInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut mul_kept_3to4: Vec<HashMap<u8, KeepInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
-        let mut bip_broadcast_3to4: HashMap<u8, BroadcastDerivationPhase3to4> =
-            HashMap::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4> = BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5) = phase3(
                 &all_data[i as usize],
@@ -1107,20 +1141,20 @@ mod tests {
             zero_transmit_3to4.push(out2);
             mul_kept_3to4.push(out3);
             mul_transmit_3to4.push(out4);
-            bip_broadcast_3to4.insert(i + 1, out5); // This variable should be grouped into a HashMap.
+            bip_broadcast_3to4.insert(i + 1, out5); // This variable should be grouped into a BTreeMap.
         }
 
         // Communication round 3
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count.into());
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             // We don't need to transmit the proofs because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
             let mut new_row: Vec<TransmitInitZeroSharePhase3to4> =
-                Vec::with_capacity((parameters.share_count - 1).into());
+                Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_3to4 {
                 for message in party {
                     // Check if this message should be sent to us.
@@ -1132,7 +1166,7 @@ mod tests {
             zero_received_3to4.push(new_row);
 
             let mut new_row: Vec<TransmitInitMulPhase3to4> =
-                Vec::with_capacity((parameters.share_count - 1).into());
+                Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
                     // Check if this message should be sent to us.
@@ -1145,10 +1179,10 @@ mod tests {
         }
 
         // bip_transmit_3to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a HashMap.
+        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
-        let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count.into());
+        let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = phase4(
                 &all_data[i as usize],
@@ -1189,8 +1223,7 @@ mod tests {
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
 
         // Each party prepares their data for this signing session.
-        let mut all_data: HashMap<u8, SignData> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -1207,12 +1240,9 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: HashMap<u8, UniqueKeep1to2> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_1to2: HashMap<u8, HashMap<u8, KeepPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap());
@@ -1223,29 +1253,23 @@ mod tests {
         }
 
         // Communication round 1
-        let mut received_1to2: HashMap<u8, Vec<TransmitPhase1to2>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase1to2> =
-                Vec::with_capacity((parameters.threshold - 1).into());
-            for (_, messages) in &transmit_1to2 {
-                for message in messages {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == party_index {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            received_1to2.insert(party_index, new_row);
+        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+
+        for &party_index in &executing_parties {
+            let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+
+            received_1to2.insert(party_index, messages_for_party);
         }
 
         // Phase 2
-        let mut unique_kept_2to3: HashMap<u8, UniqueKeep2to3> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut kept_2to3: HashMap<u8, HashMap<u8, KeepPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        let mut transmit_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
+        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1266,26 +1290,23 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: HashMap<u8, Vec<TransmitPhase2to3>> =
-            HashMap::with_capacity(parameters.threshold.into());
-        for party_index in executing_parties.clone() {
-            let mut new_row: Vec<TransmitPhase2to3> =
-                Vec::with_capacity((parameters.threshold - 1).into());
-            for (_, messages) in &transmit_2to3 {
-                for message in messages {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == party_index {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            received_2to3.insert(party_index, new_row);
+        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+
+        for &party_index in &executing_parties {
+            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+
+            received_2to3.insert(party_index, messages_for_party);
         }
 
         // Phase 3
-        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold.into());
+        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
         let mut broadcast_3to4: Vec<Broadcast3to4> =
-            Vec::with_capacity(parameters.threshold.into());
+            Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),

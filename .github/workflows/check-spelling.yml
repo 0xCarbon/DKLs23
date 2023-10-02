@@ -17,14 +17,16 @@ jobs:
         with:
           # Extra dictionaries to verify words
           extra_dictionaries:
+            cspell:public-licenses/src/generated/public-licenses.txt
             cspell:cryptocurrencies/cryptocurrencies.txt
+            cspell:software-terms/src/computing-acronyms.txt
+            cspell:software-terms/src/network-protocols.txt
             cspell:software-terms/src/software-terms.txt
             cspell:bash/bash-words.txt
-            cspell:el/src/Greek.txt
-            cspell:en_GB/src/wordsEnGb.txt
             cspell:filetypes/filetypes.txt
             cspell:fonts/fonts.txt
-            cspell:fullstack/fullstack.txt
-            cspell:rust/rust.txt
+            cspell:fullstack/dict/fullstack.txt
+            cspell:rust/dict/rust.txt
+            cspell:typescript/dict/typescript.txt
           experimental_apply_changes_via_bot: 1
           check_file_names: 1

@@ -1,17 +1,41 @@
-/// This file implements an Oblivious Transfer Extension (OTE) that realizes
-/// Functionality 3 in `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>). It is
-/// used for the multiplication protocol (see multiplication.rs).
-///
-/// As `DKLs23` suggested, we use Roy's `SoftSpokenOT` (<https://eprint.iacr.org/2022/192.pdf>).
-/// However, we do not follow this paper directly. Instead, we use the KOS paper
-/// available at <https://eprint.iacr.org/2015/546.pdf>. In the corrected version,
-/// they present an alternative for their original protocol (which was used by DKLs,
-/// but was not as secure as expected) using `SoftSpokenOT` (see Fig. 10 in KOS).
-///
-/// In order to reduce the round count, we apply the Fiat-Shamir heuristic, as `DKLs23`
-/// instructs. We also include an additional phase in the protocol given by KOS. It
-/// comes from Protocol 9 of the `DKLs18` paper (<https://eprint.iacr.org/2018/499.pdf>).
-/// It is needed to transform the outputs to the desired form.
+//! Extension protocol.
+//!
+//! This file implements an Oblivious Transfer Extension (OTE) that realizes
+//! Functionality 3 in `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>). It is
+//! used for the multiplication protocol (see multiplication.rs).
+//!
+//! As `DKLs23` suggested, we use Roy's `SoftSpokenOT` (<https://eprint.iacr.org/2022/192.pdf>).
+//! However, we do not follow this paper directly. Instead, we use the `KOS` paper
+//! available at <https://eprint.iacr.org/2015/546.pdf>. In the corrected version,
+//! they present an alternative for their original protocol (which was used by `DKLs`,
+//! but was not as secure as expected) using `SoftSpokenOT` (see Fig. 10 in `KOS`).
+//!
+//! In order to reduce the round count, we apply the Fiat-Shamir heuristic, as `DKLs23`
+//! instructs. We also include an additional step in the protocol given by `KOS`. It
+//! comes from Protocol 9 of the `DKLs18` paper (<https://eprint.iacr.org/2018/499.pdf>).
+//! It is needed to transform the outputs to the desired form.
+//!
+//! # Remark: the OT width
+//!
+//! We implement the "forced-reuse" technique suggested in `DKLs23`.
+//! As they say: "Alice performs the steps of the protocol for each input in
+//! her vector, but uses a single batch of Bob’s OT instances for all of them,
+//! concatenating the corresponding OT payloads to form one batch of payloads
+//! with lengths proportionate to her input vector length."
+//!
+//! Actually, this approach is implicitly used in `DKLs19`. This can be seen,
+//! for example, in the two following implementations:
+//!
+//! <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>
+//!
+//! <https://github.com/docknetwork/crypto/blob/main/oblivious_transfer/src/ot_extensions/kos_ote.rs>
+//!
+//! In both of them, the sender supplies a vector of 2-tuples of correlations against
+//! a unique vector of choice bits by the receiver. This number "2" is called in the
+//! first implementation as the "OT width". We shall use the same terminology. Here,
+//! instead of taking a vector of k-tuples of correlations, we equivalently deal with
+//! k vectors of single correlations, where k is the OT width.
+
 use k256::Scalar;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -24,15 +48,30 @@ use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::ErrorOT;
 
+// CONSTANTS
 // You should not change these numbers!
 // If you do, some parts of the code must be changed.
+
+/// Computational security parameter.
 pub const KAPPA: u16 = RAW_SECURITY;
-pub const OT_SECURITY: u16 = 128 + STAT_SECURITY; //Number used by DKLs in implementations. It has to divide BATCH_SIZE!
+/// Statistical security parameter used in `KOS`.
+///
+/// This particular number comes from the implementation of `DKLs19`:
+/// <https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>.
+///
+/// It has to divide [`BATCH_SIZE`]!
+pub const OT_SECURITY: u16 = 128 + STAT_SECURITY;
+/// The extension execute this number of OT's.
+///
+/// This particular number is the one used in the [multiplication protocol](super::super::multiplication).
 pub const BATCH_SIZE: u16 = RAW_SECURITY + 2 * STAT_SECURITY;
+/// Constant `l'` as in Fig. 10 of `KOS`.
 pub const EXTENDED_BATCH_SIZE: u16 = BATCH_SIZE + OT_SECURITY;
 
-pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize]; //EXTENDED_BATCH_SIZE has to be divisible by 8.
-pub type FieldElement = [u8; (OT_SECURITY / 8) as usize]; //The same for OT_SECURITY
+/// Output of pseudo-random generator.
+pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
+/// Encodes an element in the field of 2^`OT_SECURITY` elements.
+pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
 pub fn serialize_vec_prg<S>(data: &Vec<[u8; 78]>, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -60,19 +99,21 @@ where
         .collect()
 }
 
+/// Sender's data and methods for the OTE protocol.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTESender {
-    pub correlation: Vec<bool>, //We will deal with bits separately
+    pub correlation: Vec<bool>, // We will deal with bits separately
     pub seeds: Vec<HashOutput>,
 }
 
+/// Receiver's data and methods for the OTE protocol.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTEReceiver {
     pub seeds0: Vec<HashOutput>,
     pub seeds1: Vec<HashOutput>,
 }
 
-// This struct is for better readability of the code.
+/// Data transmitted by the receiver to the sender after his first phase.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTEDataToSender {
     #[serde(
@@ -93,12 +134,18 @@ impl OTESender {
     // Attention: The roles are reversed during this part!
     // Hence, a sender in the extension initializes as a receiver in the base OT.
 
+    /// Starts the initialization.
+    ///
+    /// In this case, it initializes and runs **as a receiver** the first phase
+    /// of the base OT ([`KAPPA`] times).
+    ///
+    /// See [`OTReceiver`](super::base::OTReceiver) for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
         let ot_receiver = OTReceiver::init();
 
         // The choice bits are sampled randomly.
-        let mut correlation: Vec<bool> = Vec::with_capacity(KAPPA.into());
+        let mut correlation: Vec<bool> = Vec::with_capacity(KAPPA as usize);
         for _ in 0..KAPPA {
             correlation.push(rand::random());
         }
@@ -108,9 +155,15 @@ impl OTESender {
         (ot_receiver, correlation, vec_r, enc_proofs)
     }
 
+    /// Finishes the initialization.
+    ///
+    /// The inputs are the instance of [`OTReceiver`](super::base::OTReceiver) generated
+    /// in the previous round and everything needed to finish the OT base protocol
+    /// (see the description of the aforementioned struct).
+    ///
     /// # Errors
     ///
-    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
+    /// Will return `Err` if the base OT fails (see the file above).
     pub fn init_phase2(
         ot_receiver: &OTReceiver,
         session_id: &[u8],
@@ -126,32 +179,53 @@ impl OTESender {
 
     // PROTOCOL
     // We now follow the main steps in Fig. 10 of KOS.
+    // The suggestions given in the DKLs papers are also implemented.
+    // See the description at the beginning of this file for more details.
 
-    // Input: Correlation for the points (as in Functionality 3 of DKLs19) and values transmitted by the receiver.
-    // Output: Protocol's output and a value to be sent to the receiver.
+    /// Runs the sender's protocol.
+    ///
+    /// Input: OT width (see the remark [here](super::extension)), correlations for
+    /// the points and values transmitted by the receiver. In this case, a correlation
+    /// vector contains [`BATCH_SIZE`] scalars and `input_correlations` contains `ot_width`
+    /// correlation vectors.
+    ///
+    /// Output: Protocol's output and data to be sent to the receiver.
+    /// The usual output would be just a vector of [`BATCH_SIZE`] scalars.
+    /// However, we are executing the protocol `ot_width` times, so the result
+    /// is a vector containing `ot_width` such vectors.
+    ///
     /// # Errors
     ///
-    /// Will return  `Err` if the consistency check using the receiver values fails.
+    /// Will return  `Err` if `input_correlations` does not have the correct length
+    /// or if the consistency check using the receiver values fails.
     pub fn run(
         &self,
         session_id: &[u8],
-        input_correlation: &[Scalar],
+        ot_width: u8,
+        input_correlations: &[Vec<Scalar>],
         data: &OTEDataToSender,
-    ) -> Result<(Vec<Scalar>, Vec<Scalar>), ErrorOT> {
+    ) -> Result<(Vec<Vec<Scalar>>, Vec<Vec<Scalar>>), ErrorOT> {
+        // The protocol will be executed ot_width times using different input correlations.
+        if input_correlations.len() != ot_width as usize {
+            return Err(ErrorOT::new(
+                "The vector of input correlations does not have the expected size!",
+            ));
+        }
+
         // EXTEND
 
         // Step 1 - No action for the sender.
 
         // Step 2 - Extend the seed with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
-        let mut extended_seeds: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
+        let mut extended_seeds: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
-            let mut prg: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8).into()); //It may use more capacity.
+            let mut prg: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8) as usize); //It may use more capacity.
 
             // The PRG will given by concatenating "chunks" of hash outputs.
             // The reason for this is that we need more than 256 bits.
             let mut count = 0u16;
-            while prg.len() < (EXTENDED_BATCH_SIZE / 8).into() {
+            while prg.len() < (EXTENDED_BATCH_SIZE / 8) as usize {
                 // To change the "random oracle", we include the index and a counter into the salt.
                 let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
                 count += 1;
@@ -172,7 +246,7 @@ impl OTESender {
 
         // Step 4 - Compute the q from Fig. 10 in KOS.
         // It is computed with the matrix u sent by the receiver.
-        let mut q: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
+        let mut q: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
             let mut q_i = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
@@ -212,7 +286,7 @@ impl OTESender {
 
         // Step 3 - Verify the values sent by the receiver against our data.
         // We start by computing the verifying vector q (as in KOS, Fig. 10).
-        let mut verify_q: Vec<FieldElement> = Vec::with_capacity(KAPPA.into());
+        let mut verify_q: Vec<FieldElement> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
             // The summation sign on the protocol is just the sum of the following two terms:
             let prod_qi_1 = field_mul(&q[i as usize][0..(OT_SECURITY / 8) as usize], &chi1);
@@ -233,7 +307,7 @@ impl OTESender {
         }
 
         // We compute the same thing with the receiver's information.
-        let mut verify_sender: Vec<FieldElement> = Vec::with_capacity(KAPPA.into());
+        let mut verify_sender: Vec<FieldElement> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
             let mut verify_sender_i = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
@@ -262,6 +336,14 @@ impl OTESender {
         // Step 3 - We compute the final messages. For the final part, it will be better
         // if we compute them in the form Scalar<Secp256k1>.
 
+        // IMPORTANT: This step will generate the sender's output. In this implementation,
+        // we are executing the protocol ot_width times and, ideally, each execution must
+        // use a different random oracle. Thus, this last part of code will be repeatedly
+        // executed and the number of each iteration must appear in the hash functions.
+        // We could also execute the previous steps ot_width times, but the consistency
+        // checks would fail if we changed the random oracle (essentially because the
+        // receiver did his part only once and with a unique random oracle).
+
         // For convenience, we write the correlation in "compressed form" as an array of u8.
         // We interpreted the correlation as a little-endian representation of a number.
         let mut compressed_correlation: Vec<u8> = Vec::with_capacity((KAPPA / 8) as usize);
@@ -278,20 +360,34 @@ impl OTESender {
             );
         }
 
-        let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
-        let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
-        for j in 0..BATCH_SIZE {
-            // For v1, we compute transposed_q[j] ^ correlation.
-            let mut transposed_qj_plus_correlation = [0u8; (KAPPA / 8) as usize];
-            for i in 0..KAPPA / 8 {
-                transposed_qj_plus_correlation[i as usize] =
-                    transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
+        let mut vector_of_v0: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        let mut vector_of_v1: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                // For v1, we compute transposed_q[j] ^ correlation.
+                let mut transposed_qj_plus_correlation = [0u8; (KAPPA / 8) as usize];
+                for i in 0..KAPPA / 8 {
+                    transposed_qj_plus_correlation[i as usize] =
+                        transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
+                }
+
+                // This salt must depend on iteration (otherwise, v0 and v1 would be always the same).
+                let salt = [
+                    &j.to_be_bytes(),
+                    session_id,
+                    "Iteration number:".as_bytes(),
+                    &iteration.to_be_bytes(),
+                ]
+                .concat();
+
+                v0.push(hash_as_scalar(&transposed_q[j as usize], &salt));
+                v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
             }
 
-            let salt = [&j.to_be_bytes(), session_id].concat();
-
-            v0.push(hash_as_scalar(&transposed_q[j as usize], &salt));
-            v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
+            vector_of_v0.push(v0);
+            vector_of_v1.push(v1);
         }
 
         // TRANSFER
@@ -299,20 +395,31 @@ impl OTESender {
         // a random OT protocol. Now, for our use in DKLs23, we implement the
         // "Transfer" phase in Protocol 9 of DKLs18 (https://eprint.iacr.org/2018/499.pdf).
 
+        // As before, this part is executed ot_width times.
+
         // Step 1 - We compute t_A and tau, as in the paper.
         // Note that t_A is just the message v0 we computed above.
+        let mut vector_of_tau: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            // Retrieving the current values.
+            let v0 = &vector_of_v0[iteration as usize];
+            let v1 = &vector_of_v1[iteration as usize];
+            let input_correlation = &input_correlations[iteration as usize];
 
-        let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
-        for j in 0..BATCH_SIZE {
-            let tau_j = v1[j as usize] - v0[j as usize] + input_correlation[j as usize];
-            tau.push(tau_j);
+            let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                let tau_j = v1[j as usize] - v0[j as usize] + input_correlation[j as usize];
+                tau.push(tau_j);
+            }
+
+            vector_of_tau.push(tau);
         }
 
         // Step 2 - No action for the sender.
 
-        // v0 is the output for the sender.
-        // tau has to be sent to the receiver.
-        Ok((v0, tau))
+        // Each v0 in vector_of_v0 is the output for the sender in each iteration.
+        // vector_of_tau has to be sent to the receiver.
+        Ok((vector_of_v0, vector_of_tau))
     }
 }
 
@@ -325,6 +432,12 @@ impl OTEReceiver {
     // Attention: The roles are reversed during this part!
     // Hence, a receiver in the extension initializes as a sender in the base OT.
 
+    /// Starts the initialization.
+    ///
+    /// In this case, it initializes and runs **as a sender** the first phase
+    /// of the base OT ([`KAPPA`] times).
+    ///
+    /// See [`OTSender`](super::base::OTSender) for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof) {
         let ot_sender = OTSender::init(session_id);
@@ -334,9 +447,15 @@ impl OTEReceiver {
         (ot_sender, dlog_proof)
     }
 
+    /// Finishes the initialization.
+    ///
+    /// The inputs are the instance of [`OTSender`](super::base::OTSender) generated
+    /// in the previous round and everything needed to finish the OT base protocol
+    /// (see the description of the aforementioned struct).
+    ///
     /// # Errors
     ///
-    /// Will return `Err` if the initialization fails (see `ot/base.rs`).
+    /// Will return `Err` if the base OT fails (see the file above).
     pub fn init_phase2(
         ot_sender: &OTSender,
         session_id: &[u8],
@@ -352,8 +471,13 @@ impl OTEReceiver {
     // PROTOCOL
     // We now follow the main steps in Fig. 10 of KOS.
 
-    // Input: Choice bits.
-    // Output: Extended seeds (used in the next phase) and values to be sent to the sender.
+    /// Runs the first phase of the receiver's protocol.
+    ///
+    /// Note that it is the receiver who starts the OTE protocol.
+    ///
+    /// Input: [`BATCH_SIZE`] choice bits.
+    ///
+    /// Output: Extended seeds (used in the next phase) and data to be sent to the sender.
     #[must_use]
     pub fn run_phase1(
         &self,
@@ -363,7 +487,7 @@ impl OTEReceiver {
         // EXTEND
 
         // Step 1 - Extend the choice bits by adding random noise.
-        let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY.into());
+        let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY as usize);
         for _ in 0..OT_SECURITY {
             random_choice_bits.push(rand::random());
         }
@@ -372,7 +496,7 @@ impl OTEReceiver {
         // For convenience, we also keep the choice bits in "compressed form" as an array of u8.
         // We interpreted extended_choice_bits as a little-endian representation of a number.
         let mut compressed_extended_bits: Vec<u8> =
-            Vec::with_capacity((EXTENDED_BATCH_SIZE / 8).into());
+            Vec::with_capacity((EXTENDED_BATCH_SIZE / 8) as usize);
         for i in 0..EXTENDED_BATCH_SIZE / 8 {
             compressed_extended_bits.push(
                 u8::from(extended_choice_bits[(i * 8) as usize])
@@ -388,8 +512,8 @@ impl OTEReceiver {
 
         // Step 2 - Extend the seeds with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
-        let mut extended_seeds0: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
-        let mut extended_seeds1: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
+        let mut extended_seeds0: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
+        let mut extended_seeds1: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
             let mut prg0: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8) as usize); //It may use more capacity.
             let mut prg1: Vec<u8> = Vec::with_capacity((EXTENDED_BATCH_SIZE / 8) as usize);
@@ -397,7 +521,7 @@ impl OTEReceiver {
             // The PRG will given by concatenating "chunks" of hash outputs.
             // The reason for this is that we need more than 256 bits.
             let mut count = 0u16;
-            while prg0.len() < (EXTENDED_BATCH_SIZE / 8).into() {
+            while prg0.len() < (EXTENDED_BATCH_SIZE / 8) as usize {
                 // To change the "random oracle", we include the index and a counter into the salt.
                 let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
                 count += 1;
@@ -421,7 +545,7 @@ impl OTEReceiver {
 
         // Step 3 - Compute the matrix u from Fig. 10 in KOS.
         // This matrix will be sent to the sender.
-        let mut u: Vec<PRGOutput> = Vec::with_capacity(KAPPA.into());
+        let mut u: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
             let mut u_i = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
@@ -480,7 +604,7 @@ impl OTEReceiver {
                 ^ compressed_extended_bits[((2 * OT_SECURITY / 8) + k) as usize];
         }
 
-        let mut verify_t: Vec<FieldElement> = Vec::with_capacity(KAPPA.into());
+        let mut verify_t: Vec<FieldElement> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
             // The summation sign on the protocol is just the sum of the following two terms:
             let prod_ti_1 = field_mul(
@@ -517,16 +641,36 @@ impl OTEReceiver {
         (extended_seeds0, data_to_sender)
     }
 
-    // Input: Previous inputs and value tau sent by the sender.
-    // Output: Protocol's output.
-    #[must_use]
+    /// Finishes the receiver's protocol and gives his output.
+    ///
+    /// Input: Previous inputs, the OT width (see the remark [here](super::extension)),
+    /// the `extended_seeds` from the previous phase and the vector of values tau sent
+    /// by the sender.
+    ///
+    /// Output: Protocol's output. The usual output would be just a vector of [`BATCH_SIZE`]
+    /// scalars. However, we are executing the protocol `ot_width` times, so the result
+    /// is a vector containing `ot_width` such vectors.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the length of `vector_of_tau` is not `ot_width`.
     pub fn run_phase2(
         &self,
         session_id: &[u8],
+        ot_width: u8,
         choice_bits: &[bool],
         extended_seeds: &[PRGOutput],
-        tau: &[Scalar],
-    ) -> Vec<Scalar> {
+        vector_of_tau: &[Vec<Scalar>],
+    ) -> Result<Vec<Vec<Scalar>>, ErrorOT> {
+        // IMPORTANT: Since the sender executed its part with our data ot_width times,
+        // our final result will be ot_width times the usual result we would get.
+        // But first, we check that the sender gave us a message with the correct length.
+        if vector_of_tau.len() != ot_width as usize {
+            return Err(ErrorOT::new(
+                "The vector sent by the sender does not have the expected size!",
+            ));
+        }
+
         // TRANSPOSE AND RANDOMIZE
 
         // Step 1 - We compute the transpose of extended_seeds and take the first BATCH_SIZE rows.
@@ -536,10 +680,22 @@ impl OTEReceiver {
         // Step 2 - We compute the final message. For the final part, it will be better
         // if we compute it in the form Scalar<Secp256k1>.
 
-        let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
-        for j in 0..BATCH_SIZE {
-            let salt = [&j.to_be_bytes(), session_id].concat();
-            v.push(hash_as_scalar(&transposed_t[j as usize], &salt));
+        // As stated for the sender, we run this part ot_width times with varying salts.
+        let mut vector_of_v: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                let salt = [
+                    &j.to_be_bytes(),
+                    session_id,
+                    "Iteration number:".as_bytes(),
+                    &iteration.to_be_bytes(),
+                ]
+                .concat();
+                v.push(hash_as_scalar(&transposed_t[j as usize], &salt));
+            }
+
+            vector_of_v.push(v);
         }
 
         // Step 3 - No action for the receiver.
@@ -553,30 +709,43 @@ impl OTEReceiver {
 
         // Step 2 - We compute t_B as in the paper. We use the value tau sent by the sender.
 
-        let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
-        for j in 0..BATCH_SIZE {
-            let mut t_b_j = -&v[j as usize];
-            if choice_bits[j as usize] {
-                t_b_j = tau[j as usize] + t_b_j;
+        // Again, we repeat this step ot_width times.
+
+        let mut vector_of_t_b: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for iteration in 0..ot_width {
+            // Retrieving the current values.
+            let v = &vector_of_v[iteration as usize];
+            let tau = &vector_of_tau[iteration as usize];
+
+            let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            for j in 0..BATCH_SIZE {
+                let mut t_b_j = -&v[j as usize];
+                if choice_bits[j as usize] {
+                    t_b_j = tau[j as usize] + t_b_j;
+                }
+                t_b.push(t_b_j);
             }
-            t_b.push(t_b_j);
+
+            vector_of_t_b.push(t_b);
         }
 
-        // The output for the receiver is t_b
-        t_b
+        // Each t_b in vector_of_t_b is the output for the receiver in each iteration.
+        Ok(vector_of_t_b)
     }
 }
 
 // EXTRA FUNCTIONS
 
-/// This function receives a `KAPPA` by `EXTENDED_BATCH_SIZE` matrix of booleans,
-/// takes the first `BATCH_SIZE` columns and compute the transpose matrix, which
-/// has `BATCH_SIZE` rows and `KAPPA` columns.
+/// Transposes a given matrix.
+///
+/// This function receives a [`KAPPA`] by [`EXTENDED_BATCH_SIZE`] matrix of booleans,
+/// takes the first [`BATCH_SIZE`] columns and computes the transpose matrix, which
+/// has [`BATCH_SIZE`] rows and [`KAPPA`] columns.
 ///
 /// The only problem is that the rows in the input and output are grouped in
 /// bytes, so we have to take some care. For this conversion, we think of
 /// the rows as a little-endian representation of a number. For example, the row
-/// [1110000010100000] corresponds to [7, 5] in bytes (and not [224,160]).
+/// \[1110000010100000\] corresponds to \[7, 5\] in bytes (and not \[224,160\]).
 ///
 /// This code was essentially copied from the function `transposeBooleanMatrix` here:
 /// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
@@ -618,7 +787,7 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
     output
 }
 
-/// This function implements multiplication in the finite field of order 2^208.
+/// Multiplication in the finite field of order 2^[`OT_SECURITY`]].
 ///
 /// We follow <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
 ///
@@ -628,7 +797,7 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
 ///
 /// # Panics
 ///
-/// Will panic if `left` or `right` doesn't have the correct size, that is `OT_SECURITY` = 208 bits.
+/// Will panic if `left` or `right` doesn't have the correct size, that is [`OT_SECURITY`] = 208 bits.
 #[must_use]
 pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
     // Constants W and t from Section 2.3 in the book.
@@ -716,9 +885,16 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utilities::hashes::scalar_to_bytes;
     use k256::elliptic_curve::Field;
     use rand::Rng;
+    use std::collections::HashSet;
 
+    /// Tests if [`field_mul`] is correctly computing
+    /// the multiplication in the finite field.
+    ///
+    /// It is based on the test found here:
+    /// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos_test.go>.
     #[test]
     fn test_field_mul() {
         for _ in 0..100 {
@@ -734,6 +910,8 @@ mod tests {
         }
     }
 
+    /// Tests if the outputs for the OTE protocol
+    /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_extension() {
         let session_id = rand::thread_rng().gen::<[u8; 32]>();
@@ -751,36 +929,40 @@ mod tests {
 
         // Phase 2 - Receiver
         let result_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs);
-        let ote_receiver: OTEReceiver;
-        match result_receiver {
-            Ok(r) => {
-                ote_receiver = r;
-            }
+        let ote_receiver = match result_receiver {
+            Ok(r) => r,
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
             }
-        }
+        };
 
         // Phase 2 - Sender
         let result_sender =
             OTESender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof);
-        let ote_sender: OTESender;
-        match result_sender {
-            Ok(s) => {
-                ote_sender = s;
-            }
+        let ote_sender = match result_sender {
+            Ok(s) => s,
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
             }
-        }
+        };
 
         // PROTOCOL
 
+        let ot_width = 4;
+
         // Sampling the choices.
-        let mut sender_input_correlation: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE.into());
-        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE.into());
+        let mut sender_input_correlations: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for _ in 0..ot_width {
+            let mut current_input_correlation: Vec<Scalar> =
+                Vec::with_capacity(BATCH_SIZE as usize);
+            for _ in 0..BATCH_SIZE {
+                current_input_correlation.push(Scalar::random(rand::thread_rng()));
+            }
+            sender_input_correlations.push(current_input_correlation);
+        }
+
+        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            sender_input_correlation.push(Scalar::random(rand::thread_rng()));
             receiver_choice_bits.push(rand::random());
         }
 
@@ -792,13 +974,18 @@ mod tests {
         // Receiver keeps extended_seeds and transmits data_to_sender.
 
         // Unique phase - Sender
-        let sender_result = ote_sender.run(&session_id, &sender_input_correlation, &data_to_sender);
+        let sender_result = ote_sender.run(
+            &session_id,
+            ot_width,
+            &sender_input_correlations,
+            &data_to_sender,
+        );
 
-        let sender_output: Vec<Scalar>;
-        let tau: Vec<Scalar>;
+        let sender_outputs: Vec<Vec<Scalar>>;
+        let vector_of_tau: Vec<Vec<Scalar>>;
         match sender_result {
             Ok((v0, t)) => {
-                (sender_output, tau) = (v0, t);
+                (sender_outputs, vector_of_tau) = (v0, t);
             }
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
@@ -809,19 +996,83 @@ mod tests {
         // Sender transmits tau.
 
         // Phase 2 - Receiver
-        let receiver_output =
-            ote_receiver.run_phase2(&session_id, &receiver_choice_bits, &extended_seeds, &tau);
+        let receiver_result = ote_receiver.run_phase2(
+            &session_id,
+            ot_width,
+            &receiver_choice_bits,
+            &extended_seeds,
+            &vector_of_tau,
+        );
+
+        let receiver_outputs = match receiver_result {
+            Ok(t_b) => t_b,
+            Err(error) => {
+                panic!("OTE error: {:?}", error.description);
+            }
+        };
 
         // Verification that the protocol did what it should do.
-        for i in 0..BATCH_SIZE {
-            //Depending on the choice the receiver made, the sum of the outputs should
-            //be equal to 0 or to the correlation the sender chose.
-            let sum = &sender_output[i as usize] + &receiver_output[i as usize];
-            if receiver_choice_bits[i as usize] {
-                assert_eq!(sum, sender_input_correlation[i as usize]);
-            } else {
-                assert_eq!(sum, Scalar::ZERO);
+
+        let mut sender_outputs_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(ot_width as usize);
+        let mut receiver_outputs_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(ot_width as usize);
+
+        for iteration in 0..ot_width {
+            for i in 0..BATCH_SIZE {
+                //Depending on the choice the receiver made, the sum of the outputs should
+                //be equal to 0 or to the correlation the sender chose.
+                let sum = sender_outputs[iteration as usize][i as usize]
+                    + receiver_outputs[iteration as usize][i as usize];
+                if receiver_choice_bits[i as usize] {
+                    assert_eq!(
+                        sum,
+                        sender_input_correlations[iteration as usize][i as usize]
+                    );
+                } else {
+                    assert_eq!(sum, Scalar::ZERO);
+                }
             }
+
+            // We save these outputs in bytes for the next verification.
+            sender_outputs_as_bytes.push(
+                sender_outputs[iteration as usize]
+                    .clone()
+                    .into_iter()
+                    .map(|x| scalar_to_bytes(&x))
+                    .collect::<Vec<Vec<u8>>>()
+                    .concat(),
+            );
+            receiver_outputs_as_bytes.push(
+                receiver_outputs[iteration as usize]
+                    .clone()
+                    .into_iter()
+                    .map(|x| scalar_to_bytes(&x))
+                    .collect::<Vec<Vec<u8>>>()
+                    .concat(),
+            );
         }
+
+        // We confirm that there are not repeated outputs.
+        let mut sender_without_repetitions: HashSet<Vec<u8>> =
+            HashSet::with_capacity(ot_width as usize);
+        if !sender_outputs_as_bytes
+            .into_iter()
+            .all(move |x| sender_without_repetitions.insert(x))
+        {
+            panic!("Very improbable/unexpected: The sender got two identic outputs!");
+        }
+
+        let mut receiver_without_repetitions: HashSet<Vec<u8>> =
+            HashSet::with_capacity(ot_width as usize);
+        if !receiver_outputs_as_bytes
+            .into_iter()
+            .all(move |x| receiver_without_repetitions.insert(x))
+        {
+            panic!("Very improbable/unexpected: The receiver got two identic outputs!");
+        }
+
+        //TODO - We included this last check because an old implementation was wrong
+        //       and was generating repeated outputs for the sender. A more appropriate
+        //       test would be to run this test many times and attest that there is no
+        //       noticeable correlation between the outputs.
     }
 }

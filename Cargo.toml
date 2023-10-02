@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 k256 = { version = "0.13", features = ["serde"] }
+secp256k1 = "0.27.0"
 bitcoin_hashes = "0.13"
 sha3 = "0.10"
 rand = "0.8"
@@ -13,7 +14,6 @@ hex = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11.12"
 wasm-bindgen = "0.2.87"
-secp256k1 = "0.27.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
 version = "0.2"
