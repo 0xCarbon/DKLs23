@@ -11,14 +11,16 @@ use hex;
 use k256::elliptic_curve::{point::AffineCoordinates, Field};
 use k256::{AffinePoint, Scalar};
 use rand::Rng;
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
+// use super::super::log;
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Abort, Parameters, PartiesMessage, Party};
 
 use crate::utilities::commits;
-use crate::utilities::hashes::HashOutput;
+use crate::utilities::hashes::{point_to_bytes, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
@@ -197,7 +199,7 @@ pub fn step3(
 // Step 5 - Each party validates the other proofs. They also recover the "public keys fragments" from the other parties.
 // Finally, a consistency check is done. In the process, the public key is computed (Step 6).
 /// # Errors
-/// 
+///
 /// Will return `Err` if one of the proofs/commitments doesn't
 /// verify or if the consistency check for the public key fails.
 pub fn step5(
@@ -207,7 +209,7 @@ pub fn step5(
     proofs_commitments: &[ProofCommitment],
 ) -> Result<AffinePoint, Abort> {
     let mut committed_points: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into()); //The "public key fragments"
-                                                                                            // Verify the proofs and gather the committed points.
+                                                                                                    // Verify the proofs and gather the committed points.
     for party_j in proofs_commitments {
         if party_j.index != party_index {
             let verification =
@@ -280,7 +282,6 @@ pub fn step5(
 pub fn phase1(data: &SessionData) -> Vec<Scalar> {
     // DKG
     let secret_polynomial = step1(&data.parameters);
-    
 
     step2(&data.parameters, &secret_polynomial)
 }
@@ -308,8 +309,7 @@ pub fn phase2(
     BroadcastDerivationPhase2to4,
 ) {
     // DKG
-    let (poly_point, proof_commitment) =
-        step3(data.party_index, &data.session_id, poly_fragments);
+    let (poly_point, proof_commitment) = step3(data.party_index, &data.session_id, poly_fragments);
 
     // Initialization - Zero shares.
 
@@ -512,13 +512,13 @@ pub fn phase3(
 // Input (Init): Parameters, values kept and transmitted in previous phases.
 // Output: Instance of Party ready to sign.
 /// # Errors
-/// 
+///
 /// Will return `Err` if a message is not meant for the party
 /// or if one of the initializations fails. With very low probability,
 /// it may also fail if the secret data is trivial.
-/// 
+///
 /// # Panics
-/// 
+///
 /// Will panic if the list of keys in the `HashMap`'s are incompatible
 /// with the party indices in the received vectors.
 pub fn phase4(
@@ -540,6 +540,11 @@ pub fn phase4(
         &data.session_id,
         proofs_commitments,
     )?;
+    // eprintln!("\npublic key: {:?}", pk);
+    // log(&format!("public key: {:?}", pk));
+    // log(&format!("poly point: {:?}", poly_point));
+    eprintln!("public key: {:?}", pk);
+    eprintln!("poly point: {:?}", poly_point);
 
     // The public key cannot be the point at infinity.
     // This is practically impossible, but easy to check.
@@ -653,9 +658,7 @@ pub fn phase4(
             );
 
             let mul_receiver: MulReceiver = match receiver_result {
-                Ok(r) => {
-                    r
-                }
+                Ok(r) => r,
                 Err(error) => {
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
@@ -683,9 +686,7 @@ pub fn phase4(
             );
 
             let mul_sender: MulSender = match sender_result {
-                Ok(s) => {
-                    s
-                }
+                Ok(s) => s,
                 Err(error) => {
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
@@ -753,30 +754,34 @@ pub fn phase4(
     Ok(party)
 }
 
-// For convenience, we are going to include the Ethereum address.
+/// Computes the Ethereum address given a public key.
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
-    // Here, we will compute the address using the compressed form of pk.
-    let x_as_bytes = pk.x().as_slice().to_vec();
-    let prefix = if pk.y_is_odd().into() {
-        vec![3]
-    } else {
-        vec![2]
-    };
+    // In order to compute the address, we need the x and y coordinates
+    // of the point pk. However, k256 does not let us access y directly.
+    // Hence, will use the library secp256k1 to compute this value.
 
-    let compressed_pk = [prefix, x_as_bytes].concat();
+    // First, let us represent pk in compressed form.
+    let compressed_pk = point_to_bytes(pk);
+
+    // We now use the other library to get the y value.
+    let pk_alternative = PublicKey::from_slice(&compressed_pk)
+        .expect("We are inserting a point known to be on the curve!");
+    let uncompressed_pk_with_prefix = pk_alternative.serialize_uncompressed();
+
+    // Finally, here is pk in uncompressed form without the prefix 04.
+    let mut uncompressed_pk = [0u8; 64];
+    uncompressed_pk.copy_from_slice(&uncompressed_pk_with_prefix[1..]);
 
     // We compute the Keccak256 of the point.
     let mut hasher = Keccak256::new();
-    hasher.update(compressed_pk);
+    hasher.update(uncompressed_pk);
 
     // We save the last 20 bytes represented in hexadecimal.
     let address_bytes = &hasher.finalize()[12..];
-    let mut address = hex::encode(address_bytes);
-
-    // We insert 0x in the beginning.
-    address.insert(0, 'x');
-    address.insert(0, '0');
+    let mut address = String::with_capacity(42); // 2 for "0x" and 40 for the 20-byte address
+    address.push_str("0x");
+    address.push_str(&hex::encode(address_bytes));
 
     address
 }
@@ -858,8 +863,10 @@ mod tests {
 
         // Communication round 1
         // We transpose the matrix
-        let mut poly_fragments =
-            vec![Vec::<Scalar>::with_capacity(parameters.share_count.into()); parameters.share_count as usize];
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count.into());
+            parameters.share_count as usize
+        ];
         for row_i in phase1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row_i[j as usize]);
@@ -879,12 +886,7 @@ mod tests {
         let mut result_parties: Vec<Result<AffinePoint, Abort>> =
             Vec::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            result_parties.push(step5(
-                &parameters,
-                i + 1,
-                &session_id,
-                &proofs_commitments,
-            ));
+            result_parties.push(step5(&parameters, i + 1, &session_id, &proofs_commitments));
         }
 
         for result in result_parties {
@@ -1045,12 +1047,7 @@ mod tests {
         let mut results: Vec<Result<AffinePoint, Abort>> =
             Vec::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            results.push(step5(
-                &parameters,
-                i + 1,
-                &session_id,
-                &proofs_commitments,
-            ));
+            results.push(step5(&parameters, i + 1, &session_id, &proofs_commitments));
         }
 
         let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count.into());
@@ -1113,8 +1110,10 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments =
-            vec![Vec::<Scalar>::with_capacity(parameters.share_count.into()); parameters.share_count as usize];
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count.into());
+            parameters.share_count as usize
+        ];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row_i[j as usize]);
@@ -1134,7 +1133,8 @@ mod tests {
         let mut bip_broadcast_2to4: HashMap<u8, BroadcastDerivationPhase2to4> =
             HashMap::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5, out6) = phase2(&all_data[i as usize], &poly_fragments[i as usize]);
+            let (out1, out2, out3, out4, out5, out6) =
+                phase2(&all_data[i as usize], &poly_fragments[i as usize]);
 
             poly_points.push(out1);
             proofs_commitments.push(out2);
@@ -1179,8 +1179,11 @@ mod tests {
         let mut bip_broadcast_3to4: HashMap<u8, BroadcastDerivationPhase3to4> =
             HashMap::with_capacity(parameters.share_count.into());
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5) =
-                phase3(&all_data[i as usize], &zero_kept_2to3[i as usize], &bip_kept_2to3[i as usize]);
+            let (out1, out2, out3, out4, out5) = phase3(
+                &all_data[i as usize],
+                &zero_kept_2to3[i as usize],
+                &bip_kept_2to3[i as usize],
+            );
 
             zero_kept_3to4.push(out1);
             zero_transmit_3to4.push(out2);
@@ -1263,16 +1266,16 @@ mod tests {
     #[test]
     fn test_compute_eth_address() {
         // You should test different values using, for example,
-        // https://paulmillr.com/noble/ and https://emn178.github.io/online-tools/keccak_256.html.
+        // https://www.rfctools.com/ethereum-address-test-tool/.
         let sk = Scalar::reduce(U256::from_be_hex(
-            "cc545f6edbac6c62def9205033629e553acb1fceb95c171cf389c636ce4613a2",
+            "0249815B0D7E186DB61E7A6AAD6226608BB1C48B309EA8903CAB7A7283DA64A5",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();
 
         let address = compute_eth_address(&pk);
         assert_eq!(
             address,
-            "0x8be92babaa139ecf60145f822520b68cebb44711".to_string()
+            "0x2afddfdf813e567a6f357da818b16e2dae08599f".to_string()
         );
     }
 }

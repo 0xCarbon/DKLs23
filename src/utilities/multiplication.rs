@@ -1,16 +1,19 @@
-use k256::elliptic_curve::Field;
+use bitcoin_hashes::hex::DisplayHex;
 /// This file realizes Functionality 3.5 in `DKLs23` (<https://eprint.iacr.org/2023/765.pdf>).
 /// It is based upon the OT extension protocol in the file `ot/extension.rs`.
 ///
 /// As `DKLs23` suggested, we use Protocol 1 of `DKLs19` (<https://eprint.iacr.org/2019/523.pdf>).
 /// The first paper also gives some orientations on how to implement the protocol
 /// in only two-rounds (see page 8 and Section 5.1) which we adopt here.
+use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
 
-use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, scalar_to_bytes};
+use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
 
+use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
@@ -20,20 +23,20 @@ use crate::utilities::ot::ErrorOT;
 // Constant L from Functionality 3.5 in DKLs23 used for signing in Protocol 3.6.
 pub const L: u8 = 2;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulSender {
     pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulReceiver {
     pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
 }
 
 // These structs are for better readability of the code.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulDataToReceiver {
     pub tau_tilde: Vec<Vec<Scalar>>,
     pub tau_hat: Vec<Vec<Scalar>>,
@@ -42,10 +45,14 @@ pub struct MulDataToReceiver {
     pub gamma_sender: Vec<Scalar>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulDataToKeepReceiver {
     pub b: Scalar,
     pub choice_bits: Vec<bool>,
+    #[serde(
+        serialize_with = "serialize_vec_prg",
+        deserialize_with = "deserialize_vec_prg"
+    )]
     pub extended_seeds: Vec<PRGOutput>,
     pub chi_tilde: Vec<Scalar>,
     pub chi_hat: Vec<Scalar>,
@@ -81,7 +88,7 @@ impl MulSender {
 
     // The nonce will be sent by the receiver for the computation of the public gadget vector.
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_receiver: &OTReceiver,
@@ -122,7 +129,7 @@ impl MulSender {
     // Input: Protocol's input and data coming from receiver.
     // Output: Protocol's output and data to receiver.
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the underlying OT extension fails (see `ot/extension.rs`).
     pub fn run(
         &self,
@@ -187,7 +194,9 @@ impl MulSender {
 
         for i in 0..L {
             //Running OT protocol for tilde values.
-            let result = self.ote_sender.run(session_id, &correlation_tilde[i as usize], data);
+            let result = self
+                .ote_sender
+                .run(session_id, &correlation_tilde[i as usize], data);
 
             match result {
                 Ok((output, tau)) => {
@@ -203,7 +212,9 @@ impl MulSender {
             }
 
             //Running OT protocol for hat values.
-            let result = self.ote_sender.run(session_id, &correlation_hat[i as usize], data);
+            let result = self
+                .ote_sender
+                .run(session_id, &correlation_hat[i as usize], data);
 
             match result {
                 Ok((output, tau)) => {
@@ -256,7 +267,8 @@ impl MulSender {
             // We compute the i-th row of the matrix r in bytes.
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE.into());
             for j in 0..BATCH_SIZE {
-                let entry = (chi_tilde[i as usize] * z_tilde[i as usize][j as usize]) + (chi_hat[i as usize] * z_hat[i as usize][j as usize]);
+                let entry = (chi_tilde[i as usize] * z_tilde[i as usize][j as usize])
+                    + (chi_hat[i as usize] * z_hat[i as usize][j as usize]);
                 let entry_as_bytes = scalar_to_bytes(&entry);
                 entries_as_bytes.push(entry_as_bytes);
             }
@@ -264,7 +276,8 @@ impl MulSender {
             rows_r_as_bytes.push(row_i_as_bytes);
 
             // We compute the i-th entry of the vector u.
-            let entry = (chi_tilde[i as usize] * a_tilde[i as usize]) + (chi_hat[i as usize] * a_hat[i as usize]);
+            let entry = (chi_tilde[i as usize] * a_tilde[i as usize])
+                + (chi_hat[i as usize] * a_hat[i as usize]);
             verify_u.push(entry);
         }
         let r_as_bytes = rows_r_as_bytes.concat();
@@ -331,7 +344,7 @@ impl MulReceiver {
     }
 
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the initialization fails (see `ot/base.rs`).
     pub fn init_phase2(
         ot_sender: &OTSender,
@@ -446,7 +459,7 @@ impl MulReceiver {
     // Input: Data from previous phase and data from sender.
     // Output: Second of protocol's outputs.
     /// # Errors
-    /// 
+    ///
     /// Will return `Err` if the consistency check using the receiver values fails.
     pub fn run_phase2(
         &self,
@@ -495,7 +508,8 @@ impl MulReceiver {
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE.into());
             for j in 0..BATCH_SIZE {
                 // The entry depends on the choice bits.
-                let mut entry = (-(data_kept.chi_tilde[i as usize] * z_tilde[i as usize][j as usize]))
+                let mut entry = (-(data_kept.chi_tilde[i as usize]
+                    * z_tilde[i as usize][j as usize]))
                     - (data_kept.chi_hat[i as usize] * z_hat[i as usize][j as usize]);
                 if data_kept.choice_bits[j as usize] {
                     entry += &data_received.verify_u[i as usize];

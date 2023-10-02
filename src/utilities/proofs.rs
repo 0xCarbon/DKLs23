@@ -1,3 +1,4 @@
+use k256::elliptic_curve::{ops::Reduce, Field};
 /// This file implements some protocols for zero-knowledge proofs over the
 /// curve secp256k1.
 ///
@@ -9,12 +10,11 @@
 /// another zero knowledge proof employing the Chaum-Pedersen protocol, the
 /// OR-composition and the Fiat-Shamir transform (as in their paper).
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
-use k256::elliptic_curve::{ops::Reduce, Field};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::utilities::hashes::{HashOutput, hash, hash_as_scalar, point_to_bytes, scalar_to_bytes};
+use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, scalar_to_bytes, HashOutput};
 
 // Constants for the randomized Fischlin transform.
 pub const R: u16 = 64;
@@ -43,7 +43,6 @@ impl InteractiveDLogProof {
     // Step 1 - Sample the random commitments.
     #[must_use]
     pub fn prove_step1() -> (Scalar, AffinePoint) {
-
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
@@ -134,8 +133,8 @@ impl DLogProof {
     #[must_use]
     pub fn prove(scalar: &Scalar, session_id: &[u8]) -> DLogProof {
         // We execute Step 1 r times.
-        let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R.into());
-        let mut states: Vec<Scalar> = Vec::with_capacity(R.into());
+        let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R as usize);
+        let mut states: Vec<Scalar> = Vec::with_capacity(R as usize);
         for _ in 0..R {
             let (state, rand_commitment) = InteractiveDLogProof::prove_step1();
 
@@ -153,8 +152,8 @@ impl DLogProof {
 
         // Now, there is a "proof of work".
         // We have to find the good challenges.
-        let mut first_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2).into());
-        let mut last_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2).into());
+        let mut first_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2) as usize);
+        let mut last_proofs: Vec<InteractiveDLogProof> = Vec::with_capacity((R / 2) as usize);
         for i in 0..(R / 2) {
             // We will find different challenges until one of them works.
             // Since both hashes to be computed are of 2l bits, we expect
@@ -182,8 +181,11 @@ impl DLogProof {
                 // a lot of repetitions.
 
                 // We execute Step 2 at index i.
-                let first_proof =
-                    InteractiveDLogProof::prove_step2(scalar, &states[i as usize], &first_challenge);
+                let first_proof = InteractiveDLogProof::prove_step2(
+                    scalar,
+                    &states[i as usize],
+                    &first_challenge,
+                );
 
                 // Let's take the first hash here.
                 let first_msg = [
@@ -262,7 +264,7 @@ impl DLogProof {
         // We first verify that all vectors have the correct length.
         // If the prover is very unlucky, there is the possibility that
         // he doesn't return all the needed proofs.
-        if proof.rand_commitments.len() != R.into() || proof.proofs.len() != R.into() {
+        if proof.rand_commitments.len() != R as usize || proof.proofs.len() != R as usize {
             return false;
         }
 
@@ -276,8 +278,12 @@ impl DLogProof {
 
         // All the proofs should be different (otherwise, it would be easier to forge a proof).
         // Here we compare the random commitments using a HashSet.
-        let mut without_repetitions: HashSet<Vec<u8>> = HashSet::with_capacity(R.into());
-        if !vec_rc_as_bytes.clone().into_iter().all(move |x| without_repetitions.insert(x)) {
+        let mut without_repetitions: HashSet<Vec<u8>> = HashSet::with_capacity(R as usize);
+        if !vec_rc_as_bytes
+            .clone()
+            .into_iter()
+            .all(move |x| without_repetitions.insert(x))
+        {
             return false;
         }
 
@@ -311,9 +317,12 @@ impl DLogProof {
             }
 
             // We verify both proofs.
-            let verification_1 = proof.proofs[i as usize].verify(&proof.point, &proof.rand_commitments[i as usize]);
-            let verification_2 = proof.proofs[(i + (R / 2)) as usize]
-                .verify(&proof.point, &proof.rand_commitments[(i + (R / 2)) as usize]);
+            let verification_1 =
+                proof.proofs[i as usize].verify(&proof.point, &proof.rand_commitments[i as usize]);
+            let verification_2 = proof.proofs[(i + (R / 2)) as usize].verify(
+                &proof.point,
+                &proof.rand_commitments[(i + (R / 2)) as usize],
+            );
 
             if !verification_1 || !verification_2 {
                 return false;
@@ -445,7 +454,6 @@ impl CPProof {
     // Step 1 - Sample the random commitments.
     #[must_use]
     pub fn prove_step1(base_g: &AffinePoint, base_h: &AffinePoint) -> (Scalar, RandomCommitments) {
-        
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
