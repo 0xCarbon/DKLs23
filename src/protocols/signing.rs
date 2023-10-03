@@ -295,12 +295,6 @@ impl Party {
                 Scalar::from(u32::from(*counterparty)) - Scalar::from(u32::from(self.party_index));
         }
         let l = l_numerator * (l_denominator.invert().unwrap());
-        // log(&format!("l: {:?}", l));
-        // log(&format!("zeta: {:?}", unique_kept.zeta));
-        // log(&format!("poly_point: {:?}", self.poly_point));
-        eprintln!("l: {:?}", l);
-        eprintln!("zeta: {:?}", unique_kept.zeta);
-        eprintln!("poly_point: {:?}", self.poly_point);
 
         // These are sk_i and pk_i from the paper.
         let key_share = (self.poly_point * l) + unique_kept.zeta;
@@ -535,13 +529,7 @@ impl Party {
             second_sum_v = second_sum_v + current_kept.c_v + d_v;
         }
 
-        // log(&format!("expected: {:?}", expected_public_key));
-        // log(&format!("actual: {:?}", self.pk));
         // Second consistency check.
-        eprintln!(
-            "\nexpected: {:?}",
-            hex::encode(expected_public_key.x().as_slice())
-        );
         if expected_public_key != self.pk {
             return Err(Abort::new(
                 self.party_index,
@@ -645,23 +633,12 @@ pub fn verify_ecdsa_signature(
         return false;
     }
 
-    eprintln!("msg: {:?}", msg);
-    eprintln!("pk: {:?}", hex::encode(pk.x().as_slice()));
-    eprintln!("x_coord: {:?}", x_coord);
-    eprintln!("signature: {:?}", signature);
-    // log(&format!("msg: {:?}", msg));
-    // log(&format!("pk: {:?}", hex::encode(pk.x().as_slice())));
-    // log(&format!("x_coord: {:?}", x_coord));
-    // log(&format!("signature: {:?}", signature));
-
     let rx_as_scalar = Scalar::reduce(rx_as_int);
     let s_as_scalar = Scalar::reduce(s_as_int);
 
     let inverse_s = s_as_scalar.invert().unwrap();
 
     let first = hash_as_scalar(msg, &[]) * inverse_s;
-    // log(&format!("hashed msg: {:?}", hash_as_scalar(msg, &[])));
-    eprintln!("hashed msg: {:?}", hash_as_scalar(msg, &[]));
     let second = rx_as_scalar * inverse_s;
 
     let point_to_check = ((AffinePoint::GENERATOR * first) + (*pk * second)).to_affine();

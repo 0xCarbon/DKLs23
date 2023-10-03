@@ -11,7 +11,6 @@ use bitcoin_hashes::hex::DisplayHex;
 use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
 
 use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};

@@ -57,7 +57,6 @@ use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-// use super::super::log;
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Abort, Parameters, PartiesMessage, Party};
 
@@ -660,11 +659,6 @@ pub fn phase4(
         &data.session_id,
         proofs_commitments,
     )?;
-    // eprintln!("\npublic key: {:?}", pk);
-    // log(&format!("public key: {:?}", pk));
-    // log(&format!("poly point: {:?}", poly_point));
-    eprintln!("public key: {:?}", pk);
-    eprintln!("poly point: {:?}", poly_point);
 
     // The public key cannot be the point at infinity.
     // This is practically impossible, but easy to check.
