@@ -33,7 +33,7 @@ pub type Fingerprint = [u8; 4];
 pub type ChainCode = [u8; 32];
 
 /// Represents an error during the derivation protocol.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ErrorDeriv {
     pub description: String,
 }
@@ -55,7 +55,7 @@ impl ErrorDeriv {
 /// if someone wants to retrieve the full extended public key
 /// as in BIP-32. The only field missing is the one for the
 /// network, but it can be easily inferred from context.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct DerivData {
     /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,

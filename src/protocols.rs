@@ -17,14 +17,14 @@ pub mod refresh;
 pub mod signing;
 
 /// Contains the values `t` and  `n` from `DKLs23`.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Parameters {
     pub threshold: u8,   //t
     pub share_count: u8, //n
 }
 
 /// Represents a party after key generation ready to sign a message.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Party {
     pub parameters: Parameters,
     pub party_index: u8,
@@ -69,7 +69,7 @@ impl Abort {
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PartiesMessage {
     pub sender: u8,
     pub receiver: u8,

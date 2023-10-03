@@ -7,6 +7,7 @@
 //! The first paper also gives some orientations on how to implement the protocol
 //! in only two-rounds (see page 8 and Section 5.1) which we adopt here.
 
+use bitcoin_hashes::hex::DisplayHex;
 use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
 
+use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
@@ -28,21 +30,21 @@ pub const L: u8 = 2;
 pub const OT_WIDTH: u8 = 2 * L;
 
 /// Sender's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulSender {
     pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
 /// Receiver's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulReceiver {
     pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
 }
 
 /// Data transmitted by the sender to the receiver after his phase.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulDataToReceiver {
     pub vector_of_tau: Vec<Vec<Scalar>>,
     pub verify_r: HashOutput,
@@ -51,10 +53,14 @@ pub struct MulDataToReceiver {
 }
 
 /// Data kept by the receiver between phases.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MulDataToKeepReceiver {
     pub b: Scalar,
     pub choice_bits: Vec<bool>,
+    #[serde(
+        serialize_with = "serialize_vec_prg",
+        deserialize_with = "deserialize_vec_prg"
+    )]
     pub extended_seeds: Vec<PRGOutput>,
     pub chi_tilde: Vec<Scalar>,
     pub chi_hat: Vec<Scalar>,

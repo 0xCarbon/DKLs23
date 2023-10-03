@@ -37,7 +37,8 @@
 //! k vectors of single correlations, where k is the OT width.
 
 use k256::Scalar;
-use serde::{Deserialize, Serialize};
+use serde::de::Error;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
@@ -72,23 +73,53 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
+pub fn serialize_vec_prg<S>(data: &Vec<[u8; 78]>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let concatenated: Vec<u8> = data
+        .iter()
+        .flat_map(|&b| b.iter().cloned().collect::<Vec<_>>())
+        .collect();
+    serde_bytes::Serialize::serialize(&concatenated, serializer)
+}
+
+pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 78]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let concatenated: Vec<u8> = serde_bytes::Deserialize::deserialize(deserializer)?;
+
+    concatenated
+        .chunks(78)
+        .map(|chunk| {
+            let array: [u8; 78] = chunk.try_into().map_err(D::Error::custom)?;
+            Ok(array)
+        })
+        .collect()
+}
+
 /// Sender's data and methods for the OTE protocol.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTESender {
     pub correlation: Vec<bool>, // We will deal with bits separately
     pub seeds: Vec<HashOutput>,
 }
 
 /// Receiver's data and methods for the OTE protocol.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTEReceiver {
     pub seeds0: Vec<HashOutput>,
     pub seeds1: Vec<HashOutput>,
 }
 
 /// Data transmitted by the receiver to the sender after his first phase.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTEDataToSender {
+    #[serde(
+        serialize_with = "serialize_vec_prg",
+        deserialize_with = "deserialize_vec_prg"
+    )]
     pub u: Vec<PRGOutput>,
     pub verify_x: FieldElement,
     pub verify_t: Vec<FieldElement>,
