@@ -7,7 +7,6 @@
 //! The first paper also gives some orientations on how to implement the protocol
 //! in only two-rounds (see page 8 and Section 5.1) which we adopt here.
 
-use bitcoin_hashes::hex::DisplayHex;
 use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
