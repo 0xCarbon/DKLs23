@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 k256 = { version = "0.13", features = ["serde"] }
-secp256k1 = "0.27.0"
 bitcoin_hashes = "0.13"
 sha3 = "0.10"
 rand = "0.8"

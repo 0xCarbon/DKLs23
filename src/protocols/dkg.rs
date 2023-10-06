@@ -51,9 +51,9 @@ use std::collections::BTreeMap;
 
 use hex;
 use k256::elliptic_curve::Field;
-use k256::{AffinePoint, Scalar};
+use k256::{elliptic_curve::sec1::ToEncodedPoint, AffinePoint, Scalar};
+
 use rand::Rng;
-use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -61,7 +61,7 @@ use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Abort, Parameters, PartiesMessage, Party};
 
 use crate::utilities::commits;
-use crate::utilities::hashes::{point_to_bytes, HashOutput};
+use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
@@ -871,33 +871,37 @@ pub fn phase4(
 /// Computes the Ethereum address given a public key.
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
-    // In order to compute the address, we need the x and y coordinates
-    // of the point pk. However, k256 does not let us access y directly.
-    // Hence, will use the library secp256k1 to compute this value.
+    // Serialize the public key in uncompressed form
+    let uncompressed_pk = pk.to_encoded_point(false);
 
-    // First, let us represent pk in compressed form.
-    let compressed_pk = point_to_bytes(pk);
-
-    // We now use the other library to get the y value.
-    let pk_alternative = PublicKey::from_slice(&compressed_pk)
-        .expect("We are inserting a point known to be on the curve!");
-    let uncompressed_pk_with_prefix = pk_alternative.serialize_uncompressed();
-
-    // Finally, here is pk in uncompressed form without the prefix 04.
-    let mut uncompressed_pk = [0u8; 64];
-    uncompressed_pk.copy_from_slice(&uncompressed_pk_with_prefix[1..]);
-
-    // We compute the Keccak256 of the point.
+    // Compute the Keccak256 hash of the serialized public key
+    // Skip the "04" SEC-1 prefix, see: https://www.secg.org/sec1-v2.pdf sec 3.3.3 page 11
     let mut hasher = Keccak256::new();
-    hasher.update(uncompressed_pk);
+    hasher.update(&uncompressed_pk.as_bytes()[1..]);
 
-    // We save the last 20 bytes represented in hexadecimal.
-    let address_bytes = &hasher.finalize()[12..];
-    let mut address = String::with_capacity(42); // 2 for "0x" and 40 for the 20-byte address
-    address.push_str("0x");
-    address.push_str(&hex::encode(address_bytes));
+    // Take the last 20 bytes of the hash and convert to a hex string
+    let full_hash = hasher.finalize_reset();
+    let address = hex::encode(&full_hash[12..]);
 
-    address
+    // Compute the Keccak256 hash of the lowercase hexadecimal address
+    hasher.update(address.to_lowercase().as_bytes());
+    let hash_bytes = hasher.finalize();
+
+    // ERC-55: Mixed-case checksum address encoding: https://eips.ethereum.org/EIPS/eip-55
+    format!(
+        "0x{}",
+        address
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if c.is_alphabetic() && (hash_bytes[i / 2] >> (4 * (1 - i % 2)) & 0x0f) >= 8 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect::<String>()
+    )
 }
 
 #[cfg(test)]
@@ -1405,7 +1409,7 @@ mod tests {
         let address = compute_eth_address(&pk);
         assert_eq!(
             address,
-            "0x2afddfdf813e567a6f357da818b16e2dae08599f".to_string()
+            "0x2afDdfDF813E567A6f357Da818B16E2dae08599F".to_string()
         );
     }
 }
