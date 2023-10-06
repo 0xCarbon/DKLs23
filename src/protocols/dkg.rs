@@ -887,7 +887,7 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
     hasher.update(address.to_lowercase().as_bytes());
     let hash_bytes = hasher.finalize();
 
-    // EIP-55: Compute the checksum address and encode in it own casing
+    // ERC-55: Mixed-case checksum address encoding: https://eips.ethereum.org/EIPS/eip-55
     format!(
         "0x{}",
         address
