@@ -872,37 +872,36 @@ pub fn phase4(
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
     // Serialize the public key in uncompressed form
-    let mut uncompressed_pk = pk.to_encoded_point(false).as_bytes().to_vec();
-
-    // Skip the "04" prefix from SEC-1 standard, https://www.secg.org/sec1-v2.pdf sec 3.3.3 page 11
-    uncompressed_pk.remove(0);
+    let uncompressed_pk = pk.to_encoded_point(false);
 
     // Compute the Keccak256 hash of the serialized public key
+    // Skip the "04" SEC-1 prefix, see: https://www.secg.org/sec1-v2.pdf sec 3.3.3 page 11
     let mut hasher = Keccak256::new();
-    hasher.update(uncompressed_pk);
+    hasher.update(&uncompressed_pk.as_bytes()[1..]);
 
     // Take the last 20 bytes of the hash and convert to a hex string
-    let result = hasher.finalize();
-    let address = hex::encode(&result[12..]);
+    let full_hash = hasher.finalize_reset();
+    let address = hex::encode(&full_hash[12..]);
 
     // Compute the Keccak256 hash of the lowercase hexadecimal address
-    let address_lower = address.to_lowercase();
-    let mut hasher = Keccak256::new();
-    hasher.update(address_lower.as_bytes());
-
-    // Compute the checksum address
+    hasher.update(address.to_lowercase().as_bytes());
     let hash_bytes = hasher.finalize();
-    let checksum_address: String = address_lower.chars().enumerate()
-        .map(|(i, c)| {
-            if c.is_alphabetic() && (hash_bytes[i / 2] >> (4 * (1 - i % 2)) & 0x0f) >= 8 {
-                c.to_ascii_uppercase()
-            } else {
-                c
-            }
-        })
-        .collect();
 
-    format!("0x{}", checksum_address)
+    // EIP-55: Compute the checksum address and encode in it own casing
+    format!(
+        "0x{}",
+        address
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if c.is_alphabetic() && (hash_bytes[i / 2] >> (4 * (1 - i % 2)) & 0x0f) >= 8 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect::<String>()
+    )
 }
 
 #[cfg(test)]
