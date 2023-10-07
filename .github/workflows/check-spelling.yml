@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: check-spelling
-        uses: check-spelling/check-spelling@0.0.22
+        uses: check-spelling/check-spelling@v0.0.22
         with:
           dictionary_source_prefixes: '
             {
