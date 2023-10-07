@@ -17,19 +17,19 @@ jobs:
         with:
           dictionary_source_prefixes: '
             {
-              "cspell": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries",
+              "cspell_050923": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries",
             }'
           # Extra dictionaries to verify words
           extra_dictionaries:
-            cspell:public-licenses/src/generated/public-licenses.txt
-            cspell:cryptocurrencies/cryptocurrencies.txt
-            cspell:software-terms/src/network-protocols.txt
-            cspell:software-terms/src/software-terms.txt
-            cspell:bash/src/bash-words.txt
-            cspell:filetypes/filetypes.txt
-            cspell:fonts/fonts.txt
-            cspell:fullstack/src/fullstack.txt
-            cspell:rust/src/rust.txt
-            cspell:typescript/src/typescript.txt
+            cspell_050923:public-licenses/src/generated/public-licenses.txt
+            cspell_050923:cryptocurrencies/cryptocurrencies.txt
+            cspell_050923:software-terms/src/network-protocols.txt
+            cspell_050923:software-terms/src/software-terms.txt
+            cspell_050923:bash/src/bash-words.txt
+            cspell_050923:filetypes/filetypes.txt
+            cspell_050923:fonts/fonts.txt
+            cspell_050923:fullstack/src/fullstack.txt
+            cspell_050923:rust/src/rust.txt
+            cspell_050923:typescript/src/typescript.txt
           experimental_apply_changes_via_bot: 1
           check_file_names: 1
