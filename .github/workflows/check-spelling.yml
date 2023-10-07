@@ -17,7 +17,7 @@ jobs:
         with:
           dictionary_source_prefixes: '
             {
-              "cspell_050923": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries"
+              "cspell_050923": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries/"
             }'
           # Extra dictionaries to verify words
           extra_dictionaries:
