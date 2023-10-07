@@ -13,11 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: check-spelling
-        uses: check-spelling/check-spelling@v0.0.21
+        uses: check-spelling/check-spelling@v0.0.22
         with:
           dictionary_source_prefixes: '
             {
-              "cspell_050923": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries",
+              "cspell_050923": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries"
             }'
           # Extra dictionaries to verify words
           extra_dictionaries:
