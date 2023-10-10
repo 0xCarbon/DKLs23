@@ -25,18 +25,19 @@
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
 
-use std::collections::BTreeMap;
-
-use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates, Curve, Field};
+use k256::elliptic_curve::ScalarPrimitive;
+use k256::elliptic_curve::scalar::IsHigh;
+use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use hex;
 
 use crate::protocols::{Abort, PartiesMessage, Party};
 
 use crate::utilities::commits::{commit_point, verify_commitment_point};
-use crate::utilities::hashes::{hash_as_scalar, HashOutput};
+use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
 use crate::utilities::ot::extension::OTEDataToSender;
 
@@ -46,8 +47,8 @@ pub struct SignData {
     pub sign_id: Vec<u8>,
     /// Vector containing the indices of the parties participating in the protocol (without us).
     pub counterparties: Vec<u8>,
-    /// Message to sign in bytes.
-    pub message_to_sign: Vec<u8>,
+    /// Hash of message being signed.
+    pub message_hash: HashOutput,
 }
 
 // STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
@@ -554,7 +555,8 @@ impl Party {
 
         let x_coord = hex::encode(total_instance_point.x().as_slice());
         // There is no salt because the hash function here is always the same.
-        let w = (hash_as_scalar(&data.message_to_sign, &[]) * unique_kept.inversion_mask)
+        let w = (Scalar::reduce(U256::from_be_bytes(data.message_hash))
+            * unique_kept.inversion_mask)
             + (v * Scalar::reduce(U256::from_be_hex(&x_coord)));
 
         let broadcast = Broadcast3to4 { u, w };
@@ -585,6 +587,7 @@ impl Party {
         data: &SignData,
         x_coord: &str,
         received: &[Broadcast3to4],
+        normalize: bool,
     ) -> Result<String, Abort> {
         // Step 10
 
@@ -595,11 +598,18 @@ impl Party {
             denominator += &message.u;
         }
 
-        let signature_as_scalar = numerator * (denominator.invert().unwrap());
-        let signature = hex::encode(signature_as_scalar.to_bytes().as_slice());
+        let mut s = numerator * (denominator.invert().unwrap());
+
+        // Normalize signature into "low S" form as described in
+        // BIP-0062 Dealing with Malleability: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
+        if normalize && s.is_high().into() {
+            s = ScalarPrimitive::from(-s).into();
+        }
+
+        let signature = hex::encode(s.to_bytes().as_slice());
 
         let verification =
-            verify_ecdsa_signature(&data.message_to_sign, &self.pk, x_coord, &signature);
+            verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
         if !verification {
             return Err(Abort::new(
                 self.party_index,
@@ -616,7 +626,7 @@ impl Party {
 /// It receives a message already in bytes.
 #[must_use]
 pub fn verify_ecdsa_signature(
-    msg: &[u8],
+    msg: &HashOutput,
     pk: &AffinePoint,
     x_coord: &str,
     signature: &str,
@@ -638,7 +648,7 @@ pub fn verify_ecdsa_signature(
 
     let inverse_s = s_as_scalar.invert().unwrap();
 
-    let first = hash_as_scalar(msg, &[]) * inverse_s;
+    let first = Scalar::reduce(U256::from_be_bytes(*msg)) * inverse_s;
     let second = rx_as_scalar * inverse_s;
 
     let point_to_check = ((AffinePoint::GENERATOR * first) + (*pk * second)).to_affine();
@@ -657,6 +667,7 @@ mod tests {
     use crate::protocols::dkg::*;
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
+    use crate::utilities::hashes::hash;
     use rand::Rng;
 
     /// Tests if the signing protocol generates a valid ECDSA signature.
@@ -685,7 +696,7 @@ mod tests {
         // SIGNING
 
         let sign_id = rand::thread_rng().gen::<[u8; 32]>();
-        let message_to_sign = "Message to sign!".as_bytes();
+        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
@@ -702,7 +713,7 @@ mod tests {
                 SignData {
                     sign_id: sign_id.to_vec(),
                     counterparties,
-                    message_to_sign: message_to_sign.to_vec(),
+                    message_hash: message_to_sign,
                 },
             );
         }
@@ -809,6 +820,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -839,7 +851,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rand::thread_rng().gen::<[u8; 32]>();
-        let message_to_sign = "Message to sign!".as_bytes();
+        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
@@ -856,7 +868,7 @@ mod tests {
                 SignData {
                     sign_id: sign_id.to_vec(),
                     counterparties,
-                    message_to_sign: message_to_sign.to_vec(),
+                    message_hash: message_to_sign,
                 },
             );
         }
@@ -963,6 +975,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            false,
         );
         let signature = match result {
             Err(abort) => {
@@ -986,7 +999,7 @@ mod tests {
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:
-        let hashed_message = hash_as_scalar(message_to_sign, &[]);
+        let hashed_message = Scalar::reduce(U256::from_be_bytes(message_to_sign));
         assert_eq!(
             hashed_message,
             Scalar::reduce(U256::from_be_hex(
@@ -1194,7 +1207,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rand::thread_rng().gen::<[u8; 32]>();
-        let message_to_sign = "Message to sign!".as_bytes();
+        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
@@ -1211,7 +1224,7 @@ mod tests {
                 SignData {
                     sign_id: sign_id.to_vec(),
                     counterparties,
-                    message_to_sign: message_to_sign.to_vec(),
+                    message_hash: message_to_sign,
                 },
             );
         }
@@ -1318,6 +1331,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);

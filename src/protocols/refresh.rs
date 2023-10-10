@@ -1105,7 +1105,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rand::thread_rng().gen::<[u8; 32]>();
-        let message_to_sign = "Message to sign!".as_bytes();
+        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
@@ -1122,7 +1122,7 @@ mod tests {
                 SignData {
                     sign_id: sign_id.to_vec(),
                     counterparties,
-                    message_to_sign: message_to_sign.to_vec(),
+                    message_hash: message_to_sign,
                 },
             );
         }
@@ -1227,6 +1227,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -1373,7 +1374,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rand::thread_rng().gen::<[u8; 32]>();
-        let message_to_sign = "Message to sign!".as_bytes();
+        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
@@ -1390,7 +1391,7 @@ mod tests {
                 SignData {
                     sign_id: sign_id.to_vec(),
                     counterparties,
-                    message_to_sign: message_to_sign.to_vec(),
+                    message_hash: message_to_sign,
                 },
             );
         }
@@ -1496,6 +1497,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);

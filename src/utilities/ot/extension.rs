@@ -73,13 +73,13 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
-pub fn serialize_vec_prg<S>(data: &Vec<[u8; 78]>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     let concatenated: Vec<u8> = data
         .iter()
-        .flat_map(|&b| b.iter().cloned().collect::<Vec<_>>())
+        .flat_map(|&b| b.to_vec())
         .collect();
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
