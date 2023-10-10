@@ -598,20 +598,12 @@ impl Party {
             denominator += &message.u;
         }
 
-        /// Normalize signature into "low S" form as described in
-        /// [BIP 0062: Dealing with Malleability][1].
-        ///
-        /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
-        fn normalize_s(s: Scalar) -> Scalar {
-            if s.is_high().into() {
-                return ScalarPrimitive::from(-s).into()
-            }
-            s
-        }
-
         let mut s = numerator * (denominator.invert().unwrap());
-        if normalize {
-            s = normalize_s(s);
+
+        // Normalize signature into "low S" form as described in
+        // BIP-0062 Dealing with Malleability: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
+        if normalize && s.is_high().into() {
+            s = ScalarPrimitive::from(-s).into();
         }
 
         let signature = hex::encode(s.to_bytes().as_slice());
@@ -983,7 +975,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
-            true,
+            false,
         );
         let signature = match result {
             Err(abort) => {
