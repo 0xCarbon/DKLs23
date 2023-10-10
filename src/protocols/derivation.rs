@@ -533,6 +533,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);

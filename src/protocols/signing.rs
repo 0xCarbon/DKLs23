@@ -25,6 +25,8 @@
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
 
+use k256::elliptic_curve::ScalarPrimitive;
+use k256::elliptic_curve::scalar::IsHigh;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
@@ -585,6 +587,7 @@ impl Party {
         data: &SignData,
         x_coord: &str,
         received: &[Broadcast3to4],
+        normalize: bool,
     ) -> Result<String, Abort> {
         // Step 10
 
@@ -595,8 +598,23 @@ impl Party {
             denominator += &message.u;
         }
 
-        let signature_as_scalar = numerator * (denominator.invert().unwrap());
-        let signature = hex::encode(signature_as_scalar.to_bytes().as_slice());
+        /// Normalize signature into "low S" form as described in
+        /// [BIP 0062: Dealing with Malleability][1].
+        ///
+        /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
+        fn normalize_s(s: Scalar) -> Scalar {
+            if s.is_high().into() {
+                return ScalarPrimitive::from(-s).into()
+            }
+            s
+        }
+
+        let mut s = numerator * (denominator.invert().unwrap());
+        if normalize {
+            s = normalize_s(s);
+        }
+
+        let signature = hex::encode(s.to_bytes().as_slice());
 
         let verification =
             verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
@@ -810,6 +828,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
@@ -964,6 +983,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         let signature = match result {
             Err(abort) => {
@@ -1319,6 +1339,7 @@ mod tests {
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
+            true,
         );
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
