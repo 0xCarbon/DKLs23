@@ -25,8 +25,9 @@
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
 
-use k256::elliptic_curve::ScalarPrimitive;
+use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::scalar::IsHigh;
+use k256::elliptic_curve::ScalarPrimitive;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,13 @@ pub struct UniqueKeep2to3 {
     pub inversion_mask: Scalar,
     pub key_share: Scalar,
     pub public_share: AffinePoint,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct FinalSignature {
+    pub r: String,
+    pub s: String,
+    pub v: u8,
 }
 
 // SIGNING PROTOCOL
@@ -563,6 +571,7 @@ impl Party {
 
         // We also return the x-coordinate of the instance point.
         // This is half of the final signature.
+
         Ok((x_coord, broadcast))
     }
 
@@ -585,10 +594,10 @@ impl Party {
     pub fn sign_phase4(
         &self,
         data: &SignData,
-        x_coord: &str,
+        hex_sig_r: &str,
         received: &[Broadcast3to4],
         normalize: bool,
-    ) -> Result<String, Abort> {
+    ) -> Result<FinalSignature, Abort> {
         // Step 10
 
         let mut numerator = Scalar::ZERO;
@@ -606,10 +615,10 @@ impl Party {
             s = ScalarPrimitive::from(-s).into();
         }
 
-        let signature = hex::encode(s.to_bytes().as_slice());
+        let hex_sig_s = hex::encode(s.to_bytes().as_slice());
 
         let verification =
-            verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
+            verify_ecdsa_signature(&data.message_hash, &self.pk, hex_sig_r, &hex_sig_s);
         if !verification {
             return Err(Abort::new(
                 self.party_index,
@@ -617,7 +626,28 @@ impl Party {
             ));
         }
 
-        Ok(signature)
+        let prehash_signed = data.message_hash.as_slice();
+
+        let verifying_key_from_pk = VerifyingKey::from_affine(self.pk).unwrap();
+
+        let scalar_sig_r = Scalar::reduce(U256::from_be_hex(hex_sig_r));
+        let scalar_sig_s = Scalar::reduce(U256::from_be_hex(&hex_sig_s));
+        let partial_sig: Signature = Signature::from_scalars(scalar_sig_r, scalar_sig_s).unwrap();
+
+        let rec_id = RecoveryId::trial_recovery_from_prehash(
+            &verifying_key_from_pk,
+            prehash_signed,
+            &partial_sig,
+        )
+        .unwrap();
+
+        let full_sig = FinalSignature {
+            r: hex_sig_r.to_string(),
+            s: hex_sig_s,
+            v: rec_id.to_byte(),
+        };
+
+        Ok(full_sig)
     }
 }
 
@@ -1014,7 +1044,7 @@ mod tests {
         let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
 
         // We compare the results.
-        assert_eq!(signature, expected_signature);
+        assert_eq!(signature.s, expected_signature);
     }
 
     /// Tests DKG and signing together. The main purpose is to
