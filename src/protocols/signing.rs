@@ -135,13 +135,6 @@ pub struct UniqueKeep2to3 {
     pub public_share: AffinePoint,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct FinalSignature {
-    pub r: String,
-    pub s: String,
-    pub v: u8,
-}
-
 // SIGNING PROTOCOL
 // We now follow Protocol 3.6 of DKLs23.
 
