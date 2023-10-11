@@ -594,10 +594,10 @@ impl Party {
     pub fn sign_phase4(
         &self,
         data: &SignData,
-        hex_sig_r: &str,
+        x_coord: &str,
         received: &[Broadcast3to4],
         normalize: bool,
-    ) -> Result<FinalSignature, Abort> {
+    ) -> Result<(String, u8), Abort> {
         // Step 10
 
         let mut numerator = Scalar::ZERO;
@@ -615,10 +615,10 @@ impl Party {
             s = ScalarPrimitive::from(-s).into();
         }
 
-        let hex_sig_s = hex::encode(s.to_bytes().as_slice());
+        let signature = hex::encode(s.to_bytes().as_slice());
 
         let verification =
-            verify_ecdsa_signature(&data.message_hash, &self.pk, hex_sig_r, &hex_sig_s);
+            verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
         if !verification {
             return Err(Abort::new(
                 self.party_index,
@@ -630,8 +630,8 @@ impl Party {
 
         let verifying_key_from_pk = VerifyingKey::from_affine(self.pk).unwrap();
 
-        let scalar_sig_r = Scalar::reduce(U256::from_be_hex(hex_sig_r));
-        let scalar_sig_s = Scalar::reduce(U256::from_be_hex(&hex_sig_s));
+        let scalar_sig_r = Scalar::reduce(U256::from_be_hex(x_coord));
+        let scalar_sig_s = Scalar::reduce(U256::from_be_hex(&signature));
         let partial_sig: Signature = Signature::from_scalars(scalar_sig_r, scalar_sig_s).unwrap();
 
         let rec_id = RecoveryId::trial_recovery_from_prehash(
@@ -639,15 +639,10 @@ impl Party {
             prehash_signed,
             &partial_sig,
         )
-        .unwrap();
+        .unwrap()
+        .to_byte();
 
-        let full_sig = FinalSignature {
-            r: hex_sig_r.to_string(),
-            s: hex_sig_s,
-            v: rec_id.to_byte(),
-        };
-
-        Ok(full_sig)
+        Ok((signature, rec_id))
     }
 }
 
@@ -1044,7 +1039,7 @@ mod tests {
         let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
 
         // We compare the results.
-        assert_eq!(signature.s, expected_signature);
+        assert_eq!(signature.0, expected_signature);
     }
 
     /// Tests DKG and signing together. The main purpose is to
