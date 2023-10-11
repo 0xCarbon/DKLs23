@@ -586,7 +586,11 @@ impl Party {
     /// broadcasted message from the previous round should also appear
     /// here.
     ///
-    /// The output is the value `s` from the ECDSA signature.
+    /// The first output is the value `s` from the ECDSA signature.
+    /// The second output is the recovery id from the ECDSA signature.
+    /// Note that the parameter 'v' isn't this value, but it is used to compute it.
+    /// To know how to compute it, check the EIP which standardizes the transaction format
+    /// that you're using. For example: EIP-155, EIP-2930, EIP-1559.
     ///
     /// # Errors
     ///
@@ -634,6 +638,7 @@ impl Party {
         let scalar_sig_s = Scalar::reduce(U256::from_be_hex(&signature));
         let partial_sig: Signature = Signature::from_scalars(scalar_sig_r, scalar_sig_s).unwrap();
 
+        // Choose the recovery id by testing which possibility recover the right public key.
         let rec_id = RecoveryId::trial_recovery_from_prehash(
             &verifying_key_from_pk,
             prehash_signed,
