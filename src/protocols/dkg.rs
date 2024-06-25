@@ -190,7 +190,7 @@ pub struct UniqueKeepDerivationPhase2to3 {
 pub static INSECURE_RNG_SEED: Lazy<Mutex<u8>> = Lazy::new(|| Mutex::new(0));
 
 pub fn set_insecure_rng_seed(value: u8) {
-    *INSECURE_RNG_SEED.lock().unwrap() = value;
+    *INSECURE_RNG_SEED.try_lock().unwrap() = value;
 }
 
 // DISTRIBUTED KEY GENERATION (DKG)

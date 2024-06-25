@@ -66,7 +66,7 @@ impl InteractiveDLogProof {
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
             if cfg!(feature = "insecure-rng") {
-                let party_index = &INSECURE_RNG_SEED.lock().unwrap().clone();
+                let party_index = &INSECURE_RNG_SEED.try_lock().unwrap().clone();
                 scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(
                     party_index.to_owned() as u64,
                 ));
@@ -498,7 +498,7 @@ impl CPProof {
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
             if cfg!(feature = "insecure-rng") {
-                let party_index = &INSECURE_RNG_SEED.lock().unwrap().clone();
+                let party_index = &INSECURE_RNG_SEED.try_lock().unwrap().clone();
                 scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(
                     party_index.to_owned() as u64,
                 ));
