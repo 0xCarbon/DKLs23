@@ -48,11 +48,13 @@
 //! hence we only need to keep a unique instance of it.
 
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use hex;
 use k256::elliptic_curve::Field;
 use k256::{elliptic_curve::sec1::ToEncodedPoint, AffinePoint, Scalar};
 
+use once_cell::sync::Lazy;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
@@ -66,6 +68,7 @@ use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::zero_shares::{self, ZeroShare};
+use rand::SeedableRng;
 
 /// Used during key generation.
 ///
@@ -92,7 +95,7 @@ pub struct SessionData {
 /// Transmit - Initialization of zero shares protocol.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
@@ -101,7 +104,7 @@ pub struct TransmitInitZeroSharePhase2to4 {
 /// Transmit - Initialization of zero shares protocol.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
@@ -111,7 +114,7 @@ pub struct TransmitInitZeroSharePhase3to4 {
 /// Keep - Initialization of zero shares protocol.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -120,7 +123,7 @@ pub struct KeepInitZeroSharePhase2to3 {
 /// Keep - Initialization of zero shares protocol.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase3to4 {
     pub seed: zero_shares::Seed,
 }
@@ -130,7 +133,7 @@ pub struct KeepInitZeroSharePhase3to4 {
 /// Transmit - Initialization of multiplication protocol.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
 
@@ -144,7 +147,7 @@ pub struct TransmitInitMulPhase3to4 {
 /// Keep - Initialization of multiplication protocol.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeepInitMulPhase3to4 {
     pub ot_sender: ot::base::OTSender,
     pub nonce: Scalar,
@@ -159,7 +162,7 @@ pub struct KeepInitMulPhase3to4 {
 /// Broadcast - Initialization for key derivation.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase2to4 {
     pub sender_index: u8,
     pub cc_commitment: HashOutput,
@@ -168,7 +171,7 @@ pub struct BroadcastDerivationPhase2to4 {
 /// Broadcast - Initialization for key derivation.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase3to4 {
     pub sender_index: u8,
     pub aux_chain_code: ChainCode,
@@ -178,10 +181,16 @@ pub struct BroadcastDerivationPhase3to4 {
 /// Unique keep - Initialization for key derivation.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UniqueKeepDerivationPhase2to3 {
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
+}
+
+pub static INSECURE_RNG_SEED: Lazy<Mutex<u8>> = Lazy::new(|| Mutex::new(0));
+
+pub fn set_insecure_rng_seed(value: u8) {
+    *INSECURE_RNG_SEED.lock().unwrap() = value;
 }
 
 // DISTRIBUTED KEY GENERATION (DKG)
@@ -198,7 +207,11 @@ pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
     let mut rng = rand::thread_rng(); // Reuse RNG
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
     for _ in 0..parameters.threshold {
-        polynomial.push(Scalar::random(&mut rng)); // Pass the RNG explicitly
+        if cfg!(feature = "insecure-rng") {
+            polynomial.push(Scalar::random(rand::rngs::StdRng::seed_from_u64(42)));
+        } else {
+            polynomial.push(Scalar::random(&mut rng)); // Pass the RNG explicitly
+        }
     }
     polynomial
 }
@@ -434,7 +447,11 @@ pub fn phase2(
     // Initialization - BIP-32.
 
     // Each party samples a random auxiliary chain code.
-    let aux_chain_code: ChainCode = rand::thread_rng().gen();
+    let aux_chain_code: ChainCode = if cfg!(feature = "insecure-rng") {
+        rand::rngs::StdRng::seed_from_u64(42).gen()
+    } else {
+        rand::thread_rng().gen()
+    };
     let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
 
     let bip_keep = UniqueKeepDerivationPhase2to3 {

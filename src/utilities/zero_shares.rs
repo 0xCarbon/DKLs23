@@ -9,7 +9,7 @@ use crate::utilities::commits;
 use crate::utilities::hashes::{hash_as_scalar, HashOutput};
 
 use k256::Scalar;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
@@ -43,7 +43,11 @@ impl ZeroShare {
     /// At the time of de-commitment, these secret values are revealed.
     #[must_use]
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
-        let seed = rand::thread_rng().gen::<Seed>(); // This function doesn't work for higher SECURITY.
+        let seed = if cfg!(feature = "insecure-rng") {
+            rand::rngs::StdRng::seed_from_u64(42).gen::<Seed>()
+        } else {
+            rand::thread_rng().gen::<Seed>()
+        };
         let (commitment, salt) = commits::commit(&seed);
         (seed, commitment, salt)
     }

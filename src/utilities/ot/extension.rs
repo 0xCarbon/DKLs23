@@ -37,6 +37,7 @@
 //! k vectors of single correlations, where k is the OT width.
 
 use k256::Scalar;
+use rand::{Rng, SeedableRng};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -77,10 +78,7 @@ pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S
 where
     S: Serializer,
 {
-    let concatenated: Vec<u8> = data
-        .iter()
-        .flat_map(|&b| b.to_vec())
-        .collect();
+    let concatenated: Vec<u8> = data.iter().flat_map(|&b| b.to_vec()).collect();
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
 
@@ -147,7 +145,11 @@ impl OTESender {
         // The choice bits are sampled randomly.
         let mut correlation: Vec<bool> = Vec::with_capacity(KAPPA as usize);
         for _ in 0..KAPPA {
-            correlation.push(rand::random());
+            if cfg!(feature = "insecure-rng") {
+                correlation.push(rand::rngs::StdRng::seed_from_u64(42).gen());
+            } else {
+                correlation.push(rand::random());
+            }
         }
 
         let (vec_r, enc_proofs) = ot_receiver.run_phase1_batch(session_id, &correlation);

@@ -35,10 +35,11 @@
 
 use k256::elliptic_curve::{ops::Reduce, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+use crate::protocols::dkg::{set_insecure_rng_seed, INSECURE_RNG_SEED};
 use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, scalar_to_bytes, HashOutput};
 
 /// Constants for the randomized Fischlin transform.
@@ -64,7 +65,15 @@ impl InteractiveDLogProof {
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
-            scalar_rand_commitment = Scalar::random(rand::thread_rng());
+            if cfg!(feature = "insecure-rng") {
+                let party_index = &INSECURE_RNG_SEED.lock().unwrap().clone();
+                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(
+                    party_index.to_owned() as u64,
+                ));
+                set_insecure_rng_seed(party_index + 1);
+            } else {
+                scalar_rand_commitment = Scalar::random(rand::thread_rng());
+            }
         }
 
         let point_rand_commitment = (AffinePoint::GENERATOR * scalar_rand_commitment).to_affine();
@@ -189,7 +198,11 @@ impl DLogProof {
             let mut first_counter = 0u16;
             while first_counter < u16::MAX && !flag {
                 // We sample an array of T bits = T/8 bytes.
-                let first_challenge = rand::thread_rng().gen::<[u8; (T / 8) as usize]>();
+                let first_challenge = if cfg!(feature = "insecure-rng") {
+                    rand::rngs::StdRng::seed_from_u64(42).gen::<[u8; (T / 8) as usize]>()
+                } else {
+                    rand::thread_rng().gen::<[u8; (T / 8) as usize]>()
+                };
 
                 // If this challenge was already sampled, we should go back.
                 // However, with some tests, we saw that it is time consuming
@@ -226,7 +239,13 @@ impl DLogProof {
                 let mut second_counter = 0u16;
                 while second_counter < u16::MAX {
                     // We sample another array. Same considerations as before.
-                    let second_challenge = rand::thread_rng().gen::<[u8; (T / 8) as usize]>();
+                    let second_challenge = if cfg!(feature = "insecure-rng") {
+                        rand::rngs::StdRng::seed_from_u64(u64::from(second_counter))
+                            .gen::<[u8; (T / 8) as usize]>()
+                    } else {
+                        rand::thread_rng().gen::<[u8; (T / 8) as usize]>()
+                    };
+
                     //if used_second_challenges.contains(&second_challenge) { continue; }
 
                     // We execute Step 2 at index i + R/2.
@@ -478,7 +497,15 @@ impl CPProof {
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
-            scalar_rand_commitment = Scalar::random(rand::thread_rng());
+            if cfg!(feature = "insecure-rng") {
+                let party_index = &INSECURE_RNG_SEED.lock().unwrap().clone();
+                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(
+                    party_index.to_owned() as u64,
+                ));
+                set_insecure_rng_seed(party_index + 1);
+            } else {
+                scalar_rand_commitment = Scalar::random(rand::thread_rng());
+            }
         }
 
         let point_rand_commitment_g = (*base_g * scalar_rand_commitment).to_affine();
@@ -552,8 +579,16 @@ impl CPProof {
         point_v: &AffinePoint,
     ) -> (RandomCommitments, Scalar, CPProof) {
         // We sample the challenge and the response first.
-        let challenge = Scalar::random(rand::thread_rng());
-        let challenge_response = Scalar::random(rand::thread_rng());
+        let challenge = if cfg!(feature = "insecure-rng") {
+            Scalar::random(rand::rngs::StdRng::seed_from_u64(42))
+        } else {
+            Scalar::random(rand::thread_rng())
+        };
+        let challenge_response = if cfg!(feature = "insecure-rng") {
+            Scalar::random(rand::rngs::StdRng::seed_from_u64(42))
+        } else {
+            Scalar::random(rand::thread_rng())
+        };
 
         // Now we compute the "random" commitments that work for this challenge.
         let point_rand_commitment_g =

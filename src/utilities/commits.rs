@@ -6,7 +6,7 @@
 
 use crate::utilities::hashes::{hash, point_to_bytes, HashOutput};
 use k256::AffinePoint;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
@@ -22,7 +22,11 @@ use crate::SECURITY;
 pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
     //The paper instructs the salt to have 2*lambda_c bits.
     let mut salt = [0u8; 2 * SECURITY as usize];
-    rand::thread_rng().fill(&mut salt[..]);
+    if cfg!(feature = "insecure-rng") {
+        rand::rngs::StdRng::seed_from_u64(42).fill(&mut salt[..]);
+    } else {
+        rand::thread_rng().fill(&mut salt[..]);
+    }
 
     let commitment = hash(msg, &salt);
 

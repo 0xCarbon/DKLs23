@@ -9,6 +9,7 @@
 
 use k256::elliptic_curve::Field;
 use k256::Scalar;
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
@@ -168,8 +169,13 @@ impl MulSender {
         let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
-            a_tilde.push(Scalar::random(rand::thread_rng()));
-            a_hat.push(Scalar::random(rand::thread_rng()));
+            if cfg!(feature = "insecure-rng") {
+                a_tilde.push(Scalar::random(rand::rngs::StdRng::seed_from_u64(42)));
+                a_hat.push(Scalar::random(rand::rngs::StdRng::seed_from_u64(42)));
+            } else {
+                a_tilde.push(Scalar::random(rand::thread_rng()));
+                a_hat.push(Scalar::random(rand::thread_rng()));
+            }
         }
 
         // For the correlation, let us first explain the case L = 1.
@@ -344,7 +350,11 @@ impl MulReceiver {
         // For the choice of the public gadget vector, we will use the same approach
         // as in https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         // We sample a nonce that will be used by both parties to compute a common vector.
-        let nonce = Scalar::random(rand::thread_rng());
+        let nonce = if cfg!(feature = "insecure-rng") {
+            Scalar::random(rand::rngs::StdRng::seed_from_u64(42))
+        } else {
+            Scalar::random(rand::thread_rng())
+        };
 
         (ot_sender, proof, nonce)
     }

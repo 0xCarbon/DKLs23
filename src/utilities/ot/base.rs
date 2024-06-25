@@ -18,7 +18,7 @@
 
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, HashOutput};
@@ -57,7 +57,11 @@ impl OTSender {
         // We sample a nonzero random scalar.
         let mut s = Scalar::ZERO;
         while s == Scalar::ZERO {
-            s = Scalar::random(rand::thread_rng());
+            if cfg!(feature = "insecure-rng") {
+                s = Scalar::random(rand::rngs::StdRng::seed_from_u64(42));
+            } else {
+                s = Scalar::random(rand::thread_rng());
+            }
         }
 
         // In the paper, different protocols use different random oracles.
@@ -173,7 +177,11 @@ impl OTReceiver {
     /// Initializes the protocol.
     #[must_use]
     pub fn init() -> OTReceiver {
-        let seed = rand::thread_rng().gen::<Seed>();
+        let seed = if cfg!(feature = "insecure-rng") {
+            rand::rngs::StdRng::seed_from_u64(42).gen::<Seed>()
+        } else {
+            rand::thread_rng().gen::<Seed>()
+        };
 
         OTReceiver { seed }
     }
@@ -185,7 +193,11 @@ impl OTReceiver {
     #[must_use]
     pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
         // We sample the secret scalar r.
-        let r = Scalar::random(rand::thread_rng());
+        let r = if cfg!(feature = "insecure-rng") {
+            Scalar::random(rand::rngs::StdRng::seed_from_u64(42))
+        } else {
+            Scalar::random(rand::thread_rng())
+        };
 
         // We compute h as in the paper.
         // Instead of using a real identifier for the receiver,
