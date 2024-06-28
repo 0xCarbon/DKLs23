@@ -39,7 +39,6 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::protocols::dkg::{set_insecure_rng_seed, INSECURE_RNG_SEED};
 use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, scalar_to_bytes, HashOutput};
 
 /// Constants for the randomized Fischlin transform.
@@ -61,16 +60,12 @@ impl InteractiveDLogProof {
     ///
     /// The `Scalar` is kept secret while the `AffinePoint` is transmitted.
     #[must_use]
-    pub fn prove_step1() -> (Scalar, AffinePoint) {
+    pub fn prove_step1(seed: u64) -> (Scalar, AffinePoint) {
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
             if cfg!(feature = "insecure-rng") {
-                let party_index = &INSECURE_RNG_SEED.try_lock().unwrap().clone();
-                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(
-                    party_index.to_owned() as u64,
-                ));
-                set_insecure_rng_seed(party_index + 1);
+                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(seed));
             } else {
                 scalar_rand_commitment = Scalar::random(rand::thread_rng());
             }
@@ -167,8 +162,8 @@ impl DLogProof {
         // We execute Step 1 r times.
         let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R as usize);
         let mut states: Vec<Scalar> = Vec::with_capacity(R as usize);
-        for _ in 0..R {
-            let (state, rand_commitment) = InteractiveDLogProof::prove_step1();
+        for i in 0..R {
+            let (state, rand_commitment) = InteractiveDLogProof::prove_step1(i as u64);
 
             rand_commitments.push(rand_commitment);
             states.push(state);
@@ -498,11 +493,7 @@ impl CPProof {
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
             if cfg!(feature = "insecure-rng") {
-                let party_index = &INSECURE_RNG_SEED.try_lock().unwrap().clone();
-                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(
-                    party_index.to_owned() as u64,
-                ));
-                set_insecure_rng_seed(party_index + 1);
+                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(42));
             } else {
                 scalar_rand_commitment = Scalar::random(rand::thread_rng());
             }
