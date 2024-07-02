@@ -69,6 +69,7 @@ pub fn point_to_bytes(point: &AffinePoint) -> Vec<u8> {
 mod tests {
 
     use super::*;
+    use crate::utilities::rng;
     use hex;
     use k256::elliptic_curve::{point::AffineCoordinates, Field};
 
@@ -128,7 +129,7 @@ mod tests {
     #[test]
     fn test_point_to_bytes() {
         for _ in 0..100 {
-            let point = (AffinePoint::GENERATOR * Scalar::random(rand::thread_rng())).to_affine();
+            let point = (AffinePoint::GENERATOR * Scalar::random(rng::get_rng())).to_affine();
             if point == AffinePoint::IDENTITY {
                 continue;
             }

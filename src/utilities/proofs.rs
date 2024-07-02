@@ -35,11 +35,12 @@
 
 use k256::elliptic_curve::{ops::Reduce, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, scalar_to_bytes, HashOutput};
+use crate::utilities::rng;
 
 /// Constants for the randomized Fischlin transform.
 pub const R: u16 = 64;
@@ -60,15 +61,11 @@ impl InteractiveDLogProof {
     ///
     /// The `Scalar` is kept secret while the `AffinePoint` is transmitted.
     #[must_use]
-    pub fn prove_step1(seed: u64) -> (Scalar, AffinePoint) {
+    pub fn prove_step1(mut rng: impl RngCore) -> (Scalar, AffinePoint) {
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
-            if cfg!(feature = "insecure-rng") {
-                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(seed));
-            } else {
-                scalar_rand_commitment = Scalar::random(rand::thread_rng());
-            }
+            scalar_rand_commitment = Scalar::random(&mut rng);
         }
 
         let point_rand_commitment = (AffinePoint::GENERATOR * scalar_rand_commitment).to_affine();
@@ -162,8 +159,9 @@ impl DLogProof {
         // We execute Step 1 r times.
         let mut rand_commitments: Vec<AffinePoint> = Vec::with_capacity(R as usize);
         let mut states: Vec<Scalar> = Vec::with_capacity(R as usize);
-        for i in 0..R {
-            let (state, rand_commitment) = InteractiveDLogProof::prove_step1(i as u64);
+        let mut rng = rng::get_rng();
+        for _ in 0..R {
+            let (state, rand_commitment) = InteractiveDLogProof::prove_step1(&mut rng);
 
             rand_commitments.push(rand_commitment);
             states.push(state);
@@ -193,11 +191,7 @@ impl DLogProof {
             let mut first_counter = 0u16;
             while first_counter < u16::MAX && !flag {
                 // We sample an array of T bits = T/8 bytes.
-                let first_challenge = if cfg!(feature = "insecure-rng") {
-                    rand::rngs::StdRng::seed_from_u64(42).gen::<[u8; (T / 8) as usize]>()
-                } else {
-                    rand::thread_rng().gen::<[u8; (T / 8) as usize]>()
-                };
+                let first_challenge = rng::get_rng().gen::<[u8; (T / 8) as usize]>();
 
                 // If this challenge was already sampled, we should go back.
                 // However, with some tests, we saw that it is time consuming
@@ -232,14 +226,10 @@ impl DLogProof {
 
                 // Now comes the search for the next challenge.
                 let mut second_counter = 0u16;
+                let mut rng = rng::get_rng();
                 while second_counter < u16::MAX {
                     // We sample another array. Same considerations as before.
-                    let second_challenge = if cfg!(feature = "insecure-rng") {
-                        rand::rngs::StdRng::seed_from_u64(u64::from(second_counter))
-                            .gen::<[u8; (T / 8) as usize]>()
-                    } else {
-                        rand::thread_rng().gen::<[u8; (T / 8) as usize]>()
-                    };
+                    let second_challenge = rng.gen::<[u8; (T / 8) as usize]>();
 
                     //if used_second_challenges.contains(&second_challenge) { continue; }
 
@@ -492,11 +482,7 @@ impl CPProof {
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = Scalar::ZERO;
         while scalar_rand_commitment == Scalar::ZERO {
-            if cfg!(feature = "insecure-rng") {
-                scalar_rand_commitment = Scalar::random(rand::rngs::StdRng::seed_from_u64(42));
-            } else {
-                scalar_rand_commitment = Scalar::random(rand::thread_rng());
-            }
+            scalar_rand_commitment = Scalar::random(rng::get_rng());
         }
 
         let point_rand_commitment_g = (*base_g * scalar_rand_commitment).to_affine();
@@ -570,16 +556,9 @@ impl CPProof {
         point_v: &AffinePoint,
     ) -> (RandomCommitments, Scalar, CPProof) {
         // We sample the challenge and the response first.
-        let challenge = if cfg!(feature = "insecure-rng") {
-            Scalar::random(rand::rngs::StdRng::seed_from_u64(42))
-        } else {
-            Scalar::random(rand::thread_rng())
-        };
-        let challenge_response = if cfg!(feature = "insecure-rng") {
-            Scalar::random(rand::rngs::StdRng::seed_from_u64(42))
-        } else {
-            Scalar::random(rand::thread_rng())
-        };
+        let challenge = Scalar::random(rng::get_rng());
+
+        let challenge_response = Scalar::random(rng::get_rng());
 
         // Now we compute the "random" commitments that work for this challenge.
         let point_rand_commitment_g =
@@ -846,8 +825,8 @@ mod tests {
     /// Tests if proving and verifying work for [`DLogProof`].
     #[test]
     fn test_dlog_proof() {
-        let scalar = Scalar::random(rand::thread_rng());
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let scalar = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
         let proof = DLogProof::prove(&scalar, &session_id);
         assert!(DLogProof::verify(&proof, &session_id));
     }
@@ -856,8 +835,8 @@ mod tests {
     /// to see if the verify function detects.
     #[test]
     fn test_dlog_proof_fail_proof() {
-        let scalar = Scalar::random(rand::thread_rng());
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let scalar = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
         let mut proof = DLogProof::prove(&scalar, &session_id);
         proof.proofs[0].challenge_response *= Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::verify(&proof, &session_id)));
@@ -867,8 +846,8 @@ mod tests {
     /// in the case with commitment.
     #[test]
     fn test_dlog_proof_commit() {
-        let scalar = Scalar::random(rand::thread_rng());
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let scalar = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
         let (proof, commitment) = DLogProof::prove_commit(&scalar, &session_id);
         assert!(DLogProof::decommit_verify(&proof, &commitment, &session_id));
     }
@@ -877,8 +856,8 @@ mod tests {
     /// the proof on purpose to see if the verify function detects.
     #[test]
     fn test_dlog_proof_commit_fail_proof() {
-        let scalar = Scalar::random(rand::thread_rng());
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let scalar = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
         let (mut proof, commitment) = DLogProof::prove_commit(&scalar, &session_id);
         proof.proofs[0].challenge_response *= Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::decommit_verify(&proof, &commitment, &session_id)));
@@ -888,8 +867,8 @@ mod tests {
     /// the commitment on purpose to see if the verify function detects.
     #[test]
     fn test_dlog_proof_commit_fail_commitment() {
-        let scalar = Scalar::random(rand::thread_rng());
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let scalar = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
         let (proof, mut commitment) = DLogProof::prove_commit(&scalar, &session_id);
         if commitment[0] == 0 {
             commitment[0] = 1;
@@ -904,9 +883,9 @@ mod tests {
     /// Tests if proving and verifying work for [`CPProof`].
     #[test]
     fn test_cp_proof() {
-        let log_base_g = Scalar::random(rand::thread_rng());
-        let log_base_h = Scalar::random(rand::thread_rng());
-        let scalar = Scalar::random(rand::thread_rng());
+        let log_base_g = Scalar::random(rng::get_rng());
+        let log_base_h = Scalar::random(rng::get_rng());
+        let scalar = Scalar::random(rng::get_rng());
 
         let generator = AffinePoint::GENERATOR;
         let base_g = (generator * log_base_g).to_affine();
@@ -916,7 +895,7 @@ mod tests {
         let (scalar_rand_commitment, rand_commitments) = CPProof::prove_step1(&base_g, &base_h);
 
         // Verifier - Gather the commitments and choose the challenge.
-        let challenge = Scalar::random(rand::thread_rng());
+        let challenge = Scalar::random(rng::get_rng());
 
         // Prover - Step 2.
         let proof = CPProof::prove_step2(
@@ -936,10 +915,10 @@ mod tests {
     /// Tests if simulating a fake proof and verifying work for [`CPProof`].
     #[test]
     fn test_cp_proof_simulate() {
-        let log_base_g = Scalar::random(rand::thread_rng());
-        let log_base_h = Scalar::random(rand::thread_rng());
-        let log_point_u = Scalar::random(rand::thread_rng());
-        let log_point_v = Scalar::random(rand::thread_rng());
+        let log_base_g = Scalar::random(rng::get_rng());
+        let log_base_h = Scalar::random(rng::get_rng());
+        let log_point_u = Scalar::random(rng::get_rng());
+        let log_point_v = Scalar::random(rng::get_rng());
 
         let generator = AffinePoint::GENERATOR;
         let base_g = (generator * log_base_g).to_affine();
@@ -962,12 +941,12 @@ mod tests {
     #[test]
     fn test_enc_proof() {
         // We sample the initial values.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
-        let log_base_h = Scalar::random(rand::thread_rng());
+        let log_base_h = Scalar::random(rng::get_rng());
         let base_h = (AffinePoint::GENERATOR * log_base_h).to_affine();
 
-        let scalar = Scalar::random(rand::thread_rng());
+        let scalar = Scalar::random(rng::get_rng());
 
         let bit: bool = rand::random();
 

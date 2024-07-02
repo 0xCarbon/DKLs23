@@ -41,6 +41,7 @@ use crate::utilities::commits::{commit_point, verify_commitment_point};
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
 use crate::utilities::ot::extension::OTEDataToSender;
+use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
 #[derive(Serialize, Deserialize, Debug)]
@@ -166,8 +167,8 @@ impl Party {
         );
 
         // Step 5 - We sample our secret data.
-        let instance_key = Scalar::random(rand::thread_rng());
-        let inversion_mask = Scalar::random(rand::thread_rng());
+        let instance_key = Scalar::random(rng::get_rng());
+        let inversion_mask = Scalar::random(rng::get_rng());
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
 
@@ -703,8 +704,8 @@ mod tests {
         // parties are being simulated one after the other, but they
         // should actually execute the protocol simultaneously.
 
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -712,13 +713,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rand::thread_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::random(rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
 
-        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().gen::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -858,8 +859,8 @@ mod tests {
     /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_signing_against_ecdsa() {
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -867,13 +868,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rand::thread_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::random(rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().gen::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1048,14 +1049,14 @@ mod tests {
     fn test_dkg_and_signing() {
         // DKG (as in test_dkg_initialization)
 
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1229,7 +1230,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().gen::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.

@@ -9,11 +9,11 @@
 
 use k256::elliptic_curve::Field;
 use k256::Scalar;
-use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
+use crate::utilities::rng;
 
 use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
@@ -169,13 +169,8 @@ impl MulSender {
         let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
-            if cfg!(feature = "insecure-rng") {
-                a_tilde.push(Scalar::random(rand::rngs::StdRng::seed_from_u64(42)));
-                a_hat.push(Scalar::random(rand::rngs::StdRng::seed_from_u64(42)));
-            } else {
-                a_tilde.push(Scalar::random(rand::thread_rng()));
-                a_hat.push(Scalar::random(rand::thread_rng()));
-            }
+            a_tilde.push(Scalar::random(rng::get_rng()));
+            a_hat.push(Scalar::random(rng::get_rng()));
         }
 
         // For the correlation, let us first explain the case L = 1.
@@ -350,11 +345,7 @@ impl MulReceiver {
         // For the choice of the public gadget vector, we will use the same approach
         // as in https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         // We sample a nonce that will be used by both parties to compute a common vector.
-        let nonce = if cfg!(feature = "insecure-rng") {
-            Scalar::random(rand::rngs::StdRng::seed_from_u64(42))
-        } else {
-            Scalar::random(rand::thread_rng())
-        };
+        let nonce = Scalar::random(rng::get_rng());
 
         (ot_sender, proof, nonce)
     }
@@ -597,7 +588,7 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_multiplication() {
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // INITIALIZATION
 
@@ -643,7 +634,7 @@ mod tests {
         // Sampling the choices.
         let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
-            sender_input.push(Scalar::random(rand::thread_rng()));
+            sender_input.push(Scalar::random(rng::get_rng()));
         }
 
         // Phase 1 - Receiver

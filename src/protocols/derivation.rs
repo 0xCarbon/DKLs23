@@ -302,6 +302,7 @@ mod tests {
 
     use crate::utilities::hashes::*;
 
+    use crate::utilities::rng;
     use hex;
     use k256::elliptic_curve::Field;
     use rand::Rng;
@@ -367,8 +368,8 @@ mod tests {
     /// the signing protocol after being derived.
     #[test]
     fn test_derivation_and_signing() {
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -376,8 +377,8 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rand::thread_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::random(rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // DERIVATION
@@ -401,7 +402,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().gen::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
