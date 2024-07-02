@@ -1,5 +1,8 @@
+#[cfg(feature = "insecure-rng")]
 use rand::rngs::StdRng;
+#[cfg(not(feature = "insecure-rng"))]
 use rand::rngs::ThreadRng;
+#[cfg(feature = "insecure-rng")]
 use rand::SeedableRng;
 
 pub const DEFAULT_SEED: u64 = 42;
