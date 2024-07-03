@@ -87,6 +87,7 @@ use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
+use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
@@ -109,7 +110,7 @@ use crate::protocols::{Abort, PartiesMessage, Party};
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
@@ -118,7 +119,7 @@ pub struct TransmitRefreshPhase2to4 {
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
@@ -130,7 +131,7 @@ pub struct TransmitRefreshPhase3to4 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct KeepRefreshPhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -139,7 +140,7 @@ pub struct KeepRefreshPhase2to3 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct KeepRefreshPhase3to4 {
     pub seed: zero_shares::Seed,
 }
