@@ -72,6 +72,7 @@ mod tests {
     use crate::utilities::rng;
     use hex;
     use k256::elliptic_curve::{point::AffineCoordinates, Field};
+    use rand::Rng;
 
     /// Tests if [`hash`] really works as `SHA-256` is intended.
     ///
@@ -115,7 +116,7 @@ mod tests {
     #[test]
     fn test_scalar_to_bytes() {
         for _ in 0..100 {
-            let number: u32 = rand::random();
+            let number: u32 = rng::get_rng().gen();
             let scalar = Scalar::from(number);
 
             let number_as_bytes = [vec![0u8; 28], number.to_be_bytes().to_vec()].concat();

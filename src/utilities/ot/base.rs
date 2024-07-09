@@ -336,7 +336,7 @@ mod tests {
         let dlog_proof = sender.run_phase1();
 
         // Phase 1 - Receiver
-        let bit = rand::random();
+        let bit = rng::get_rng().gen();
         let (r, enc_proof) = receiver.run_phase1(&session_id, bit);
 
         // Communication round - The parties exchange the proofs.
@@ -388,7 +388,7 @@ mod tests {
         // Phase 1 - Receiver
         let mut bits: Vec<bool> = Vec::with_capacity(batch_size);
         for _ in 0..batch_size {
-            bits.push(rand::random());
+            bits.push(rng::get_rng().gen());
         }
 
         let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits);

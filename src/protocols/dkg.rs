@@ -65,8 +65,8 @@ use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
-use crate::utilities::zero_shares::{self, ZeroShare};
 use crate::utilities::rng;
+use crate::utilities::zero_shares::{self, ZeroShare};
 
 /// Used during key generation.
 ///

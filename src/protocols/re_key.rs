@@ -134,7 +134,7 @@ pub fn re_key(
             let mut correlation: Vec<bool> = Vec::with_capacity(ot::extension::KAPPA as usize);
             let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for i in 0..ot::extension::KAPPA {
-                let current_bit: bool = rand::random();
+                let current_bit: bool = rng::get_rng().gen();
                 if current_bit {
                     seeds.push(seeds1[i as usize]);
                 } else {

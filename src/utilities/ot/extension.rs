@@ -488,7 +488,7 @@ impl OTEReceiver {
         // Step 1 - Extend the choice bits by adding random noise.
         let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY as usize);
         for _ in 0..OT_SECURITY {
-            random_choice_bits.push(rand::random());
+            random_choice_bits.push(rng::get_rng().gen());
         }
         let extended_choice_bits = [choice_bits, &random_choice_bits].concat();
 
@@ -962,7 +962,7 @@ mod tests {
 
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            receiver_choice_bits.push(rand::random());
+            receiver_choice_bits.push(rng::get_rng().gen());
         }
 
         // Phase 1 - Receiver

@@ -948,7 +948,7 @@ mod tests {
 
         let scalar = Scalar::random(rng::get_rng());
 
-        let bit: bool = rand::random();
+        let bit: bool = rng::get_rng().gen();
 
         // Proving.
         let proof = EncProof::prove(&session_id, &base_h, &scalar, bit);

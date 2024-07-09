@@ -21,6 +21,7 @@ use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
 };
 use crate::utilities::ot::ErrorOT;
+use rand::Rng;
 
 /// Constant `L` from Functionality 3.5 in `DKLs23` used for signing in Protocol 3.6.
 pub const L: u8 = 2;
@@ -415,7 +416,7 @@ impl MulReceiver {
         let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut b = Scalar::ZERO;
         for i in 0..BATCH_SIZE {
-            let current_bit: bool = rand::random();
+            let current_bit: bool = rng::get_rng().gen();
             if current_bit {
                 b += &self.public_gadget[i as usize];
             }
