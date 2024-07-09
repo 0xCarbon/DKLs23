@@ -44,7 +44,7 @@ use crate::utilities::ot::extension::OTEDataToSender;
 use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SignData {
     pub sign_id: Vec<u8>,
     /// Vector containing the indices of the parties participating in the protocol (without us).
