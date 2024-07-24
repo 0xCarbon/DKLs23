@@ -8,6 +8,7 @@
 use crate::utilities::commits;
 use crate::utilities::hashes::{hash_as_scalar, HashOutput};
 
+use crate::utilities::rng;
 use k256::Scalar;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -43,7 +44,7 @@ impl ZeroShare {
     /// At the time of de-commitment, these secret values are revealed.
     #[must_use]
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
-        let seed = rand::thread_rng().gen::<Seed>(); // This function doesn't work for higher SECURITY.
+        let seed = rng::get_rng().gen::<Seed>();
         let (commitment, salt) = commits::commit(&seed);
         (seed, commitment, salt)
     }
@@ -174,7 +175,7 @@ mod tests {
         }
 
         //We can finally execute the functionality.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
         let executing_parties: Vec<u8> = vec![1, 3, 5, 7, 8]; //These are the parties running the protocol.
         let mut shares: Vec<Scalar> = Vec::with_capacity(executing_parties.len());
         for party in executing_parties.clone() {

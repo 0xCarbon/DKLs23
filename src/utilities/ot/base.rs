@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, HashOutput};
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::proofs::{DLogProof, EncProof};
+use crate::utilities::rng;
 use crate::SECURITY;
 
 // SENDER DATA
@@ -57,7 +58,7 @@ impl OTSender {
         // We sample a nonzero random scalar.
         let mut s = Scalar::ZERO;
         while s == Scalar::ZERO {
-            s = Scalar::random(rand::thread_rng());
+            s = Scalar::random(rng::get_rng());
         }
 
         // In the paper, different protocols use different random oracles.
@@ -173,7 +174,7 @@ impl OTReceiver {
     /// Initializes the protocol.
     #[must_use]
     pub fn init() -> OTReceiver {
-        let seed = rand::thread_rng().gen::<Seed>();
+        let seed = rng::get_rng().gen::<Seed>();
 
         OTReceiver { seed }
     }
@@ -185,7 +186,7 @@ impl OTReceiver {
     #[must_use]
     pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
         // We sample the secret scalar r.
-        let r = Scalar::random(rand::thread_rng());
+        let r = Scalar::random(rng::get_rng());
 
         // We compute h as in the paper.
         // Instead of using a real identifier for the receiver,
@@ -325,7 +326,7 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_base() {
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // Initialization
         let sender = OTSender::init(&session_id);
@@ -335,7 +336,7 @@ mod tests {
         let dlog_proof = sender.run_phase1();
 
         // Phase 1 - Receiver
-        let bit = rand::random();
+        let bit = rng::get_rng().gen();
         let (r, enc_proof) = receiver.run_phase1(&session_id, bit);
 
         // Communication round - The parties exchange the proofs.
@@ -373,7 +374,7 @@ mod tests {
     /// Batch version for [`test_ot_base`].
     #[test]
     fn test_ot_base_batch() {
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // Initialization (unique)
         let sender = OTSender::init(&session_id);
@@ -387,7 +388,7 @@ mod tests {
         // Phase 1 - Receiver
         let mut bits: Vec<bool> = Vec::with_capacity(batch_size);
         for _ in 0..batch_size {
-            bits.push(rand::random());
+            bits.push(rng::get_rng().gen());
         }
 
         let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits);

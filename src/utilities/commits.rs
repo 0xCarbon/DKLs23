@@ -5,6 +5,7 @@
 //! (<https://eprint.iacr.org/2023/765.pdf>).
 
 use crate::utilities::hashes::{hash, point_to_bytes, HashOutput};
+use crate::utilities::rng;
 use k256::AffinePoint;
 use rand::Rng;
 
@@ -22,7 +23,7 @@ use crate::SECURITY;
 pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
     //The paper instructs the salt to have 2*lambda_c bits.
     let mut salt = [0u8; 2 * SECURITY as usize];
-    rand::thread_rng().fill(&mut salt[..]);
+    rng::get_rng().fill(&mut salt[..]);
 
     let commitment = hash(msg, &salt);
 
@@ -64,7 +65,7 @@ mod tests {
     /// Tests if committing and de-committing work.
     #[test]
     fn test_commit_decommit() {
-        let msg = rand::thread_rng().gen::<[u8; 32]>();
+        let msg = rng::get_rng().gen::<[u8; 32]>();
         let (commitment, salt) = commit(&msg);
         assert!(verify_commitment(&msg, &commitment, &salt));
     }
@@ -73,9 +74,9 @@ mod tests {
     /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_msg() {
-        let msg = rand::thread_rng().gen::<[u8; 32]>();
+        let msg = rng::get_rng().gen::<[u8; 32]>();
         let (commitment, salt) = commit(&msg);
-        let msg = rand::thread_rng().gen::<[u8; 32]>(); //We change the message
+        let msg = rng::get_rng().gen::<[u8; 32]>(); //We change the message
         assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
@@ -83,9 +84,9 @@ mod tests {
     /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_commitment() {
-        let msg = rand::thread_rng().gen::<[u8; 32]>();
+        let msg = rng::get_rng().gen::<[u8; 32]>();
         let (_, salt) = commit(&msg);
-        let commitment = rand::thread_rng().gen::<HashOutput>(); //We change the commitment
+        let commitment = rng::get_rng().gen::<HashOutput>(); //We change the commitment
         assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 
@@ -93,10 +94,10 @@ mod tests {
     /// to check that if [`verify_commitment`] returns `false`.
     #[test]
     fn test_commit_decommit_fail_salt() {
-        let msg = rand::thread_rng().gen::<[u8; 32]>();
+        let msg = rng::get_rng().gen::<[u8; 32]>();
         let (commitment, _) = commit(&msg);
         let mut salt = [0u8; 2 * SECURITY as usize];
-        rand::thread_rng().fill(&mut salt[..]);
+        rng::get_rng().fill(&mut salt[..]);
         assert!(!(verify_commitment(&msg, &commitment, &salt))); //The test can fail but with very low probability
     }
 }

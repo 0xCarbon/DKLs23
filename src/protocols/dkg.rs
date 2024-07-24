@@ -65,6 +65,7 @@ use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
 use crate::utilities::proofs::{DLogProof, EncProof};
+use crate::utilities::rng;
 use crate::utilities::zero_shares::{self, ZeroShare};
 
 /// Used during key generation.
@@ -92,7 +93,7 @@ pub struct SessionData {
 /// Transmit - Initialization of zero shares protocol.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
@@ -101,7 +102,7 @@ pub struct TransmitInitZeroSharePhase2to4 {
 /// Transmit - Initialization of zero shares protocol.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
@@ -111,7 +112,7 @@ pub struct TransmitInitZeroSharePhase3to4 {
 /// Keep - Initialization of zero shares protocol.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -120,7 +121,7 @@ pub struct KeepInitZeroSharePhase2to3 {
 /// Keep - Initialization of zero shares protocol.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeepInitZeroSharePhase3to4 {
     pub seed: zero_shares::Seed,
 }
@@ -130,7 +131,7 @@ pub struct KeepInitZeroSharePhase3to4 {
 /// Transmit - Initialization of multiplication protocol.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
 
@@ -144,7 +145,7 @@ pub struct TransmitInitMulPhase3to4 {
 /// Keep - Initialization of multiplication protocol.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeepInitMulPhase3to4 {
     pub ot_sender: ot::base::OTSender,
     pub nonce: Scalar,
@@ -159,7 +160,7 @@ pub struct KeepInitMulPhase3to4 {
 /// Broadcast - Initialization for key derivation.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase2to4 {
     pub sender_index: u8,
     pub cc_commitment: HashOutput,
@@ -168,7 +169,7 @@ pub struct BroadcastDerivationPhase2to4 {
 /// Broadcast - Initialization for key derivation.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BroadcastDerivationPhase3to4 {
     pub sender_index: u8,
     pub aux_chain_code: ChainCode,
@@ -178,7 +179,7 @@ pub struct BroadcastDerivationPhase3to4 {
 /// Unique keep - Initialization for key derivation.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UniqueKeepDerivationPhase2to3 {
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
@@ -195,7 +196,7 @@ pub struct UniqueKeepDerivationPhase2to3 {
 #[must_use]
 pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
     // We represent the polynomial by its coefficients.
-    let mut rng = rand::thread_rng(); // Reuse RNG
+    let mut rng = rng::get_rng(); // Reuse RNG
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
     for _ in 0..parameters.threshold {
         polynomial.push(Scalar::random(&mut rng)); // Pass the RNG explicitly
@@ -434,7 +435,7 @@ pub fn phase2(
     // Initialization - BIP-32.
 
     // Each party samples a random auxiliary chain code.
-    let aux_chain_code: ChainCode = rand::thread_rng().gen();
+    let aux_chain_code: ChainCode = rng::get_rng().gen();
     let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
 
     let bip_keep = UniqueKeepDerivationPhase2to3 {
@@ -927,7 +928,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // Phase 1 (Steps 1 and 2)
         let p1_phase1 = step2(&parameters, &step1(&parameters)); //p1 = Party 1
@@ -964,14 +965,14 @@ mod tests {
     /// t and n are small random values.
     #[test]
     fn test_dkg_random() {
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
@@ -1028,7 +1029,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(1u32), Scalar::from(3u32)];
@@ -1072,7 +1073,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(12u32), Scalar::from(2u32)];
@@ -1117,7 +1118,7 @@ mod tests {
             threshold: 3,
             share_count: 5,
         };
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // We will define the fragments directly
         let poly_fragments = vec![
@@ -1215,14 +1216,14 @@ mod tests {
     /// The correctness of the protocol is verified on `test_dkg_and_signing`.
     #[test]
     fn test_dkg_initialization() {
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);

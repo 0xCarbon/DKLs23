@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
+use crate::utilities::rng;
 
 use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
@@ -20,6 +21,7 @@ use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
 };
 use crate::utilities::ot::ErrorOT;
+use rand::Rng;
 
 /// Constant `L` from Functionality 3.5 in `DKLs23` used for signing in Protocol 3.6.
 pub const L: u8 = 2;
@@ -168,8 +170,8 @@ impl MulSender {
         let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
-            a_tilde.push(Scalar::random(rand::thread_rng()));
-            a_hat.push(Scalar::random(rand::thread_rng()));
+            a_tilde.push(Scalar::random(rng::get_rng()));
+            a_hat.push(Scalar::random(rng::get_rng()));
         }
 
         // For the correlation, let us first explain the case L = 1.
@@ -344,7 +346,7 @@ impl MulReceiver {
         // For the choice of the public gadget vector, we will use the same approach
         // as in https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         // We sample a nonce that will be used by both parties to compute a common vector.
-        let nonce = Scalar::random(rand::thread_rng());
+        let nonce = Scalar::random(rng::get_rng());
 
         (ot_sender, proof, nonce)
     }
@@ -414,7 +416,7 @@ impl MulReceiver {
         let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut b = Scalar::ZERO;
         for i in 0..BATCH_SIZE {
-            let current_bit: bool = rand::random();
+            let current_bit: bool = rng::get_rng().gen();
             if current_bit {
                 b += &self.public_gadget[i as usize];
             }
@@ -587,7 +589,7 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_multiplication() {
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // INITIALIZATION
 
@@ -633,7 +635,7 @@ mod tests {
         // Sampling the choices.
         let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
-            sender_input.push(Scalar::random(rand::thread_rng()));
+            sender_input.push(Scalar::random(rng::get_rng()));
         }
 
         // Phase 1 - Receiver

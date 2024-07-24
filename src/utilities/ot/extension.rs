@@ -37,6 +37,7 @@
 //! k vectors of single correlations, where k is the OT width.
 
 use k256::Scalar;
+use rand::Rng;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -44,6 +45,7 @@ use crate::{RAW_SECURITY, STAT_SECURITY};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
+use crate::utilities::rng;
 
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::ErrorOT;
@@ -77,10 +79,7 @@ pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S
 where
     S: Serializer,
 {
-    let concatenated: Vec<u8> = data
-        .iter()
-        .flat_map(|&b| b.to_vec())
-        .collect();
+    let concatenated: Vec<u8> = data.iter().flat_map(|&b| b.to_vec()).collect();
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
 
@@ -147,7 +146,7 @@ impl OTESender {
         // The choice bits are sampled randomly.
         let mut correlation: Vec<bool> = Vec::with_capacity(KAPPA as usize);
         for _ in 0..KAPPA {
-            correlation.push(rand::random());
+            correlation.push(rng::get_rng().gen());
         }
 
         let (vec_r, enc_proofs) = ot_receiver.run_phase1_batch(session_id, &correlation);
@@ -489,7 +488,7 @@ impl OTEReceiver {
         // Step 1 - Extend the choice bits by adding random noise.
         let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY as usize);
         for _ in 0..OT_SECURITY {
-            random_choice_bits.push(rand::random());
+            random_choice_bits.push(rng::get_rng().gen());
         }
         let extended_choice_bits = [choice_bits, &random_choice_bits].concat();
 
@@ -898,7 +897,7 @@ mod tests {
     #[test]
     fn test_field_mul() {
         for _ in 0..100 {
-            let initial = rand::thread_rng().gen::<FieldElement>();
+            let initial = rng::get_rng().gen::<FieldElement>();
 
             //Raising an element to the power 2^208 must not change it.
             let mut result = initial;
@@ -914,7 +913,7 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_extension() {
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
 
         // INITIALIZATION
 
@@ -956,14 +955,14 @@ mod tests {
             let mut current_input_correlation: Vec<Scalar> =
                 Vec::with_capacity(BATCH_SIZE as usize);
             for _ in 0..BATCH_SIZE {
-                current_input_correlation.push(Scalar::random(rand::thread_rng()));
+                current_input_correlation.push(Scalar::random(rng::get_rng()));
             }
             sender_input_correlations.push(current_input_correlation);
         }
 
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            receiver_choice_bits.push(rand::random());
+            receiver_choice_bits.push(rng::get_rng().gen());
         }
 
         // Phase 1 - Receiver

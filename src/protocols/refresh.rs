@@ -92,6 +92,7 @@ use serde::{Deserialize, Serialize};
 use crate::utilities::hashes::{hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot;
+use crate::utilities::rng;
 use crate::utilities::zero_shares::{self, ZeroShare};
 
 use crate::protocols::derivation::DerivData;
@@ -162,7 +163,7 @@ impl Party {
             Vec::with_capacity(self.parameters.threshold as usize);
         secret_polynomial.push(Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
-            secret_polynomial.push(Scalar::random(rand::thread_rng()));
+            secret_polynomial.push(Scalar::random(rng::get_rng()));
         }
 
         step2(&self.parameters, &secret_polynomial)
@@ -564,7 +565,7 @@ impl Party {
             Vec::with_capacity(self.parameters.threshold as usize);
         secret_polynomial.push(Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
-            secret_polynomial.push(Scalar::random(rand::thread_rng()));
+            secret_polynomial.push(Scalar::random(rng::get_rng()));
         }
 
         step2(&self.parameters, &secret_polynomial)
@@ -949,8 +950,8 @@ mod tests {
     /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_refresh_complete() {
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -958,13 +959,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rand::thread_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::random(rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
-        let refresh_sid = rand::thread_rng().gen::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().gen::<[u8; 32]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1105,7 +1106,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().gen::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1241,8 +1242,8 @@ mod tests {
     /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_refresh() {
-        let threshold = rand::thread_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rand::thread_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().gen_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -1250,13 +1251,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rand::thread_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rand::thread_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::random(rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
 
-        let refresh_sid = rand::thread_rng().gen::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().gen::<[u8; 32]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1374,7 +1375,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rand::thread_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().gen::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.

@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
 
+use crate::utilities::rng;
 use rand::Rng;
 
 use crate::protocols::derivation::{ChainCode, DerivData};
@@ -49,7 +50,7 @@ pub fn re_key(
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
     polynomial.push(*secret_key);
     for _ in 1..parameters.threshold {
-        polynomial.push(Scalar::random(rand::thread_rng()));
+        polynomial.push(Scalar::random(rng::get_rng()));
     }
 
     // Zero shares.
@@ -66,7 +67,7 @@ pub fn re_key(
         let mut seeds_with_lower_index: Vec<zero_shares::Seed> =
             Vec::with_capacity((parameters.share_count - lower_index) as usize);
         for _ in (lower_index + 1)..=parameters.share_count {
-            let seed = rand::thread_rng().gen::<zero_shares::Seed>();
+            let seed = rng::get_rng().gen::<zero_shares::Seed>();
             seeds_with_lower_index.push(seed);
         }
         common_seeds.push(seeds_with_lower_index);
@@ -124,8 +125,8 @@ pub fn re_key(
             let mut seeds0: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             let mut seeds1: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for _ in 0..ot::extension::KAPPA {
-                seeds0.push(rand::thread_rng().gen::<HashOutput>());
-                seeds1.push(rand::thread_rng().gen::<HashOutput>());
+                seeds0.push(rng::get_rng().gen::<HashOutput>());
+                seeds1.push(rng::get_rng().gen::<HashOutput>());
             }
 
             // Sender: Sample the correlation and choose the correct seed.
@@ -133,7 +134,7 @@ pub fn re_key(
             let mut correlation: Vec<bool> = Vec::with_capacity(ot::extension::KAPPA as usize);
             let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for i in 0..ot::extension::KAPPA {
-                let current_bit: bool = rand::random();
+                let current_bit: bool = rng::get_rng().gen();
                 if current_bit {
                     seeds.push(seeds1[i as usize]);
                 } else {
@@ -150,7 +151,7 @@ pub fn re_key(
             let mut public_gadget: Vec<Scalar> =
                 Vec::with_capacity(ot::extension::BATCH_SIZE as usize);
             for _ in 0..ot::extension::BATCH_SIZE {
-                public_gadget.push(Scalar::random(rand::thread_rng()));
+                public_gadget.push(Scalar::random(rng::get_rng()));
             }
 
             // We finish the initialization.
@@ -174,7 +175,7 @@ pub fn re_key(
     // We use the chain code given or we sample a new one.
     let chain_code = match option_chain_code {
         Some(cc) => cc,
-        None => rand::thread_rng().gen::<ChainCode>(),
+        None => rng::get_rng().gen::<ChainCode>(),
     };
 
     // We create the parties.
