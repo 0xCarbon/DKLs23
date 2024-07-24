@@ -25,7 +25,7 @@
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
 
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use k256::ecdsa::{RecoveryId, VerifyingKey};
 use k256::elliptic_curve::scalar::IsHigh;
 use k256::elliptic_curve::ScalarPrimitive;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
@@ -624,24 +624,14 @@ impl Party {
             ));
         }
 
-        let prehash_signed = data.message_hash.as_slice();
-
         let verifying_key_from_pk = VerifyingKey::from_affine(self.pk).unwrap();
-
         let scalar_sig_r = Scalar::reduce(U256::from_be_hex(x_coord));
-        let scalar_sig_s = Scalar::reduce(U256::from_be_hex(&signature));
-        let partial_sig: Signature = Signature::from_scalars(scalar_sig_r, scalar_sig_s).unwrap();
+        let is_y_odd = verifying_key_from_pk.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        let half_order = Scalar::reduce(Secp256k1::ORDER) * Scalar::from(2u64).invert().unwrap();
+        let is_x_reduced = scalar_sig_r > half_order;
+        let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
-        // Choose the recovery id by testing which possibility recover the right public key.
-        let rec_id = RecoveryId::trial_recovery_from_prehash(
-            &verifying_key_from_pk,
-            prehash_signed,
-            &partial_sig,
-        )
-        .unwrap()
-        .to_byte();
-
-        Ok((signature, rec_id))
+        Ok((signature, rec_id.into()))
     }
 }
 
