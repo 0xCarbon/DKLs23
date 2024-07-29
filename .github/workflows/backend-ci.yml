@@ -12,6 +12,7 @@ on:
     paths:
       - 'src/**/*.rs'
       - 'Cargo.toml'
+  workflow_dispatch:
 
 jobs:
   test:
