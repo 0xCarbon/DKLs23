@@ -18,10 +18,7 @@ pub mod signing;
 
 /// Contains the values `t` and  `n` from `DKLs23`.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Parameters {
-    pub threshold: u8,   //t
-    pub share_count: u8, //n
-}
+pub struct Parameters { pub threshold: u8, pub share_count: u8, }
 
 /// Represents a party after key generation ready to sign a message.
 #[derive(Clone, Serialize, Deserialize, Debug)]
