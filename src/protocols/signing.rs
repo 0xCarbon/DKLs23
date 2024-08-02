@@ -1042,8 +1042,15 @@ mod tests {
                 + (secret_key * Scalar::reduce(U256::from_be_hex(&expected_x_coord))));
         let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
 
+        // Calculate the expected recovery id
+        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
+        let is_x_reduced = expected_signature_as_scalar > half_order;
+        let is_y_odd = total_instance_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
+
         // We compare the results.
         assert_eq!(signature.0, expected_signature);
+        assert_eq!(signature.1, expected_rec_id.into());
     }
 
     /// Tests DKG and signing together. The main purpose is to
