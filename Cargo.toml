@@ -3,6 +3,8 @@ name = "dkls23"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "ECDSA Threshold Signing Algorithm"
+documentation = "https://docsrs.veslasoft.com/dkls23"
 
 [dependencies]
 k256 = { version = "0.13", features = ["serde"] }
