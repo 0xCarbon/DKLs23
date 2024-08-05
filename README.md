@@ -1,7 +1,9 @@
 # DKLs23
 
+![image](.assets/dkls23-banner.png)
 
 ## Table of Contents
+- [Overview](#overview)
 - [Getting Started](#getting-started)
 - [Installation](#installation)
 - [Contributing](#contributing)
@@ -10,6 +12,8 @@
 - [License](#license)
 - [Authors](#authors)
 
+## Overview
+DKLs23 is an advanced open-source implementation of the Threshold ECDSA method. The primary goal of DKLs23 is to compute a secret key without centralizing it in a single location. Instead, it leverages multiple parties to compute the secret key, with each party receiving a key share. This approach enhances security by eliminating single points of failure.
 
 ## Getting Started
 These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
@@ -31,6 +35,9 @@ git clone https://github.com/0xCarbon/DKLs23 cd DKLs23
 ```bash
 cargo build
 ```
+
+### 
+
 ## Contributing
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
 
