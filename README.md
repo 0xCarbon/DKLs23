@@ -1,5 +1,4 @@
 # DKLs23
-
 ![image](.assets/dkls23-banner.png)
 
 ## Table of Contents
@@ -35,8 +34,6 @@ git clone https://github.com/0xCarbon/DKLs23 cd DKLs23
 ```bash
 cargo build
 ```
-
-### 
 
 ## Contributing
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
