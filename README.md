@@ -1,6 +1,4 @@
 # DKLs23
-
-## Table of Contents
 ![image](.assets/dkls23-banner.png)
 
 ## Table of Contents
