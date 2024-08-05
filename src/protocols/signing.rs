@@ -25,8 +25,9 @@
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
 
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use k256::ecdsa::RecoveryId;
 use k256::elliptic_curve::scalar::IsHigh;
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::elliptic_curve::ScalarPrimitive;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
@@ -624,24 +625,28 @@ impl Party {
             ));
         }
 
-        let prehash_signed = data.message_hash.as_slice();
+        // First we need to calculate R (signature point) in order to retrieve its y coordinate.
+        // This is necessary because we need to check if y is even or odd to calculate the
+        // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
+        // R = (G * msg_hash + pk * r_x) / s
+        let rx_as_scalar = Scalar::reduce(U256::from_be_hex(x_coord));
+        let hashed_msg_as_scalar = Scalar::reduce(U256::from_be_bytes(data.message_hash));
+        let first = AffinePoint::GENERATOR * hashed_msg_as_scalar;
+        let second = self.pk * rx_as_scalar;
+        let s_inverse = s.invert().unwrap();
+        let signature_point = ((first + second) * s_inverse).to_affine();
 
-        let verifying_key_from_pk = VerifyingKey::from_affine(self.pk).unwrap();
+        // Now the recovery id can be calculated using the following conditions:
+        // - If R.y is even and R.x is less than the curve order n: recovery_id = 0
+        // - If R.y is odd and R.x is less than the curve order n: recovery_id = 1
+        // - If R.y is even and R.x is greater than the curve order n: recovery_id = 2
+        // - If R.y is odd and R.x is greater than the curve order n: recovery_id = 3
+        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
+        let is_x_reduced = s > half_order;
+        let is_y_odd = signature_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
-        let scalar_sig_r = Scalar::reduce(U256::from_be_hex(x_coord));
-        let scalar_sig_s = Scalar::reduce(U256::from_be_hex(&signature));
-        let partial_sig: Signature = Signature::from_scalars(scalar_sig_r, scalar_sig_s).unwrap();
-
-        // Choose the recovery id by testing which possibility recover the right public key.
-        let rec_id = RecoveryId::trial_recovery_from_prehash(
-            &verifying_key_from_pk,
-            prehash_signed,
-            &partial_sig,
-        )
-        .unwrap()
-        .to_byte();
-
-        Ok((signature, rec_id))
+        Ok((signature, rec_id.into()))
     }
 }
 
@@ -1037,8 +1042,15 @@ mod tests {
                 + (secret_key * Scalar::reduce(U256::from_be_hex(&expected_x_coord))));
         let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
 
+        // Calculate the expected recovery id
+        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
+        let is_x_reduced = expected_signature_as_scalar > half_order;
+        let is_y_odd = total_instance_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
+
         // We compare the results.
         assert_eq!(signature.0, expected_signature);
+        assert_eq!(signature.1, expected_rec_id.into());
     }
 
     /// Tests DKG and signing together. The main purpose is to
