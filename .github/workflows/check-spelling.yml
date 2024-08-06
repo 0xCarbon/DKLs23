@@ -1,4 +1,4 @@
-# The configs for this spell check can be find at /.github/workflows/check-spelling.yml
+# The configs for this spell check can be find at /.github/actions/spelling/
 name: Spell checking
 on:
   push:
@@ -17,21 +17,20 @@ jobs:
         with:
           dictionary_source_prefixes: '
             {
-              "cspell": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries/",
-              "cspell_old": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20220427/dictionaries/"
+              "cspell_latest": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/latest/dictionaries/"
             }'
           # Extra dictionaries to verify words
           extra_dictionaries:
-            cspell_old:public-licenses/src/generated/public-licenses.txt
-            cspell_old:cryptocurrencies/cryptocurrencies.txt
-            cspell_old:software-terms/src/network-protocols.txt
-            cspell_old:software-terms/src/software-terms.txt
-            cspell_old:bash/src/bash-words.txt
-            cspell_old:filetypes/filetypes.txt
-            cspell_old:fonts/fonts.txt
-            cspell_old:fullstack/src/fullstack.txt
-            cspell_old:rust/src/rust.txt
-            cspell_old:typescript/src/typescript.txt
+            cspell_latest:public-licenses/src/generated/public-licenses.txt
+            cspell_latest:cryptocurrencies/cryptocurrencies.txt
+            cspell_latest:software-terms/src/network-protocols.txt
+            cspell_latest:software-terms/src/software-terms.txt
+            cspell_latest:bash/src/bash-words.txt
+            cspell_latest:filetypes/filetypes.txt
+            cspell_latest:fonts/fonts.txt
+            cspell_latest:fullstack/src/fullstack.txt
+            cspell_latest:rust/src/rust.txt
+            cspell_latest:typescript/src/typescript.txt
           experimental_apply_changes_via_bot: 1
           check_file_names: 1
           suppress_push_for_open_pull_request: ${{ github.actor != 'dependabot[bot]' && 1 }}
