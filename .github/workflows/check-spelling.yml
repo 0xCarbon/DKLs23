@@ -17,20 +17,20 @@ jobs:
         with:
           dictionary_source_prefixes: '
             {
-              "cspell_latest": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/latest/dictionaries/"
+              "cspell_2023": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries/"
             }'
           # Extra dictionaries to verify words
           extra_dictionaries:
-            cspell_latest:public-licenses/src/generated/public-licenses.txt
-            cspell_latest:cryptocurrencies/cryptocurrencies.txt
-            cspell_latest:software-terms/src/network-protocols.txt
-            cspell_latest:software-terms/src/software-terms.txt
-            cspell_latest:bash/src/bash-words.txt
-            cspell_latest:filetypes/filetypes.txt
-            cspell_latest:fonts/fonts.txt
-            cspell_latest:fullstack/src/fullstack.txt
-            cspell_latest:rust/src/rust.txt
-            cspell_latest:typescript/src/typescript.txt
+            cspell_2023:public-licenses/src/generated/public-licenses.txt
+            cspell_2023:cryptocurrencies/cryptocurrencies.txt
+            cspell_2023:software-terms/src/network-protocols.txt
+            cspell_2023:software-terms/src/software-terms.txt
+            cspell_2023:bash/src/bash-words.txt
+            cspell_2023:filetypes/filetypes.txt
+            cspell_2023:fonts/fonts.txt
+            cspell_2023:fullstack/src/fullstack.txt
+            cspell_2023:rust/src/rust.txt
+            cspell_2023:typescript/src/typescript.txt
           experimental_apply_changes_via_bot: 1
           check_file_names: 1
           suppress_push_for_open_pull_request: ${{ github.actor != 'dependabot[bot]' && 1 }}
