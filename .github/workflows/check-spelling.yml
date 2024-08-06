@@ -1,4 +1,4 @@
-# The configs for this spell check can be find at /.github/actions/spelling
+# The configs for this spell check can be find at /.github/workflows/check-spelling.yml
 name: Spell checking
 on:
   push:
@@ -13,23 +13,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: check-spelling
-        uses: check-spelling/check-spelling@v0.0.21
+        uses: check-spelling/check-spelling@v0.0.22
         with:
           dictionary_source_prefixes: '
             {
-              "cspell_050923": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries/"
+              "cspell": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20230509/dictionaries/",
+              "cspell_old": "https://raw.githubusercontent.com/check-spelling/cspell-dicts/v20220427/dictionaries/"
             }'
           # Extra dictionaries to verify words
           extra_dictionaries:
-            cspell_050923:public-licenses/src/generated/public-licenses.txt
-            cspell_050923:cryptocurrencies/cryptocurrencies.txt
-            cspell_050923:software-terms/src/network-protocols.txt
-            cspell_050923:software-terms/src/software-terms.txt
-            cspell_050923:bash/src/bash-words.txt
-            cspell_050923:filetypes/filetypes.txt
-            cspell_050923:fonts/fonts.txt
-            cspell_050923:fullstack/src/fullstack.txt
-            cspell_050923:rust/src/rust.txt
-            cspell_050923:typescript/src/typescript.txt
+            cspell_old:public-licenses/src/generated/public-licenses.txt
+            cspell_old:cryptocurrencies/cryptocurrencies.txt
+            cspell_old:software-terms/src/network-protocols.txt
+            cspell_old:software-terms/src/software-terms.txt
+            cspell_old:bash/src/bash-words.txt
+            cspell_old:filetypes/filetypes.txt
+            cspell_old:fonts/fonts.txt
+            cspell_old:fullstack/src/fullstack.txt
+            cspell_old:rust/src/rust.txt
+            cspell_old:typescript/src/typescript.txt
           experimental_apply_changes_via_bot: 1
           check_file_names: 1
+          suppress_push_for_open_pull_request: ${{ github.actor != 'dependabot[bot]' && 1 }}
