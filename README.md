@@ -1,18 +1,26 @@
-# DKLs23
-![image](.assets/dkls23-banner.png)
+<div align="center">
+    <picture>
+        <source srcset=".assets/dkls23-banner.png"  media="(prefers-color-scheme: dark)">
+        <img src=".assets/dkls23-banner.png" alt="DKLs logo">
+    </picture>
 
-## Table of Contents
-- [Overview](#overview)
-- [Getting Started](#getting-started)
-- [Installation](#installation)
-- [Contributing](#contributing)
-- [Security](#security)
-- [Code of Conduct](#code-of-conduct)
-- [License](#license)
-- [Authors](#authors)
+  <p>
+    <a href="https://github.com/0xCarbon/DKLs23/actions?query=workflow%3Abackend-ci">
+      <img src="https://github.com/0xCarbon/DKLs23/actions/workflows/backend-ci.yml/badge.svg?event=push" alt="Test Status">
+    </a>
+    <a href="https://docs.rs">
+      <img src="https://img.shields.io/crates/v/dkls23.svg" alt="DKLs23 Crate">
+    </a>
+    <a href="https://docs.rs/dkls23/latest/dkls23/">
+      <img src="https://docs.rs/dkls23/badge.svg" alt="DKLs23 Docs">
+    </a>
+  </p>
+</div>
+
+<br /> 
 
 ## Overview
-DKLs23 is an advanced open-source implementation of the Threshold ECDSA method. The primary goal of DKLs23 is to compute a secret key without centralizing it in a single location. Instead, it leverages multiple parties to compute the secret key, with each party receiving a key share. This approach enhances security by eliminating single points of failure.
+DKLs23 is an advanced open-source implementation of the Threshold ECDSA method (see https://eprint.iacr.org/2023/765.pdf). The primary goal of DKLs23 is to compute a secret key without centralizing it in a single location. Instead, it leverages multiple parties to compute the secret key, with each party receiving a key share. This approach enhances security by eliminating single points of failure.
 
 ## Getting Started
 These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
@@ -47,8 +55,8 @@ Please note that this project is released with a [Contributor Code of Conduct](C
 
 ## License
 This project is licensed under either of
-- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT license](LICENSE-MIT)
 
 at your option.
 
