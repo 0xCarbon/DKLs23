@@ -8,7 +8,7 @@
     <a href="https://github.com/0xCarbon/DKLs23/actions?query=workflow%3Abackend-ci">
       <img src="https://github.com/0xCarbon/DKLs23/actions/workflows/backend-ci.yml/badge.svg?event=push" alt="Test Status">
     </a>
-    <a href="https://docs.rs">
+    <a href="https://crates.io/crates/dkls23">
       <img src="https://img.shields.io/crates/v/dkls23.svg" alt="DKLs23 Crate">
     </a>
     <a href="https://docs.rs/dkls23/latest/dkls23/">
