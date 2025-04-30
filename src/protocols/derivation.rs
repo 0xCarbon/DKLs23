@@ -12,7 +12,7 @@
 //! ATTENTION: Since no party has the full secret key, it is not convenient
 //! to do hardened derivation. Thus, we only implement normal derivation.
 
-use bitcoin_hashes::{hash160, sha512, HashEngine, Hash, Hmac, HmacEngine, GeneralHash};
+use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacEngine};
 
 use k256::elliptic_curve::{ops::Reduce, Curve};
 use k256::{AffinePoint, Scalar, Secp256k1, U256};
