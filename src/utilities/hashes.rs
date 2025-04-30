@@ -13,7 +13,7 @@
 // file just for this purpose. Thus, it's worth analyzing this code in the future
 // and maybe implementing something similar.
 
-use bitcoin_hashes::{sha256, Hash};
+use bitcoin_hashes::sha256;
 use k256::elliptic_curve::{bigint::Encoding, group::GroupEncoding, ops::Reduce};
 use k256::{AffinePoint, Scalar, U256};
 

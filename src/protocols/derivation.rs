@@ -12,7 +12,7 @@
 //! ATTENTION: Since no party has the full secret key, it is not convenient
 //! to do hardened derivation. Thus, we only implement normal derivation.
 
-use bitcoin_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
+use bitcoin_hashes::{hash160, sha512, HashEngine, Hash, Hmac, HmacEngine, GeneralHash};
 
 use k256::elliptic_curve::{ops::Reduce, Curve};
 use k256::{AffinePoint, Scalar, Secp256k1, U256};
@@ -98,9 +98,10 @@ impl DerivData {
         hmac_engine.input(&pk_as_bytes);
         hmac_engine.input(&child_number.to_be_bytes());
 
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
+        let hmac_bytes = hmac_result.to_byte_array();
 
-        let number_for_tweak = U256::from_be_slice(&hmac_result[..32]);
+        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..32]);
         if number_for_tweak.ge(&Secp256k1::ORDER) {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
@@ -108,14 +109,15 @@ impl DerivData {
         }
 
         let tweak = Scalar::reduce(number_for_tweak);
-        let chain_code: ChainCode = hmac_result[32..]
+        let chain_code: ChainCode = hmac_bytes[32..]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
 
         // We also calculate the fingerprint here for convenience.
         let mut engine = hash160::Hash::engine();
         engine.input(&pk_as_bytes);
-        let fingerprint: Fingerprint = hash160::Hash::from_engine(engine)[0..4]
+        let hash_result = hash160::Hash::from_engine(engine);
+        let fingerprint: Fingerprint = hash_result.to_byte_array()[0..4]
             .try_into()
             .expect("4 is the fingerprint length!");
 
