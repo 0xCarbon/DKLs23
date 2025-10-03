@@ -12,6 +12,8 @@ use crate::utilities::zero_shares::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
+pub mod get_party_store;
+pub mod load_part_store;
 pub mod load_party;
 pub mod re_key;
 pub mod refresh;
@@ -85,4 +87,13 @@ impl PartiesMessage {
             receiver: self.sender,
         }
     }
+}
+
+/// Saves the sender and receiver of a message.
+#[derive(Clone, Debug)]
+pub struct PartyStore {
+    key_share: [u8; 32],
+    party_index: u8,
+    pubkey: [u8; 33],
+    zk_seed: [u8; 32],
 }
