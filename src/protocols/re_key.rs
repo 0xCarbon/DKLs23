@@ -28,6 +28,8 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 use hkdf::Hkdf;
 use k256::elliptic_curve::bigint::{Encoding, U512};
 use k256::elliptic_curve::ops::Reduce;
+use k256::elliptic_curve::PrimeField;
+use k256::FieldBytes;
 use sha2::Sha256;
 
 // ---------------- HKDF helpers ----------------
@@ -113,17 +115,19 @@ fn expand_scalars(zk_seed: &[u8; 32], info: &[u8], count: usize) -> Vec<Scalar> 
 pub fn re_key(
     parameters: &Parameters,
     session_id: &[u8],
-    secret_key: &Scalar,
+    secret_key: &[u8; 32],
     option_chain_code: Option<ChainCode>,
     zk_seed: &[u8; 32],
 ) -> Vec<Party> {
+    let secret_key = Scalar::from_repr(FieldBytes::from(*secret_key)).expect("invalid scalar");
+
     // Public key.
     let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
 
     // We will compute "poly_point" for each party with this polynomial
     // via Shamir's secret sharing.
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
-    polynomial.push(*secret_key);
+    polynomial.push(secret_key);
     for _ in 1..parameters.threshold {
         polynomial.push(Scalar::random(rng::get_rng()));
     }

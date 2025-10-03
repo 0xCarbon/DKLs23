@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use k256::elliptic_curve::PrimeField;
 use k256::{AffinePoint, Scalar};
 
 use crate::protocols::derivation::{ChainCode, DerivData};
@@ -23,6 +24,8 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 use hkdf::Hkdf;
 use k256::elliptic_curve::bigint::{Encoding, U512};
 use k256::elliptic_curve::ops::Reduce;
+use k256::elliptic_curve::sec1::FromEncodedPoint;
+use k256::FieldBytes;
 use sha2::Sha256;
 
 // ---------------- HKDF helpers ----------------
@@ -114,12 +117,21 @@ fn expand_scalars(zk_seed: &[u8; 32], info: &[u8], count: usize) -> Vec<Scalar> 
 pub fn load_party(
     parameters: &Parameters,
     session_id: &[u8],
-    poly_point: &Scalar,
+    key_share: &[u8; 32],
     party_index: u8,
-    pk: &AffinePoint,
+    pubkey: &[u8; 33],
     zk_seed: &[u8; 32],
     chain_code: Option<ChainCode>,
 ) -> Party {
+    // Convert key_share to Scalar
+    let poly_point = Scalar::from_repr(FieldBytes::from(*key_share)).expect("valid scalar");
+
+    // Convert pubkey to AffinePoint
+    let pk = AffinePoint::from_encoded_point(
+        &k256::EncodedPoint::from_bytes(pubkey).expect("valid point"),
+    )
+    .expect("valid public key");
+
     // -------- Zero shares (deterministic from zk_seed) --------
 
     // Precompute seeds for all pairs involving this party
@@ -270,8 +282,8 @@ pub fn load_party(
         depth: 0,
         child_number: 0,
         parent_fingerprint: [0; 4],
-        poly_point: *poly_point,
-        pk: *pk,
+        poly_point,
+        pk,
         chain_code,
     };
 
@@ -279,12 +291,12 @@ pub fn load_party(
         parameters: parameters.clone(),
         party_index,
         session_id: session_id.to_vec(),
-        poly_point: *poly_point,
-        pk: *pk,
+        poly_point,
+        pk,
         zero_share,
         mul_senders,
         mul_receivers,
         derivation_data,
-        eth_address: compute_eth_address(pk),
+        eth_address: compute_eth_address(&pk),
     }
 }

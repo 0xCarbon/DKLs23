@@ -697,6 +697,7 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
     use crate::utilities::hashes::hash;
+    use k256::elliptic_curve::PrimeField;
     use rand::Rng;
 
     /// Tests if the signing protocol generates a valid ECDSA signature.
@@ -720,7 +721,7 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().gen::<[u8; 32]>();
         let zk_seed = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let secret_key = rng::get_rng().gen::<[u8; 32]>();
         let parties = re_key(&parameters, &session_id, &secret_key, None, &zk_seed);
 
         // SIGNING
@@ -876,7 +877,7 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().gen::<[u8; 32]>();
         let zk_seed = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let secret_key = rng::get_rng().gen::<[u8; 32]>();
         let parties = re_key(&parameters, &session_id, &secret_key, None, &zk_seed);
 
         // SIGNING (as in test_signing)
@@ -1039,6 +1040,8 @@ mod tests {
         );
 
         // Now we can find the signature in the usual way.
+        let secret_key =
+            Scalar::from_repr(*k256::FieldBytes::from_slice(&secret_key)).expect("invalid scalar");
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
                 + (secret_key * Scalar::reduce(U256::from_be_hex(&expected_x_coord))));
