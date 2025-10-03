@@ -537,6 +537,8 @@ impl Party {
             poly_point: self.poly_point + correction_value, // We update poly_point.
             pk: self.pk,
 
+            zk_seed: self.zk_seed,
+
             zero_share,
 
             mul_senders,
@@ -918,6 +920,8 @@ impl Party {
 
             poly_point: self.poly_point + correction_value, // We update poly_point.
             pk: self.pk,
+
+            zk_seed: self.zk_seed,
 
             zero_share,
 

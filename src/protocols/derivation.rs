@@ -212,6 +212,8 @@ impl Party {
             poly_point: new_derivation_data.poly_point,
             pk: new_derivation_data.pk,
 
+            zk_seed: self.zk_seed.clone(),
+
             zero_share: self.zero_share.clone(),
 
             mul_senders: self.mul_senders.clone(),
@@ -247,6 +249,8 @@ impl Party {
 
             poly_point: new_derivation_data.poly_point,
             pk: new_derivation_data.pk,
+
+            zk_seed: self.zk_seed.clone(),
 
             zero_share: self.zero_share.clone(),
 

@@ -856,6 +856,8 @@ pub fn phase4(
         poly_point: *poly_point,
         pk,
 
+        zk_seed: [0; 32], // Placeholder, not used in DKG.
+
         zero_share,
 
         mul_senders,

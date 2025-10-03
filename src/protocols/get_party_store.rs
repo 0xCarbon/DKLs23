@@ -3,7 +3,7 @@ use crate::protocols::PartyStore;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::elliptic_curve::PrimeField;
 
-pub fn get_party_store(party: &Party, zk_seed: &[u8; 32]) -> PartyStore {
+pub fn get_party_store(party: &Party) -> PartyStore {
     let key_share: [u8; 32] = party.poly_point.to_repr().into();
     let party_index = party.party_index;
     let pubkey: [u8; 33] = party
@@ -12,7 +12,7 @@ pub fn get_party_store(party: &Party, zk_seed: &[u8; 32]) -> PartyStore {
         .as_bytes()
         .try_into()
         .unwrap();
-    let zk_seed: [u8; 32] = *zk_seed;
+    let zk_seed = party.zk_seed;
 
     PartyStore {
         key_share,

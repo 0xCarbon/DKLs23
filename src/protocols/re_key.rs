@@ -232,6 +232,7 @@ pub fn re_key(
             session_id: session_id.to_vec(),
             poly_point,
             pk,
+            zk_seed: *zk_seed,
             zero_share: zero_shares[(index - 1) as usize].clone(),
             mul_senders: all_mul_senders[(index - 1) as usize].clone(),
             mul_receivers: all_mul_receivers[(index - 1) as usize].clone(),

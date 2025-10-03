@@ -38,6 +38,9 @@ pub struct Party {
     /// Public key.
     pub pk: AffinePoint,
 
+    // Deterministic seed used to generate zero shares and OTs.
+    pub zk_seed: [u8; 32],
+
     /// Used for computing shares of zero during signing.
     pub zero_share: ZeroShare,
 

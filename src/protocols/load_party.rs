@@ -219,6 +219,7 @@ pub fn load_party(
         session_id: session_id.to_vec(),
         poly_point,
         pk,
+        zk_seed: *zk_seed,
         zero_share,
         mul_senders,
         mul_receivers,
