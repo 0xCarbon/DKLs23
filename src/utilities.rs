@@ -2,6 +2,7 @@
 
 pub mod commits;
 pub mod hashes;
+pub mod hkdf_helper;
 pub mod multiplication;
 pub mod ot;
 pub mod proofs;
