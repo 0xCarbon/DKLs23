@@ -13,19 +13,93 @@ use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
 
 use crate::utilities::rng;
-use rand::Rng;
 
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::dkg::compute_eth_address;
 use crate::protocols::{Parameters, Party};
 
-use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot::{
     self,
     extension::{OTEReceiver, OTESender},
 };
 use crate::utilities::zero_shares::{self, ZeroShare};
+
+use hkdf::Hkdf;
+use k256::elliptic_curve::bigint::{Encoding, U512};
+use k256::elliptic_curve::ops::Reduce;
+use sha2::Sha256;
+
+// ---------------- HKDF helpers ----------------
+
+/// HKDF expand with automatic chunking (never exceeds 8160 bytes per call).
+fn hkdf_expand(zk_seed: &[u8; 32], info: &[u8], out_len: usize) -> Vec<u8> {
+    let hk = Hkdf::<Sha256>::new(None, zk_seed);
+    let max_bytes = 255 * 32; // RFC 5869 (SHA-256)
+    let mut out = Vec::with_capacity(out_len);
+
+    let mut offset = 0usize;
+    let mut ctr: u32 = 0;
+
+    while offset < out_len {
+        ctr += 1;
+        let take = core::cmp::min(max_bytes, out_len - offset);
+
+        // domain-separate each chunk: info || ctr_be
+        let mut info_ctr = Vec::with_capacity(info.len() + 4);
+        info_ctr.extend_from_slice(info);
+        info_ctr.extend_from_slice(&ctr.to_be_bytes());
+
+        let mut block = vec![0u8; take];
+        hk.expand(&info_ctr, &mut block).expect("HKDF expand");
+        out.extend_from_slice(&block);
+        offset += take;
+    }
+    out
+}
+
+/// Expand `count` × 32-byte blocks (for seeds0/seeds1/…)
+fn expand_hashoutputs(zk_seed: &[u8; 32], info: &[u8], count: usize) -> Vec<[u8; 32]> {
+    let bytes = hkdf_expand(zk_seed, info, 32 * count);
+    bytes
+        .chunks_exact(32)
+        .map(|c| {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(c);
+            a
+        })
+        .collect()
+}
+
+/// Expand to `count` booleans (for correlation bits)
+fn expand_bools(zk_seed: &[u8; 32], info: &[u8], count: usize) -> Vec<bool> {
+    let byte_len = (count + 7) / 8;
+    let bytes = hkdf_expand(zk_seed, info, byte_len);
+    let mut out = Vec::with_capacity(count);
+    for (i, b) in bytes.iter().enumerate() {
+        for bit in 0..8 {
+            if i * 8 + bit >= count {
+                break;
+            }
+            out.push(((b >> bit) & 1) == 1);
+        }
+    }
+    out
+}
+
+/// Expand to `count` Scalars with guaranteed validity (reduce mod n; no rejection)
+fn expand_scalars(zk_seed: &[u8; 32], info: &[u8], count: usize) -> Vec<Scalar> {
+    let bytes = hkdf_expand(zk_seed, info, 32 * count);
+    bytes
+        .chunks_exact(32)
+        .map(|c| {
+            let mut wide = [0u8; 64];
+            wide[32..].copy_from_slice(c); // put 32 bytes in low half
+            let num = U512::from_be_bytes(wide); // needs `Encoding` in scope
+            Scalar::reduce(num) // needs `Reduce` in scope
+        })
+        .collect()
+}
 
 /// Given a secret key, computes the data needed to make
 /// `DKLs23` signatures under the corresponding public key.
@@ -41,6 +115,7 @@ pub fn re_key(
     session_id: &[u8],
     secret_key: &Scalar,
     option_chain_code: Option<ChainCode>,
+    zk_seed: &[u8; 32],
 ) -> Vec<Party> {
     // Public key.
     let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
@@ -53,7 +128,7 @@ pub fn re_key(
         polynomial.push(Scalar::random(rng::get_rng()));
     }
 
-    // Zero shares.
+    // Zero shares. (deterministic from zk_seed)
 
     // We compute the common seed each pair of parties must save.
     // The vector below should interpreted as follows: its first entry
@@ -61,51 +136,52 @@ pub fn re_key(
     // (1,3), ..., (1,n). The second entry contains the seeds for the pairs
     // (2,3), (2,4), ..., (2,n), and so on. The last entry contains the
     // seed for the pair (n-1, n).
-    let mut common_seeds: Vec<Vec<zero_shares::Seed>> =
-        Vec::with_capacity((parameters.share_count - 1) as usize);
-    for lower_index in 1..parameters.share_count {
-        let mut seeds_with_lower_index: Vec<zero_shares::Seed> =
-            Vec::with_capacity((parameters.share_count - lower_index) as usize);
-        for _ in (lower_index + 1)..=parameters.share_count {
-            let seed = rng::get_rng().gen::<zero_shares::Seed>();
-            seeds_with_lower_index.push(seed);
+
+    // Precompute a single seed per unordered pair (i,j) with i<j
+    let mut pair_seed: BTreeMap<(u8, u8), [u8; 32]> = BTreeMap::new();
+    for i in 1..=parameters.share_count {
+        for j in (i + 1)..=parameters.share_count {
+            let label = format!(
+                "dkls23/zero-share/{}/pair/{}/{}",
+                hex::encode(session_id),
+                i,
+                j
+            );
+            let mut s = [0u8; 32];
+            s.copy_from_slice(&hkdf_expand(zk_seed, label.as_bytes(), 32));
+            pair_seed.insert((i, j), s);
         }
-        common_seeds.push(seeds_with_lower_index);
     }
 
-    // We can now finish the initialization.
+    // Build each party's ZeroShare from the shared pair seeds
     let mut zero_shares: Vec<ZeroShare> = Vec::with_capacity(parameters.share_count as usize);
     for party in 1..=parameters.share_count {
         let mut seeds: Vec<zero_shares::SeedPair> =
             Vec::with_capacity((parameters.share_count - 1) as usize);
 
-        // We compute the pairs for which we have the highest index.
-        if party > 1 {
-            for counterparty in 1..party {
-                seeds.push(zero_shares::SeedPair {
-                    lowest_index: false,
-                    index_counterparty: counterparty,
-                    seed: common_seeds[(counterparty - 1) as usize]
-                        [(party - counterparty - 1) as usize],
-                });
+        for counterparty in 1..=parameters.share_count {
+            if counterparty == party {
+                continue;
             }
-        }
 
-        // We compute the pairs for which we have the lowest index.
-        if party < parameters.share_count {
-            for counterparty in (party + 1)..=parameters.share_count {
-                seeds.push(zero_shares::SeedPair {
-                    lowest_index: true,
-                    index_counterparty: counterparty,
-                    seed: common_seeds[(party - 1) as usize][(counterparty - party - 1) as usize],
-                });
-            }
+            let (lo, hi) = if party < counterparty {
+                (party, counterparty)
+            } else {
+                (counterparty, party)
+            };
+
+            let seed = *pair_seed.get(&(lo, hi)).expect("pair seed missing");
+            seeds.push(zero_shares::SeedPair {
+                lowest_index: party == lo,        // true if we are the lower index
+                index_counterparty: counterparty, // the other party's index
+                seed,
+            });
         }
 
         zero_shares.push(ZeroShare::initialize(seeds));
     }
 
-    // Two-party multiplication.
+    // Two-party multiplication. (deterministic from zk_seed)
 
     // These will store the result of initialization for each party.
     let mut all_mul_receivers: Vec<BTreeMap<u8, MulReceiver>> =
@@ -119,42 +195,54 @@ pub fn re_key(
                 continue;
             }
 
-            // We first compute the data for the OT extension.
+            // Base label per direction (receiver,sender)
+            let base = format!(
+                "dkls23/ot/{}/{}/{}",
+                hex::encode(session_id),
+                receiver,
+                sender
+            );
 
-            // Receiver: Sample the seeds.
-            let mut seeds0: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
-            let mut seeds1: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
-            for _ in 0..ot::extension::KAPPA {
-                seeds0.push(rng::get_rng().gen::<HashOutput>());
-                seeds1.push(rng::get_rng().gen::<HashOutput>());
-            }
+            // Receiver side: seeds0/seeds1
+            let seeds0 = expand_hashoutputs(
+                zk_seed,
+                format!("{}/seeds0", base).as_bytes(),
+                ot::extension::KAPPA as usize,
+            );
+            let seeds1 = expand_hashoutputs(
+                zk_seed,
+                format!("{}/seeds1", base).as_bytes(),
+                ot::extension::KAPPA as usize,
+            );
+            let ote_receiver = OTEReceiver {
+                seeds0: seeds0.clone(),
+                seeds1: seeds1.clone(),
+            };
 
-            // Sender: Sample the correlation and choose the correct seed.
-            // The choice bits are sampled randomly.
-            let mut correlation: Vec<bool> = Vec::with_capacity(ot::extension::KAPPA as usize);
-            let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
-            for i in 0..ot::extension::KAPPA {
-                let current_bit: bool = rng::get_rng().gen();
-                if current_bit {
-                    seeds.push(seeds1[i as usize]);
+            // Sender side: correlation + seeds (selected from seeds0/seeds1)
+            let correlation = expand_bools(
+                zk_seed,
+                format!("{}/corr", base).as_bytes(),
+                ot::extension::KAPPA as usize,
+            );
+
+            let mut seeds = Vec::with_capacity(ot::extension::KAPPA as usize);
+            for i in 0..ot::extension::KAPPA as usize {
+                if correlation[i] {
+                    seeds.push(seeds1[i]);
                 } else {
-                    seeds.push(seeds0[i as usize]);
+                    seeds.push(seeds0[i]);
                 }
-                correlation.push(current_bit);
             }
-
-            let ote_receiver = OTEReceiver { seeds0, seeds1 };
-
             let ote_sender = OTESender { correlation, seeds };
 
-            // We sample the public gadget vector.
-            let mut public_gadget: Vec<Scalar> =
-                Vec::with_capacity(ot::extension::BATCH_SIZE as usize);
-            for _ in 0..ot::extension::BATCH_SIZE {
-                public_gadget.push(Scalar::random(rng::get_rng()));
-            }
+            // Public gadget (shared length, but derived per direction)
+            let public_gadget = expand_scalars(
+                zk_seed,
+                format!("{}/gadget", base).as_bytes(),
+                ot::extension::BATCH_SIZE as usize,
+            );
 
-            // We finish the initialization.
             let mul_receiver = MulReceiver {
                 public_gadget: public_gadget.clone(),
                 ote_receiver,
@@ -171,11 +259,15 @@ pub fn re_key(
         }
     }
 
-    // Key derivation - BIP-32.
+    // Key derivation - BIP-32. (deterministic unless provided)
     // We use the chain code given or we sample a new one.
     let chain_code = match option_chain_code {
         Some(cc) => cc,
-        None => rng::get_rng().gen::<ChainCode>(),
+        None => {
+            let mut cc = [0u8; 32];
+            cc.copy_from_slice(&hkdf_expand(zk_seed, b"dkls23/chain-code", 32));
+            cc
+        }
     };
 
     // We create the parties.

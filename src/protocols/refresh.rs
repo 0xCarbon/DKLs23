@@ -960,8 +960,9 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let zk_seed = rng::get_rng().gen::<[u8; 32]>();
         let secret_key = Scalar::random(rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let parties = re_key(&parameters, &session_id, &secret_key, None, &zk_seed);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
@@ -1252,8 +1253,9 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let zk_seed = rng::get_rng().gen::<[u8; 32]>();
         let secret_key = Scalar::random(rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let parties = re_key(&parameters, &session_id, &secret_key, None, &zk_seed);
 
         // REFRESH (faster version)
 
