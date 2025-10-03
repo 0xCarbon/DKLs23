@@ -306,7 +306,6 @@ mod tests {
 
     use crate::utilities::rng;
     use hex;
-    use k256::elliptic_curve::Field;
     use rand::Rng;
     use std::collections::BTreeMap;
 
