@@ -13,11 +13,13 @@ pub fn get_party_store(party: &Party) -> PartyStore {
         .try_into()
         .unwrap();
     let zk_seed = party.zk_seed;
+    let chain_code = party.derivation_data.chain_code;
 
     PartyStore {
         key_share,
         party_index,
         pubkey,
         zk_seed,
+        chain_code,
     }
 }

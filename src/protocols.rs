@@ -99,4 +99,5 @@ pub struct PartyStore {
     party_index: u8,
     pubkey: [u8; 33],
     zk_seed: [u8; 32],
+    chain_code: [u8; 32],
 }

@@ -8,6 +8,7 @@ pub fn load_party_store(party_store: &PartyStore) -> Party {
     let party_index = party_store.party_index;
     let pubkey = &party_store.pubkey;
     let zk_seed = &party_store.zk_seed;
+    let chain_code = &party_store.chain_code;
 
     load_party(
         &Parameters {
@@ -19,6 +20,6 @@ pub fn load_party_store(party_store: &PartyStore) -> Party {
         party_index,
         pubkey,
         zk_seed,
-        None,
+        Some(chain_code.clone()),
     )
 }
