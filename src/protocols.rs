@@ -3,6 +3,7 @@
 //! Some structs appearing in most of the protocols are defined here.
 use std::collections::BTreeMap;
 
+use bincode::{Decode, Encode};
 use k256::{AffinePoint, Scalar};
 use serde::{Deserialize, Serialize};
 
@@ -93,7 +94,7 @@ impl PartiesMessage {
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Encode, Decode, Serialize, Deserialize)]
 pub struct PartyStore {
     key_share: [u8; 32],
     party_index: u8,
