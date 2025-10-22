@@ -93,10 +93,11 @@ impl PartiesMessage {
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartyStore {
     key_share: [u8; 32],
     party_index: u8,
+    #[serde(with = "serde_bytes")]
     pubkey: [u8; 33],
     zk_seed: [u8; 32],
     chain_code: [u8; 32],
