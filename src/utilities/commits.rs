@@ -20,7 +20,8 @@ use crate::SECURITY;
 /// he sends the message together with the salt.
 #[must_use]
 pub fn commit(msg: &[u8], random_seed: &[u8; 32]) -> (HashOutput, Vec<u8>) {
-    let random_seed_hash = sha512::Hash::hash(random_seed).to_byte_array();
+    let random_seed_commit = [random_seed.as_slice(), b"commitment salt generation"].concat();
+    let random_seed_hash = sha512::Hash::hash(&random_seed_commit).to_byte_array();
 
     //The paper instructs the salt to have 2*lambda_c bits.
     let salt_len = 2 * SECURITY as usize;

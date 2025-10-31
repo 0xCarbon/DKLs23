@@ -171,7 +171,13 @@ impl Party {
         // Step 5 - We sample our secret data.
 
         // Use SHA-512 of random_seed to derive instance_key and inversion_mask
-        let random_seed_hash = sha512::Hash::hash(random_seed).to_byte_array();
+        let random_seed_instance_key_inversion_mask = [
+            random_seed.as_slice(),
+            b"signing instance key and inversion mask",
+        ]
+        .concat();
+        let random_seed_hash =
+            sha512::Hash::hash(&random_seed_instance_key_inversion_mask).to_byte_array();
 
         // Left 32 bytes for instance_key
         let instance_key_bytes: [u8; 32] = random_seed_hash[0..32].try_into().unwrap();

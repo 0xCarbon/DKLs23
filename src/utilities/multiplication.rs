@@ -21,7 +21,7 @@ use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
 };
 use crate::utilities::ot::ErrorOT;
-use bitcoin_hashes::sha512;
+use bitcoin_hashes::{sha256, sha512};
 use k256::elliptic_curve::bigint::Encoding;
 use k256::elliptic_curve::ops::Reduce;
 use k256::U256;
@@ -174,12 +174,18 @@ impl MulSender {
         let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            let mut seed_with_i = random_seed.to_vec();
-            seed_with_i.push(i);
-            let seed_with_i_hash = sha512::Hash::hash(&seed_with_i).to_byte_array();
-            let rand_1: [u8; 32] = seed_with_i_hash[0..32].try_into().unwrap();
+            let random_seed_randomized_multiplication = [
+                random_seed.as_slice(),
+                &i.to_be_bytes(),
+                b"randomized_multiplication",
+            ]
+            .concat();
+
+            let random_seed_hash =
+                sha512::Hash::hash(&random_seed_randomized_multiplication).to_byte_array();
+            let rand_1: [u8; 32] = random_seed_hash[0..32].try_into().unwrap();
             a_tilde.push(Scalar::reduce(U256::from_be_bytes(rand_1)));
-            let rand_2: [u8; 32] = seed_with_i_hash[32..64].try_into().unwrap();
+            let rand_2: [u8; 32] = random_seed_hash[32..64].try_into().unwrap();
             a_hat.push(Scalar::reduce(U256::from_be_bytes(rand_2)));
         }
 
@@ -426,10 +432,15 @@ impl MulReceiver {
         let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut b = Scalar::ZERO;
         for i in 0..BATCH_SIZE {
-            let mut seed_with_i = random_seed.to_vec();
-            seed_with_i.extend_from_slice(&i.to_be_bytes());
-            let seed_with_i_hash = sha512::Hash::hash(&seed_with_i).to_byte_array();
-            let current_bit: bool = seed_with_i_hash[0] % 2 == 1;
+            let random_seed_run_phase1 = [
+                random_seed.as_slice(),
+                &i.to_be_bytes(),
+                b"multiplication choice bit generation",
+            ]
+            .concat();
+
+            let random_seed_hash = sha256::Hash::hash(&random_seed_run_phase1).to_byte_array();
+            let current_bit: bool = random_seed_hash[0] % 2 == 1;
             if current_bit {
                 b += &self.public_gadget[i as usize];
             }
@@ -446,7 +457,9 @@ impl MulReceiver {
 
         let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
 
-        let (extended_seeds, data_to_sender) = self.ote_receiver.run_phase1(&ote_sid, &choice_bits);
+        let (extended_seeds, data_to_sender) =
+            self.ote_receiver
+                .run_phase1(&ote_sid, &choice_bits, random_seed);
 
         // Step 4 - We compute the shared random values.
 
