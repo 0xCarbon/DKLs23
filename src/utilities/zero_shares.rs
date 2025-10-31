@@ -45,7 +45,8 @@ impl ZeroShare {
     #[must_use]
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
         let seed = rng::get_rng().gen::<Seed>();
-        let (commitment, salt) = commits::commit(&seed);
+        let random_seed = rng::get_rng().gen::<[u8; 32]>();
+        let (commitment, salt) = commits::commit(&seed, &random_seed);
         (seed, commitment, salt)
     }
 

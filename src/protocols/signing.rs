@@ -190,7 +190,7 @@ impl Party {
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for counterparty in &data.counterparties {
             // Commit functionality.
-            let (commitment, salt) = commit_point(&instance_point);
+            let (commitment, salt) = commit_point(&instance_point, &random_seed);
 
             // Two-party multiplication functionality.
             // We start as the receiver.

@@ -436,7 +436,8 @@ pub fn phase2(
 
     // Each party samples a random auxiliary chain code.
     let aux_chain_code: ChainCode = rng::get_rng().gen();
-    let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
+    let random_seed = rng::get_rng().gen();
+    let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code, &random_seed);
 
     let bip_keep = UniqueKeepDerivationPhase2to3 {
         aux_chain_code,
