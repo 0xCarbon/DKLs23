@@ -29,11 +29,12 @@ use k256::ecdsa::RecoveryId;
 use k256::elliptic_curve::scalar::IsHigh;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::elliptic_curve::ScalarPrimitive;
-use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
+use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use bitcoin_hashes::sha512;
 use hex;
 
 use crate::protocols::{Abort, PartiesMessage, Party};
@@ -42,7 +43,6 @@ use crate::utilities::commits::{commit_point, verify_commitment_point};
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
 use crate::utilities::ot::extension::OTEDataToSender;
-use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -155,6 +155,7 @@ impl Party {
     pub fn sign_phase1(
         &self,
         data: &SignData,
+        random_seed: &[u8; 32],
     ) -> (
         UniqueKeep1to2,
         BTreeMap<u8, KeepPhase1to2>,
@@ -168,8 +169,18 @@ impl Party {
         );
 
         // Step 5 - We sample our secret data.
-        let instance_key = Scalar::random(rng::get_rng());
-        let inversion_mask = Scalar::random(rng::get_rng());
+
+        // Use SHA-512 of random_seed to derive instance_key and inversion_mask
+        let hash_output = sha512::Hash::hash(random_seed);
+        let hash_bytes = hash_output.to_byte_array();
+
+        // Left 32 bytes for instance_key
+        let instance_key_bytes: [u8; 32] = hash_bytes[0..32].try_into().unwrap();
+        let instance_key = Scalar::reduce(U256::from_be_bytes(instance_key_bytes));
+
+        // Right 32 bytes for inversion_mask
+        let inversion_mask_bytes: [u8; 32] = hash_bytes[32..64].try_into().unwrap();
+        let inversion_mask = Scalar::reduce(U256::from_be_bytes(inversion_mask_bytes));
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
 
@@ -697,6 +708,7 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
     use crate::utilities::hashes::hash;
+    use crate::utilities::rng;
     use k256::elliptic_curve::PrimeField;
     use rand::Rng;
 
@@ -754,8 +766,9 @@ mod tests {
         let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
+            let random_seed = rng::get_rng().gen::<[u8; 32]>();
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap(), &random_seed);
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -910,8 +923,9 @@ mod tests {
         let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
+            let random_seed = rng::get_rng().gen::<[u8; 32]>();
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap(), &random_seed);
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -1275,8 +1289,9 @@ mod tests {
         let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
+            let random_seed = rng::get_rng().gen::<[u8; 32]>();
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap(), &random_seed);
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
