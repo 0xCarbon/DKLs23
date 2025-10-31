@@ -36,6 +36,7 @@
 //! instead of taking a vector of k-tuples of correlations, we equivalently deal with
 //! k vectors of single correlations, where k is the OT width.
 
+use bitcoin_hashes::sha256;
 use k256::Scalar;
 use rand::Rng;
 use serde::de::Error;
@@ -482,13 +483,24 @@ impl OTEReceiver {
         &self,
         session_id: &[u8],
         choice_bits: &[bool],
+        random_seed: &[u8; 32],
     ) -> (Vec<PRGOutput>, OTEDataToSender) {
         // EXTEND
 
         // Step 1 - Extend the choice bits by adding random noise.
         let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY as usize);
-        for _ in 0..OT_SECURITY {
-            random_choice_bits.push(rng::get_rng().gen());
+        for i in 0..OT_SECURITY {
+            let random_seed_run_phase1 = [
+                b"OTE random choice bit generation",
+                random_seed.as_slice(),
+                &i.to_be_bytes(),
+            ]
+            .concat();
+
+            let random_seed_hash = sha256::Hash::hash(&random_seed_run_phase1).to_byte_array();
+            let current_bit: bool = random_seed_hash[0] % 2 == 1;
+
+            random_choice_bits.push(current_bit);
         }
         let extended_choice_bits = [choice_bits, &random_choice_bits].concat();
 
@@ -966,8 +978,9 @@ mod tests {
         }
 
         // Phase 1 - Receiver
+        let random_seed = rng::get_rng().gen();
         let (extended_seeds, data_to_sender) =
-            ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
+            ote_receiver.run_phase1(&session_id, &receiver_choice_bits, &random_seed);
 
         // Communication round 1
         // Receiver keeps extended_seeds and transmits data_to_sender.
