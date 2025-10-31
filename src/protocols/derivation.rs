@@ -467,12 +467,14 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
         let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let random_seed = rng::get_rng().gen::<[u8; 32]>();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
                 received_1to2.get(&party_index).unwrap(),
+                &random_seed,
             );
             match result {
                 Err(abort) => {

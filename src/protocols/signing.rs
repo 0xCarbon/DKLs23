@@ -171,15 +171,14 @@ impl Party {
         // Step 5 - We sample our secret data.
 
         // Use SHA-512 of random_seed to derive instance_key and inversion_mask
-        let hash_output = sha512::Hash::hash(random_seed);
-        let hash_bytes = hash_output.to_byte_array();
+        let random_seed_hash = sha512::Hash::hash(random_seed).to_byte_array();
 
         // Left 32 bytes for instance_key
-        let instance_key_bytes: [u8; 32] = hash_bytes[0..32].try_into().unwrap();
+        let instance_key_bytes: [u8; 32] = random_seed_hash[0..32].try_into().unwrap();
         let instance_key = Scalar::reduce(U256::from_be_bytes(instance_key_bytes));
 
         // Right 32 bytes for inversion_mask
-        let inversion_mask_bytes: [u8; 32] = hash_bytes[32..64].try_into().unwrap();
+        let inversion_mask_bytes: [u8; 32] = random_seed_hash[32..64].try_into().unwrap();
         let inversion_mask = Scalar::reduce(U256::from_be_bytes(inversion_mask_bytes));
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
@@ -213,7 +212,7 @@ impl Party {
                 .mul_receivers
                 .get(counterparty)
                 .unwrap()
-                .run_phase1(&mul_sid);
+                .run_phase1(&mul_sid, &random_seed);
 
             // We gather the messages.
             keep.insert(
@@ -288,6 +287,7 @@ impl Party {
         unique_kept: &UniqueKeep1to2,
         kept: &BTreeMap<u8, KeepPhase1to2>,
         received: &[TransmitPhase1to2],
+        random_seed: &[u8; 32],
     ) -> Result<
         (
             UniqueKeep2to3,
@@ -345,6 +345,7 @@ impl Party {
                 &mul_sid,
                 &input,
                 &message.mul_transmit,
+                &random_seed,
             );
 
             let c_u: Scalar;
@@ -793,12 +794,14 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
         let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let random_seed = rng::get_rng().gen::<[u8; 32]>();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
                 received_1to2.get(&party_index).unwrap(),
+                &random_seed,
             );
             match result {
                 Err(abort) => {
@@ -950,12 +953,14 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
         let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let random_seed = rng::get_rng().gen::<[u8; 32]>();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
                 received_1to2.get(&party_index).unwrap(),
+                &random_seed,
             );
             match result {
                 Err(abort) => {
@@ -1316,12 +1321,14 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
         let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let random_seed = rng::get_rng().gen::<[u8; 32]>();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
                 received_1to2.get(&party_index).unwrap(),
+                &random_seed,
             );
             match result {
                 Err(abort) => {

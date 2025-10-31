@@ -21,7 +21,10 @@ use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
 };
 use crate::utilities::ot::ErrorOT;
-use rand::Rng;
+use bitcoin_hashes::sha512;
+use k256::elliptic_curve::bigint::Encoding;
+use k256::elliptic_curve::ops::Reduce;
+use k256::U256;
 
 /// Constant `L` from Functionality 3.5 in `DKLs23` used for signing in Protocol 3.6.
 pub const L: u8 = 2;
@@ -158,6 +161,7 @@ impl MulSender {
         session_id: &[u8],
         input: &[Scalar],
         data: &OTEDataToSender,
+        random_seed: &[u8; 32],
     ) -> Result<(Vec<Scalar>, MulDataToReceiver), ErrorMul> {
         // RANDOMIZED MULTIPLICATION
 
@@ -169,9 +173,14 @@ impl MulSender {
         // There are L pads and L check_values.
         let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
-        for _ in 0..L {
-            a_tilde.push(Scalar::random(rng::get_rng()));
-            a_hat.push(Scalar::random(rng::get_rng()));
+        for i in 0..L {
+            let mut seed_with_i = random_seed.to_vec();
+            seed_with_i.push(i);
+            let seed_with_i_hash = sha512::Hash::hash(&seed_with_i).to_byte_array();
+            let rand_1: [u8; 32] = seed_with_i_hash[0..32].try_into().unwrap();
+            a_tilde.push(Scalar::reduce(U256::from_be_bytes(rand_1)));
+            let rand_2: [u8; 32] = seed_with_i_hash[32..64].try_into().unwrap();
+            a_hat.push(Scalar::reduce(U256::from_be_bytes(rand_2)));
         }
 
         // For the correlation, let us first explain the case L = 1.
@@ -404,6 +413,7 @@ impl MulReceiver {
     pub fn run_phase1(
         &self,
         session_id: &[u8],
+        random_seed: &[u8; 32],
     ) -> (Scalar, MulDataToKeepReceiver, OTEDataToSender) {
         // RANDOMIZED MULTIPLICATION
 
@@ -416,7 +426,10 @@ impl MulReceiver {
         let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut b = Scalar::ZERO;
         for i in 0..BATCH_SIZE {
-            let current_bit: bool = rng::get_rng().gen();
+            let mut seed_with_i = random_seed.to_vec();
+            seed_with_i.extend_from_slice(&i.to_be_bytes());
+            let seed_with_i_hash = sha512::Hash::hash(&seed_with_i).to_byte_array();
+            let current_bit: bool = seed_with_i_hash[0] % 2 == 1;
             if current_bit {
                 b += &self.public_gadget[i as usize];
             }
@@ -639,14 +652,18 @@ mod tests {
         }
 
         // Phase 1 - Receiver
-        let (receiver_random, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
+        let random_seed: [u8; 32] = rng::get_rng().gen();
+        let (receiver_random, data_to_keep, data_to_sender) =
+            mul_receiver.run_phase1(&session_id, &random_seed);
 
         // Communication round 1
         // Receiver keeps receiver_random (part of the output)
         // and data_to_keep, and transmits data_to_sender.
 
         // Unique phase - Sender
-        let sender_result = mul_sender.run(&session_id, &sender_input, &data_to_sender);
+        let random_seed: [u8; 32] = rng::get_rng().gen();
+        let sender_result =
+            mul_sender.run(&session_id, &sender_input, &data_to_sender, &random_seed);
 
         let sender_output: Vec<Scalar>;
         let data_to_receiver: MulDataToReceiver;
