@@ -25,6 +25,7 @@
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
 
+use bincode::{Decode, Encode};
 use k256::ecdsa::RecoveryId;
 use k256::elliptic_curve::scalar::IsHigh;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -59,7 +60,7 @@ pub struct SignData {
 /// Transmit - Signing.
 ///
 /// The message is produced/sent during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Encode, Decode)]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,

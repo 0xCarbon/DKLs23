@@ -76,7 +76,7 @@ impl Abort {
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Encode, Decode)]
 pub struct PartiesMessage {
     pub sender: u8,
     pub receiver: u8,

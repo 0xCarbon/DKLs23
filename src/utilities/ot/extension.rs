@@ -36,6 +36,7 @@
 //! instead of taking a vector of k-tuples of correlations, we equivalently deal with
 //! k vectors of single correlations, where k is the OT width.
 
+use bincode::{Decode, Encode};
 use bitcoin_hashes::sha256;
 use k256::Scalar;
 use rand::Rng;
@@ -114,7 +115,7 @@ pub struct OTEReceiver {
 }
 
 /// Data transmitted by the receiver to the sender after his first phase.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Encode, Decode)]
 pub struct OTEDataToSender {
     #[serde(
         serialize_with = "serialize_vec_prg",
