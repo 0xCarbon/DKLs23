@@ -77,7 +77,8 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
-pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S::Error>
+// pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_vec_prg<S>(data: &[[u8; 72]], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -85,16 +86,19 @@ where
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
 
-pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 78]>, D::Error>
+// pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 78]>, D::Error>
+pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 72]>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let concatenated: Vec<u8> = serde_bytes::Deserialize::deserialize(deserializer)?;
 
     concatenated
-        .chunks(78)
+        // .chunks(78)
+        .chunks(72)
         .map(|chunk| {
-            let array: [u8; 78] = chunk.try_into().map_err(D::Error::custom)?;
+            // let array: [u8; 78] = chunk.try_into().map_err(D::Error::custom)?;
+            let array: [u8; 72] = chunk.try_into().map_err(D::Error::custom)?;
             Ok(array)
         })
         .collect()
@@ -810,88 +814,95 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
 /// # Panics
 ///
 /// Will panic if `left` or `right` doesn't have the correct size, that is [`OT_SECURITY`] = 208 bits.
+// Replace your current field_mul with this version.
+// It supports OT_SECURITY = 208 (old) and 192 (new).
 #[must_use]
 pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
-    // Constants W and t from Section 2.3 in the book.
-    const W: u8 = 64;
-    const T: u8 = 4;
-
-    assert!(
-        (left.len() == (OT_SECURITY / 8) as usize) && (right.len() == (OT_SECURITY / 8) as usize),
-        "Binary field multiplication: Entries don't have the correct length!"
+    let len = left.len();
+    assert_eq!(
+        len,
+        right.len(),
+        "Binary field multiplication: length mismatch"
     );
+    let m_bits = (len * 8) as u32;
 
-    let mut a = [0u64; T as usize];
-    let mut b = [0u64; (T + 1) as usize]; //b has extra space because it will be shifted.
-    let mut c = [0u64; (2 * T) as usize];
+    // Irreducible pentanomials for the supported fields
+    let (k3, k2, k1): (u32, u32, u32) = match m_bits {
+        208 => (9, 3, 1), // x^208 + x^9 + x^3 + x + 1
+        192 => (7, 2, 1), // x^192 + x^7 + x^2 + x + 1
+        _ => panic!("Unsupported OT_SECURITY = {m_bits}"),
+    };
 
-    // Conversion of [u8; 26] to [u64; 4].
-    for i in 0..OT_SECURITY / 8 {
-        a[(i >> 3) as usize] |= u64::from(left[i as usize]) << ((i & 0x07) << 3);
-        b[(i >> 3) as usize] |= u64::from(right[i as usize]) << ((i & 0x07) << 3);
+    let limbs = ((m_bits + 63) / 64) as usize; // 208→4, 192→3
+    let dbl_limbs = limbs * 2;
+
+    let mut a = vec![0u64; limbs];
+    let mut b = vec![0u64; limbs];
+    let mut c = vec![0u64; dbl_limbs]; // product buffer
+
+    // Pack bytes → u64
+    for i in 0..len {
+        a[i / 8] |= (left[i] as u64) << ((i as u32 & 7) * 8);
+        b[i / 8] |= (right[i] as u64) << ((i as u32 & 7) * 8);
     }
 
-    // Algorithm 2.34 (page 49)
-    for k in 0..W {
-        for j in 0..T {
-            //If the k-th bit of a[j] is 1, we add b to c (with the correct shift).
-            if (a[j as usize] >> k) % 2 == 1 {
-                for i in 0..=T {
-                    c[(j + i) as usize] ^= b[i as usize];
+    // Carry-less multiply (comb method)
+    for k in 0..64 {
+        for j in 0..limbs {
+            if (a[j] >> k) & 1 == 1 {
+                let mut carry = 0u64;
+                for i in 0..=limbs {
+                    let cur = if i < limbs {
+                        (b[i] << k) | carry
+                    } else {
+                        carry
+                    };
+                    c[j + i] ^= cur;
+                    carry = if i < limbs && k != 0 {
+                        b[i] >> (64 - k)
+                    } else {
+                        0
+                    };
                 }
             }
         }
+    }
 
-        // We shift b one digit to the left (not necessary in the last iteration)
-        if k != W - 1 {
-            for i in (1..=T).rev() {
-                b[i as usize] = b[i as usize] << 1 | b[(i - 1) as usize] >> 63;
+    // Reduction modulo x^m + x^k3 + x^k2 + x^k1 + 1
+    let mut i = (2 * m_bits).saturating_sub(2);
+    while i >= m_bits {
+        // Find which 64-bit word and bit index we’re at
+        let word = (i / 64) as usize;
+        let bit = (i % 64) as u64;
+        let bit_set = ((c[word] >> bit) & 1) == 1;
+        if bit_set {
+            // clear bit i
+            c[word] &= !(1u64 << bit);
+
+            // XOR down at offsets k3,k2,k1,0
+            for k in [k3, k2, k1, 0u32] {
+                let idx = i - m_bits + k;
+                let w = (idx / 64) as usize;
+                let b = (idx % 64) as u64;
+                c[w] ^= 1u64 << b;
             }
         }
-        b[0] <<= 1;
+
+        if i == m_bits {
+            break;
+        }
+        i -= 1;
     }
 
-    // For the moment, c is just the usual product of the two polynomials.
-    // We have to reduce it modulo the polynomial f(X) = X^208 + X^9 + X^3 + X + 1
-    // (according to Table A.1 on page 259).
-
-    // We adapt the idea presented on page 54.
-
-    for i in (T..(2 * T)).rev() {
-        let t = c[i as usize];
-
-        // The current block is reduced. Note that 208 = 3*64 + 16.
-        // Hence, we skip 3 blocks and in the fourth block we put 16
-        // bits of t (this is the t << 48 part). The remaining digits
-        // go to the third block (this is the t >> 16 part).
-        // Actually, this happens for every monomial in f(X), except
-        // for X^208. Note that the difference between consecutive
-        // numbers below is the same as the differences in the sequence
-        // (9,3,1,0), which are the exponents in the monomials.
-        c[(i - 4) as usize] ^= (t << 57) ^ (t << 51) ^ (t << 49) ^ (t << 48);
-        c[(i - 3) as usize] ^= (t >> 7) ^ (t >> 13) ^ (t >> 15) ^ (t >> 16);
-
-        // Erase the block that was reduced.
-        c[i as usize] = 0;
-    }
-    // The block c[T-1] doesn't need to be reduced in its entirety,
-    // only its first 64 - 16 = 48 bits.
-    let t = c[(T - 1) as usize] >> 16;
-    c[0] ^= (t << 9) ^ (t << 3) ^ (t << 1) ^ t;
-
-    // We save only the last 16 bits (note that 0xFFFF = 0b11...11 with 16 one's).
-    c[(T - 1) as usize] &= 0xFFFF;
-
-    // At this point, c is the product of a and b in the finite field.
-
-    // We convert the result to the original format.
-    let mut result = [0u8; (OT_SECURITY / 8) as usize];
-    for i in 0..OT_SECURITY / 8 {
-        result[i as usize] = u8::try_from((c[(i >> 3) as usize] >> ((i & 0x07) << 3)) & 0xFF)
-            .expect("This value fits into an u8!");
+    // Convert back to bytes
+    let mut out = vec![0u8; len];
+    for i in 0..len {
+        out[i] = ((c[i / 8] >> ((i as u32 & 7) * 8)) & 0xFF) as u8;
     }
 
-    result
+    let mut fe = [0u8; (OT_SECURITY / 8) as usize];
+    fe.copy_from_slice(&out);
+    fe
 }
 
 #[cfg(test)]

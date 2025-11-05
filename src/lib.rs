@@ -19,4 +19,5 @@ pub const RAW_SECURITY: u16 = 256;
 pub const SECURITY: u16 = 32;
 
 /// Statistical security parameter `lambda_s` from `DKLs23`.
-pub const STAT_SECURITY: u16 = 80;
+// pub const STAT_SECURITY: u16 = 80; // Default
+pub const STAT_SECURITY: u16 = 64;
