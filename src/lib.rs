@@ -16,7 +16,7 @@ pub mod utilities;
 /// We take it to be the same as the parameter `kappa`.
 pub const RAW_SECURITY: u16 = 256;
 /// `RAW_SECURITY` divided by 8 (used for arrays of bytes)
-pub const SECURITY: u16 = 32;
+pub const SECURITY: u16 = RAW_SECURITY / 8;
 
 /// Statistical security parameter `lambda_s` from `DKLs23`.
 // pub const STAT_SECURITY: u16 = 80; // Default
