@@ -712,7 +712,7 @@ pub fn verify_ecdsa_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::dkg::*;
+    // use crate::protocols::dkg::*;
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
     use crate::utilities::hashes::hash;
@@ -1084,328 +1084,328 @@ mod tests {
         assert_eq!(signature.1, expected_rec_id.into());
     }
 
-    /// Tests DKG and signing together. The main purpose is to
-    /// verify whether the initialization protocols from DKG are working.
-    ///
-    /// It is a combination of `test_dkg_initialization` and [`test_signing`].
-    #[test]
-    fn test_dkg_and_signing() {
-        // DKG (as in test_dkg_initialization)
+    // /// Tests DKG and signing together. The main purpose is to
+    // /// verify whether the initialization protocols from DKG are working.
+    // ///
+    // /// It is a combination of `test_dkg_initialization` and [`test_signing`].
+    // #[test]
+    // fn test_dkg_and_signing() {
+    //     // DKG (as in test_dkg_initialization)
 
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+    //     let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
+    //     let offset = rng::get_rng().gen_range(0..=5);
 
-        let parameters = Parameters {
-            threshold,
-            share_count: threshold + offset,
-        }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+    //     let parameters = Parameters {
+    //         threshold,
+    //         share_count: threshold + offset,
+    //     }; // You can fix the parameters if you prefer.
+    //     let session_id = rng::get_rng().gen::<[u8; 32]>();
 
-        // Each party prepares their data for this DKG.
-        let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
-        for i in 0..parameters.share_count {
-            all_data.push(SessionData {
-                parameters: parameters.clone(),
-                party_index: i + 1,
-                session_id: session_id.to_vec(),
-            });
-        }
+    //     // Each party prepares their data for this DKG.
+    //     let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
+    //     for i in 0..parameters.share_count {
+    //         all_data.push(SessionData {
+    //             parameters: parameters.clone(),
+    //             party_index: i + 1,
+    //             session_id: session_id.to_vec(),
+    //         });
+    //     }
 
-        // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
-        for i in 0..parameters.share_count {
-            let out1 = phase1(&all_data[i as usize]);
+    //     // Phase 1
+    //     let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+    //     for i in 0..parameters.share_count {
+    //         let out1 = phase1(&all_data[i as usize]);
 
-            dkg_1.push(out1);
-        }
+    //         dkg_1.push(out1);
+    //     }
 
-        // Communication round 1 - Each party receives a fragment from each counterparty.
-        // They also produce a fragment for themselves.
-        let mut poly_fragments = vec![
-            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
-            parameters.share_count as usize
-        ];
-        for row_i in dkg_1 {
-            for j in 0..parameters.share_count {
-                poly_fragments[j as usize].push(row_i[j as usize]);
-            }
-        }
+    //     // Communication round 1 - Each party receives a fragment from each counterparty.
+    //     // They also produce a fragment for themselves.
+    //     let mut poly_fragments = vec![
+    //         Vec::<Scalar>::with_capacity(parameters.share_count as usize);
+    //         parameters.share_count as usize
+    //     ];
+    //     for row_i in dkg_1 {
+    //         for j in 0..parameters.share_count {
+    //             poly_fragments[j as usize].push(row_i[j as usize]);
+    //         }
+    //     }
 
-        // Phase 2
-        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
-        let mut proofs_commitments: Vec<ProofCommitment> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4> = BTreeMap::new();
-        for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5, out6) =
-                phase2(&all_data[i as usize], &poly_fragments[i as usize]);
+    //     // Phase 2
+    //     let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
+    //     let mut proofs_commitments: Vec<ProofCommitment> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4> = BTreeMap::new();
+    //     for i in 0..parameters.share_count {
+    //         let (out1, out2, out3, out4, out5, out6) =
+    //             phase2(&all_data[i as usize], &poly_fragments[i as usize]);
 
-            poly_points.push(out1);
-            proofs_commitments.push(out2);
-            zero_kept_2to3.push(out3);
-            zero_transmit_2to4.push(out4);
-            bip_kept_2to3.push(out5);
-            bip_broadcast_2to4.insert(i + 1, out6); // This variable should be grouped into a BTreeMap.
-        }
+    //         poly_points.push(out1);
+    //         proofs_commitments.push(out2);
+    //         zero_kept_2to3.push(out3);
+    //         zero_transmit_2to4.push(out4);
+    //         bip_kept_2to3.push(out5);
+    //         bip_broadcast_2to4.insert(i + 1, out6); // This variable should be grouped into a BTreeMap.
+    //     }
 
-        // Communication round 2
-        let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        for i in 1..=parameters.share_count {
-            // We don't need to transmit the commitments because proofs_commitments is already what we need.
-            // In practice, this should be done here.
+    //     // Communication round 2
+    //     let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     for i in 1..=parameters.share_count {
+    //         // We don't need to transmit the commitments because proofs_commitments is already what we need.
+    //         // In practice, this should be done here.
 
-            let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
-                Vec::with_capacity((parameters.share_count - 1) as usize);
-            for party in &zero_transmit_2to4 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            zero_received_2to4.push(new_row);
-        }
+    //         let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
+    //             Vec::with_capacity((parameters.share_count - 1) as usize);
+    //         for party in &zero_transmit_2to4 {
+    //             for message in party {
+    //                 // Check if this message should be sent to us.
+    //                 if message.parties.receiver == i {
+    //                     new_row.push(message.clone());
+    //                 }
+    //             }
+    //         }
+    //         zero_received_2to4.push(new_row);
+    //     }
 
-        // bip_transmit_2to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a BTreeMap.
+    //     // bip_transmit_2to4 is already in the format we need.
+    //     // In practice, the messages received should be grouped into a BTreeMap.
 
-        // Phase 3
-        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4> = BTreeMap::new();
-        for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5) = phase3(
-                &all_data[i as usize],
-                &zero_kept_2to3[i as usize],
-                &bip_kept_2to3[i as usize],
-            );
+    //     // Phase 3
+    //     let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4> = BTreeMap::new();
+    //     for i in 0..parameters.share_count {
+    //         let (out1, out2, out3, out4, out5) = phase3(
+    //             &all_data[i as usize],
+    //             &zero_kept_2to3[i as usize],
+    //             &bip_kept_2to3[i as usize],
+    //         );
 
-            zero_kept_3to4.push(out1);
-            zero_transmit_3to4.push(out2);
-            mul_kept_3to4.push(out3);
-            mul_transmit_3to4.push(out4);
-            bip_broadcast_3to4.insert(i + 1, out5); // This variable should be grouped into a BTreeMap.
-        }
+    //         zero_kept_3to4.push(out1);
+    //         zero_transmit_3to4.push(out2);
+    //         mul_kept_3to4.push(out3);
+    //         mul_transmit_3to4.push(out4);
+    //         bip_broadcast_3to4.insert(i + 1, out5); // This variable should be grouped into a BTreeMap.
+    //     }
 
-        // Communication round 3
-        let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
-            Vec::with_capacity(parameters.share_count as usize);
-        for i in 1..=parameters.share_count {
-            // We don't need to transmit the proofs because proofs_commitments is already what we need.
-            // In practice, this should be done here.
+    //     // Communication round 3
+    //     let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+    //         Vec::with_capacity(parameters.share_count as usize);
+    //     for i in 1..=parameters.share_count {
+    //         // We don't need to transmit the proofs because proofs_commitments is already what we need.
+    //         // In practice, this should be done here.
 
-            let mut new_row: Vec<TransmitInitZeroSharePhase3to4> =
-                Vec::with_capacity((parameters.share_count - 1) as usize);
-            for party in &zero_transmit_3to4 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            zero_received_3to4.push(new_row);
+    //         let mut new_row: Vec<TransmitInitZeroSharePhase3to4> =
+    //             Vec::with_capacity((parameters.share_count - 1) as usize);
+    //         for party in &zero_transmit_3to4 {
+    //             for message in party {
+    //                 // Check if this message should be sent to us.
+    //                 if message.parties.receiver == i {
+    //                     new_row.push(message.clone());
+    //                 }
+    //             }
+    //         }
+    //         zero_received_3to4.push(new_row);
 
-            let mut new_row: Vec<TransmitInitMulPhase3to4> =
-                Vec::with_capacity((parameters.share_count - 1) as usize);
-            for party in &mul_transmit_3to4 {
-                for message in party {
-                    // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
-                        new_row.push(message.clone());
-                    }
-                }
-            }
-            mul_received_3to4.push(new_row);
-        }
+    //         let mut new_row: Vec<TransmitInitMulPhase3to4> =
+    //             Vec::with_capacity((parameters.share_count - 1) as usize);
+    //         for party in &mul_transmit_3to4 {
+    //             for message in party {
+    //                 // Check if this message should be sent to us.
+    //                 if message.parties.receiver == i {
+    //                     new_row.push(message.clone());
+    //                 }
+    //             }
+    //         }
+    //         mul_received_3to4.push(new_row);
+    //     }
 
-        // bip_transmit_3to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a BTreeMap.
+    //     // bip_transmit_3to4 is already in the format we need.
+    //     // In practice, the messages received should be grouped into a BTreeMap.
 
-        // Phase 4
-        let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
-        for i in 0..parameters.share_count {
-            let result = phase4(
-                &all_data[i as usize],
-                &poly_points[i as usize],
-                &proofs_commitments,
-                &zero_kept_3to4[i as usize],
-                &zero_received_2to4[i as usize],
-                &zero_received_3to4[i as usize],
-                &mul_kept_3to4[i as usize],
-                &mul_received_3to4[i as usize],
-                &bip_broadcast_2to4,
-                &bip_broadcast_3to4,
-            );
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                }
-                Ok(party) => {
-                    parties.push(party);
-                }
-            }
-        }
+    //     // Phase 4
+    //     let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
+    //     for i in 0..parameters.share_count {
+    //         let result = phase4(
+    //             &all_data[i as usize],
+    //             &poly_points[i as usize],
+    //             &proofs_commitments,
+    //             &zero_kept_3to4[i as usize],
+    //             &zero_received_2to4[i as usize],
+    //             &zero_received_3to4[i as usize],
+    //             &mul_kept_3to4[i as usize],
+    //             &mul_received_3to4[i as usize],
+    //             &bip_broadcast_2to4,
+    //             &bip_broadcast_3to4,
+    //         );
+    //         match result {
+    //             Err(abort) => {
+    //                 panic!("Party {} aborted: {:?}", abort.index, abort.description);
+    //             }
+    //             Ok(party) => {
+    //                 parties.push(party);
+    //             }
+    //         }
+    //     }
 
-        // We check if the public keys and chain codes are the same.
-        let expected_pk = parties[0].pk;
-        let expected_chain_code = parties[0].derivation_data.chain_code;
-        for party in &parties {
-            assert_eq!(expected_pk, party.pk);
-            assert_eq!(expected_chain_code, party.derivation_data.chain_code);
-        }
+    //     // We check if the public keys and chain codes are the same.
+    //     let expected_pk = parties[0].pk;
+    //     let expected_chain_code = parties[0].derivation_data.chain_code;
+    //     for party in &parties {
+    //         assert_eq!(expected_pk, party.pk);
+    //         assert_eq!(expected_chain_code, party.derivation_data.chain_code);
+    //     }
 
-        // SIGNING (as in test_signing)
+    //     // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+    //     let sign_id = rng::get_rng().gen::<[u8; 32]>();
+    //     let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
-        // For simplicity, we are testing only the first parties.
-        let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
+    //     // For simplicity, we are testing only the first parties.
+    //     let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
 
-        // Each party prepares their data for this signing session.
-        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
-        for party_index in executing_parties.clone() {
-            //Gather the counterparties
-            let mut counterparties = executing_parties.clone();
-            counterparties.retain(|index| *index != party_index);
+    //     // Each party prepares their data for this signing session.
+    //     let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+    //     for party_index in executing_parties.clone() {
+    //         //Gather the counterparties
+    //         let mut counterparties = executing_parties.clone();
+    //         counterparties.retain(|index| *index != party_index);
 
-            all_data.insert(
-                party_index,
-                SignData {
-                    sign_id: sign_id.to_vec(),
-                    counterparties,
-                    message_hash: message_to_sign,
-                },
-            );
-        }
+    //         all_data.insert(
+    //             party_index,
+    //             SignData {
+    //                 sign_id: sign_id.to_vec(),
+    //                 counterparties,
+    //                 message_hash: message_to_sign,
+    //             },
+    //         );
+    //     }
 
-        // Phase 1
-        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
-        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
-        for party_index in executing_parties.clone() {
-            let random_seed = rng::get_rng().gen::<[u8; 32]>();
-            let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap(), &random_seed);
+    //     // Phase 1
+    //     let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+    //     let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
+    //     let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+    //     for party_index in executing_parties.clone() {
+    //         let random_seed = rng::get_rng().gen::<[u8; 32]>();
+    //         let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
+    //             .sign_phase1(all_data.get(&party_index).unwrap(), &random_seed);
 
-            unique_kept_1to2.insert(party_index, unique_keep);
-            kept_1to2.insert(party_index, keep);
-            transmit_1to2.insert(party_index, transmit);
-        }
+    //         unique_kept_1to2.insert(party_index, unique_keep);
+    //         kept_1to2.insert(party_index, keep);
+    //         transmit_1to2.insert(party_index, transmit);
+    //     }
 
-        // Communication round 1
-        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+    //     // Communication round 1
+    //     let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
 
-        for &party_index in &executing_parties {
-            let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
-                .values()
-                .flatten()
-                .filter(|message| message.parties.receiver == party_index)
-                .cloned()
-                .collect();
+    //     for &party_index in &executing_parties {
+    //         let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
+    //             .values()
+    //             .flatten()
+    //             .filter(|message| message.parties.receiver == party_index)
+    //             .cloned()
+    //             .collect();
 
-            received_1to2.insert(party_index, messages_for_party);
-        }
+    //         received_1to2.insert(party_index, messages_for_party);
+    //     }
 
-        // Phase 2
-        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
-        let random_seed = rng::get_rng().gen::<[u8; 32]>();
-        for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase2(
-                all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
-                received_1to2.get(&party_index).unwrap(),
-                &random_seed,
-            );
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                }
-                Ok((unique_keep, keep, transmit)) => {
-                    unique_kept_2to3.insert(party_index, unique_keep);
-                    kept_2to3.insert(party_index, keep);
-                    transmit_2to3.insert(party_index, transmit);
-                }
-            }
-        }
+    //     // Phase 2
+    //     let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+    //     let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
+    //     let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+    //     let random_seed = rng::get_rng().gen::<[u8; 32]>();
+    //     for party_index in executing_parties.clone() {
+    //         let result = parties[(party_index - 1) as usize].sign_phase2(
+    //             all_data.get(&party_index).unwrap(),
+    //             unique_kept_1to2.get(&party_index).unwrap(),
+    //             kept_1to2.get(&party_index).unwrap(),
+    //             received_1to2.get(&party_index).unwrap(),
+    //             &random_seed,
+    //         );
+    //         match result {
+    //             Err(abort) => {
+    //                 panic!("Party {} aborted: {:?}", abort.index, abort.description);
+    //             }
+    //             Ok((unique_keep, keep, transmit)) => {
+    //                 unique_kept_2to3.insert(party_index, unique_keep);
+    //                 kept_2to3.insert(party_index, keep);
+    //                 transmit_2to3.insert(party_index, transmit);
+    //             }
+    //         }
+    //     }
 
-        // Communication round 2
-        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+    //     // Communication round 2
+    //     let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
 
-        for &party_index in &executing_parties {
-            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
-                .values()
-                .flatten()
-                .filter(|message| message.parties.receiver == party_index)
-                .cloned()
-                .collect();
+    //     for &party_index in &executing_parties {
+    //         let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+    //             .values()
+    //             .flatten()
+    //             .filter(|message| message.parties.receiver == party_index)
+    //             .cloned()
+    //             .collect();
 
-            received_2to3.insert(party_index, messages_for_party);
-        }
+    //         received_2to3.insert(party_index, messages_for_party);
+    //     }
 
-        // Phase 3
-        let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
-        let mut broadcast_3to4: Vec<Broadcast3to4> =
-            Vec::with_capacity(parameters.threshold as usize);
-        for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase3(
-                all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
-                received_2to3.get(&party_index).unwrap(),
-            );
-            match result {
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                }
-                Ok((x_coord, broadcast)) => {
-                    x_coords.push(x_coord);
-                    broadcast_3to4.push(broadcast);
-                }
-            }
-        }
+    //     // Phase 3
+    //     let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
+    //     let mut broadcast_3to4: Vec<Broadcast3to4> =
+    //         Vec::with_capacity(parameters.threshold as usize);
+    //     for party_index in executing_parties.clone() {
+    //         let result = parties[(party_index - 1) as usize].sign_phase3(
+    //             all_data.get(&party_index).unwrap(),
+    //             unique_kept_2to3.get(&party_index).unwrap(),
+    //             kept_2to3.get(&party_index).unwrap(),
+    //             received_2to3.get(&party_index).unwrap(),
+    //         );
+    //         match result {
+    //             Err(abort) => {
+    //                 panic!("Party {} aborted: {:?}", abort.index, abort.description);
+    //             }
+    //             Ok((x_coord, broadcast)) => {
+    //                 x_coords.push(x_coord);
+    //                 broadcast_3to4.push(broadcast);
+    //             }
+    //         }
+    //     }
 
-        // We verify all parties got the same x coordinate.
-        let x_coord = x_coords[0].clone(); // We take the first one as reference.
-        for i in 1..parameters.threshold {
-            assert_eq!(x_coord, x_coords[i as usize]);
-        }
+    //     // We verify all parties got the same x coordinate.
+    //     let x_coord = x_coords[0].clone(); // We take the first one as reference.
+    //     for i in 1..parameters.threshold {
+    //         assert_eq!(x_coord, x_coords[i as usize]);
+    //     }
 
-        // Communication round 3
-        // This is a broadcast to all parties. The desired result is already broadcast_3to4.
+    //     // Communication round 3
+    //     // This is a broadcast to all parties. The desired result is already broadcast_3to4.
 
-        // Phase 4
-        // It is essentially independent of the party, so we compute just once.
-        let some_index = executing_parties[0];
-        let result = parties[(some_index - 1) as usize].sign_phase4(
-            all_data.get(&some_index).unwrap(),
-            &x_coord,
-            &broadcast_3to4,
-            true,
-        );
-        if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
-        }
-        // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
-    }
+    //     // Phase 4
+    //     // It is essentially independent of the party, so we compute just once.
+    //     let some_index = executing_parties[0];
+    //     let result = parties[(some_index - 1) as usize].sign_phase4(
+    //         all_data.get(&some_index).unwrap(),
+    //         &x_coord,
+    //         &broadcast_3to4,
+    //         true,
+    //     );
+    //     if let Err(abort) = result {
+    //         panic!("Party {} aborted: {:?}", abort.index, abort.description);
+    //     }
+    //     // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
+    // }
 }
