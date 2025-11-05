@@ -43,6 +43,15 @@ pub fn expand_hashoutputs(zk_seed: &[u8; 32], info: &[u8], count: usize) -> Vec<
         .collect()
 }
 
+/// Expand `count` × SECURITY-byte blocks (for HashOutput arrays)
+pub fn expand_hashoutputs_truncated(zk_seed: &[u8; 32], info: &[u8], count: usize, size: usize) -> Vec<Vec<u8>> {
+    let bytes = hkdf_expand(zk_seed, info, 32 * count);
+    bytes
+        .chunks_exact(32)
+        .map(|c| c[..size].to_vec())
+        .collect()
+}
+
 /// Expand to `count` booleans (for correlation bits)
 pub fn expand_bools(zk_seed: &[u8; 32], info: &[u8], count: usize) -> Vec<bool> {
     let byte_len = (count + 7) / 8;

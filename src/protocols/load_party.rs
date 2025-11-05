@@ -15,6 +15,7 @@ use crate::protocols::dkg::compute_eth_address;
 use crate::protocols::{Parameters, Party};
 
 use crate::utilities::multiplication::{MulReceiver, MulSender};
+use crate::utilities::hashes::HashOutput;
 use crate::utilities::ot::{
     self,
     extension::{OTEReceiver, OTESender},
@@ -81,8 +82,9 @@ pub fn load_party(
             lo,
             hi
         );
-        let mut seed = [0u8; 32];
-        seed.copy_from_slice(&hkdf_expand(zk_seed, label.as_bytes(), 32));
+        let expanded = hkdf_expand(zk_seed, label.as_bytes(), crate::SECURITY as usize);
+        let mut seed = [0u8; crate::SECURITY as usize];
+        seed.copy_from_slice(&expanded);
 
         seeds.push(zero_shares::SeedPair {
             lowest_index: party_index == lo,  // true if we are the lower index
@@ -111,16 +113,29 @@ pub fn load_party(
         );
 
         // Receiver side: seeds0/seeds1
-        let seeds0 = expand_hashoutputs(
+        let seeds0_full = expand_hashoutputs(
             zk_seed,
             format!("{}/seeds0", base).as_bytes(),
             ot::extension::KAPPA as usize,
         );
-        let seeds1 = expand_hashoutputs(
+        let seeds1_full = expand_hashoutputs(
             zk_seed,
             format!("{}/seeds1", base).as_bytes(),
             ot::extension::KAPPA as usize,
         );
+        
+        // Truncate to SECURITY bytes
+        let seeds0: Vec<HashOutput> = seeds0_full.iter().map(|s| {
+            let mut truncated = [0u8; crate::SECURITY as usize];
+            truncated.copy_from_slice(&s[..crate::SECURITY as usize]);
+            truncated
+        }).collect();
+        let seeds1: Vec<HashOutput> = seeds1_full.iter().map(|s| {
+            let mut truncated = [0u8; crate::SECURITY as usize];
+            truncated.copy_from_slice(&s[..crate::SECURITY as usize]);
+            truncated
+        }).collect();
+        
         let ote_receiver = OTEReceiver { seeds0, seeds1 };
 
         let public_gadget = expand_scalars(
@@ -157,16 +172,28 @@ pub fn load_party(
             ot::extension::KAPPA as usize,
         );
 
-        let seeds0 = expand_hashoutputs(
+        let seeds0_full = expand_hashoutputs(
             zk_seed,
             format!("{}/seeds0", base).as_bytes(),
             ot::extension::KAPPA as usize,
         );
-        let seeds1 = expand_hashoutputs(
+        let seeds1_full = expand_hashoutputs(
             zk_seed,
             format!("{}/seeds1", base).as_bytes(),
             ot::extension::KAPPA as usize,
         );
+
+        // Truncate to SECURITY bytes
+        let seeds0: Vec<HashOutput> = seeds0_full.iter().map(|s| {
+            let mut truncated = [0u8; crate::SECURITY as usize];
+            truncated.copy_from_slice(&s[..crate::SECURITY as usize]);
+            truncated
+        }).collect();
+        let seeds1: Vec<HashOutput> = seeds1_full.iter().map(|s| {
+            let mut truncated = [0u8; crate::SECURITY as usize];
+            truncated.copy_from_slice(&s[..crate::SECURITY as usize]);
+            truncated
+        }).collect();
 
         let mut seeds = Vec::with_capacity(ot::extension::KAPPA as usize);
         for i in 0..ot::extension::KAPPA as usize {

@@ -45,7 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
-use crate::utilities::hashes::{hash, hash_as_scalar, HashOutput};
+use crate::utilities::hashes::{hash, hash_as_scalar, hash_full, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
@@ -64,7 +64,7 @@ pub const KAPPA: u16 = RAW_SECURITY;
 /// <https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>.
 ///
 /// It has to divide [`BATCH_SIZE`]!
-pub const OT_SECURITY: u16 = 128 + STAT_SECURITY;
+pub const OT_SECURITY: u16 = RAW_SECURITY / 2 + STAT_SECURITY;
 /// The extension execute this number of OT's.
 ///
 /// This particular number is the one used in the [multiplication protocol](super::super::multiplication).
@@ -77,8 +77,10 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
-// pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S::Error>
-pub fn serialize_vec_prg<S>(data: &[[u8; 72]], serializer: S) -> Result<S::Ok, S::Error>
+/// Size of PRGOutput in bytes - computed at compile time
+const PRG_OUTPUT_SIZE: usize = (EXTENDED_BATCH_SIZE / 8) as usize;
+
+pub fn serialize_vec_prg<S>(data: &[PRGOutput], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -86,19 +88,16 @@ where
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
 
-// pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 78]>, D::Error>
-pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 72]>, D::Error>
+pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<PRGOutput>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let concatenated: Vec<u8> = serde_bytes::Deserialize::deserialize(deserializer)?;
 
     concatenated
-        // .chunks(78)
-        .chunks(72)
+        .chunks(PRG_OUTPUT_SIZE)
         .map(|chunk| {
-            // let array: [u8; 78] = chunk.try_into().map_err(D::Error::custom)?;
-            let array: [u8; 72] = chunk.try_into().map_err(D::Error::custom)?;
+            let array: PRGOutput = chunk.try_into().map_err(D::Error::custom)?;
             Ok(array)
         })
         .collect()
@@ -284,8 +283,10 @@ impl OTESender {
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
+        let full_hash1 = hash_full(&msg, &salt1);
+        let full_hash2 = hash_full(&msg, &salt2);
+        chi1.clone_from_slice(&full_hash1[0..(OT_SECURITY / 8) as usize]);
+        chi2.clone_from_slice(&full_hash2[0..(OT_SECURITY / 8) as usize]);
 
         // Step 2 - No action for the sender.
 
@@ -596,8 +597,10 @@ impl OTEReceiver {
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
+        let full_hash1 = hash_full(&msg, &salt1);
+        let full_hash2 = hash_full(&msg, &salt2);
+        chi1.clone_from_slice(&full_hash1[0..(OT_SECURITY / 8) as usize]);
+        chi2.clone_from_slice(&full_hash2[0..(OT_SECURITY / 8) as usize]);
 
         // Step 2 - We compute the verification values to the sender.
 
@@ -830,6 +833,7 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
     let (k3, k2, k1): (u32, u32, u32) = match m_bits {
         208 => (9, 3, 1), // x^208 + x^9 + x^3 + x + 1
         192 => (7, 2, 1), // x^192 + x^7 + x^2 + x + 1
+        128 => (7, 2, 1), // x^128 + x^7 + x^2 + x + 1
         _ => panic!("Unsupported OT_SECURITY = {m_bits}"),
     };
 

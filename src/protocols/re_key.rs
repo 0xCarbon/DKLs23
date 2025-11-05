@@ -68,7 +68,7 @@ pub fn re_key(
     // seed for the pair (n-1, n).
 
     // Precompute a single seed per unordered pair (i,j) with i<j
-    let mut pair_seed: BTreeMap<(u8, u8), [u8; 32]> = BTreeMap::new();
+    let mut pair_seed: BTreeMap<(u8, u8), [u8; crate::SECURITY as usize]> = BTreeMap::new();
     for i in 1..=parameters.share_count {
         for j in (i + 1)..=parameters.share_count {
             let label = format!(
@@ -77,8 +77,9 @@ pub fn re_key(
                 i,
                 j
             );
-            let mut s = [0u8; 32];
-            s.copy_from_slice(&hkdf_expand(zk_seed, label.as_bytes(), 32));
+            let expanded = hkdf_expand(zk_seed, label.as_bytes(), crate::SECURITY as usize);
+            let mut s = [0u8; crate::SECURITY as usize];
+            s.copy_from_slice(&expanded);
             pair_seed.insert((i, j), s);
         }
     }
@@ -134,16 +135,29 @@ pub fn re_key(
             );
 
             // Receiver side: seeds0/seeds1
-            let seeds0 = expand_hashoutputs(
+            let seeds0_full = expand_hashoutputs(
                 zk_seed,
                 format!("{}/seeds0", base).as_bytes(),
                 ot::extension::KAPPA as usize,
             );
-            let seeds1 = expand_hashoutputs(
+            let seeds1_full = expand_hashoutputs(
                 zk_seed,
                 format!("{}/seeds1", base).as_bytes(),
                 ot::extension::KAPPA as usize,
             );
+            
+            // Truncate to SECURITY bytes
+            let seeds0: Vec<[u8; crate::SECURITY as usize]> = seeds0_full.iter().map(|s| {
+                let mut truncated = [0u8; crate::SECURITY as usize];
+                truncated.copy_from_slice(&s[..crate::SECURITY as usize]);
+                truncated
+            }).collect();
+            let seeds1: Vec<[u8; crate::SECURITY as usize]> = seeds1_full.iter().map(|s| {
+                let mut truncated = [0u8; crate::SECURITY as usize];
+                truncated.copy_from_slice(&s[..crate::SECURITY as usize]);
+                truncated
+            }).collect();
+            
             let ote_receiver = OTEReceiver {
                 seeds0: seeds0.clone(),
                 seeds1: seeds1.clone(),

@@ -14,7 +14,8 @@ pub mod utilities;
 
 /// Computational security parameter `lambda_c` from `DKLs23`.
 /// We take it to be the same as the parameter `kappa`.
-pub const RAW_SECURITY: u16 = 256;
+// pub const RAW_SECURITY: u16 = 256; // Default
+pub const RAW_SECURITY: u16 = 128;
 /// `RAW_SECURITY` divided by 8 (used for arrays of bytes)
 pub const SECURITY: u16 = RAW_SECURITY / 8;
 

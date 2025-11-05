@@ -577,8 +577,9 @@ impl Party {
 
         let x_coord = hex::encode(total_instance_point.x());
         // There is no salt because the hash function here is always the same.
-        let w = (Scalar::reduce(U256::from_be_bytes(data.message_hash))
-            * unique_kept.inversion_mask)
+        let mut padded_hash = [0u8; 32];
+        padded_hash[32 - data.message_hash.len()..].copy_from_slice(&data.message_hash);
+        let w = (Scalar::reduce(U256::from_be_bytes(padded_hash)) * unique_kept.inversion_mask)
             + (v * Scalar::reduce(U256::from_be_hex(&x_coord)));
 
         let broadcast = Broadcast3to4 { u, w };
@@ -649,7 +650,9 @@ impl Party {
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
         let rx_as_scalar = Scalar::reduce(U256::from_be_hex(x_coord));
-        let hashed_msg_as_scalar = Scalar::reduce(U256::from_be_bytes(data.message_hash));
+        let mut padded_hash = [0u8; 32];
+        padded_hash[32 - data.message_hash.len()..].copy_from_slice(&data.message_hash);
+        let hashed_msg_as_scalar = Scalar::reduce(U256::from_be_bytes(padded_hash));
         let first = AffinePoint::GENERATOR * hashed_msg_as_scalar;
         let second = self.pk * rx_as_scalar;
         let s_inverse = s.invert().unwrap();
@@ -696,7 +699,9 @@ pub fn verify_ecdsa_signature(
 
     let inverse_s = s_as_scalar.invert().unwrap();
 
-    let first = Scalar::reduce(U256::from_be_bytes(*msg)) * inverse_s;
+    let mut padded_msg = [0u8; 32];
+    padded_msg[32 - msg.len()..].copy_from_slice(msg);
+    let first = Scalar::reduce(U256::from_be_bytes(padded_msg)) * inverse_s;
     let second = rx_as_scalar * inverse_s;
 
     let point_to_check = ((AffinePoint::GENERATOR * first) + (*pk * second)).to_affine();
@@ -715,7 +720,7 @@ mod tests {
     // use crate::protocols::dkg::*;
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
-    use crate::utilities::hashes::hash;
+    use crate::utilities::hashes::{hash, hash_full};
     use crate::utilities::rng;
     use k256::elliptic_curve::PrimeField;
     use rand::Rng;
@@ -1057,12 +1062,29 @@ mod tests {
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:
-        let hashed_message = Scalar::reduce(U256::from_be_bytes(message_to_sign));
+        let mut padded_message = [0u8; 32];
+        padded_message[32 - message_to_sign.len()..].copy_from_slice(&message_to_sign);
+        let hashed_message = Scalar::reduce(U256::from_be_bytes(padded_message));
+
+        // Verify the hash matches what we expect by recomputing it
+        let expected_hash_full = hash_full("Message to sign!".as_bytes(), &[]);
+        let mut expected_padded = [0u8; 32];
+        expected_padded[32 - message_to_sign.len()..].copy_from_slice(&message_to_sign);
         assert_eq!(
-            hashed_message,
-            Scalar::reduce(U256::from_be_hex(
-                "ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d"
-            ))
+            padded_message, expected_padded,
+            "Hash padding should be consistent"
+        );
+
+        // Verify we're using the truncated version correctly
+        assert_eq!(
+            message_to_sign.len(),
+            crate::SECURITY as usize,
+            "message_to_sign should be SECURITY bytes"
+        );
+        assert_eq!(
+            &message_to_sign[..],
+            &expected_hash_full[0..crate::SECURITY as usize],
+            "Truncated hash should match"
         );
 
         // Now we can find the signature in the usual way.
