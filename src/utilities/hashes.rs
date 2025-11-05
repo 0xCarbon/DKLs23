@@ -53,7 +53,7 @@ pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
 /// This function writes this integer as a byte array.
 #[must_use]
 pub fn scalar_to_bytes(scalar: &Scalar) -> Vec<u8> {
-    scalar.to_bytes().as_slice().to_vec()
+    scalar.to_bytes().to_vec()
 }
 
 /// Converts a point on the elliptic curve secp256k1 to bytes.
@@ -62,7 +62,7 @@ pub fn scalar_to_bytes(scalar: &Scalar) -> Vec<u8> {
 /// representation of `point`.
 #[must_use]
 pub fn point_to_bytes(point: &AffinePoint) -> Vec<u8> {
-    point.to_bytes().as_slice().to_vec()
+    point.to_bytes().to_vec()
 }
 
 #[cfg(test)]
@@ -137,7 +137,7 @@ mod tests {
 
             let mut compressed_point = Vec::with_capacity(33);
             compressed_point.push(if bool::from(point.y_is_odd()) { 3 } else { 2 });
-            compressed_point.extend_from_slice(point.x().as_slice());
+            compressed_point.extend_from_slice(&point.x());
 
             assert_eq!(compressed_point, point_to_bytes(&point));
         }

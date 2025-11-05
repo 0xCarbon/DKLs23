@@ -575,7 +575,7 @@ impl Party {
         let u = (unique_kept.instance_key * first_sum_u_v) + second_sum_u;
         let v = (unique_kept.key_share * first_sum_u_v) + second_sum_v;
 
-        let x_coord = hex::encode(total_instance_point.x().as_slice());
+        let x_coord = hex::encode(total_instance_point.x());
         // There is no salt because the hash function here is always the same.
         let w = (Scalar::reduce(U256::from_be_bytes(data.message_hash))
             * unique_kept.inversion_mask)
@@ -633,7 +633,7 @@ impl Party {
             s = ScalarPrimitive::from(-s).into();
         }
 
-        let signature = hex::encode(s.to_bytes().as_slice());
+        let signature = hex::encode(s.to_bytes());
 
         let verification =
             verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
@@ -704,7 +704,7 @@ pub fn verify_ecdsa_signature(
         return false;
     }
 
-    let x_check = Scalar::reduce(U256::from_be_slice(point_to_check.x().as_slice()));
+    let x_check = Scalar::reduce(U256::from_be_slice(&point_to_check.x()));
 
     x_check == rx_as_scalar
 }
@@ -1053,7 +1053,7 @@ mod tests {
 
         // We compare the total "instance point" with the parties' calculations.
         let total_instance_point = (AffinePoint::GENERATOR * total_instance_key).to_affine();
-        let expected_x_coord = hex::encode(total_instance_point.x().as_slice());
+        let expected_x_coord = hex::encode(total_instance_point.x());
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:
@@ -1067,11 +1067,11 @@ mod tests {
 
         // Now we can find the signature in the usual way.
         let secret_key =
-            Scalar::from_repr(*k256::FieldBytes::from_slice(&secret_key)).expect("invalid scalar");
+            Scalar::from_repr(k256::FieldBytes::from(secret_key)).expect("invalid scalar");
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
                 + (secret_key * Scalar::reduce(U256::from_be_hex(&expected_x_coord))));
-        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
+        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes());
 
         // Calculate the expected recovery id
         let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
