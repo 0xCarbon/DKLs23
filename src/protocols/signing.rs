@@ -720,7 +720,7 @@ mod tests {
     // use crate::protocols::dkg::*;
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
-    use crate::utilities::hashes::{hash, hash_full};
+    use crate::utilities::hashes::hash;
     use crate::utilities::rng;
     use k256::elliptic_curve::PrimeField;
     use rand::Rng;
@@ -1066,25 +1066,15 @@ mod tests {
         padded_message[32 - message_to_sign.len()..].copy_from_slice(&message_to_sign);
         let hashed_message = Scalar::reduce(U256::from_be_bytes(padded_message));
 
-        // Verify the hash matches what we expect by recomputing it
-        let expected_hash_full = hash_full("Message to sign!".as_bytes(), &[]);
-        let mut expected_padded = [0u8; 32];
-        expected_padded[32 - message_to_sign.len()..].copy_from_slice(&message_to_sign);
+        // Verify the hash is correct by recomputing it
+        let expected_hash = hash("Message to sign!".as_bytes(), &[]);
         assert_eq!(
-            padded_message, expected_padded,
-            "Hash padding should be consistent"
-        );
-
-        // Verify we're using the truncated version correctly
-        assert_eq!(
-            message_to_sign.len(),
-            crate::SECURITY as usize,
-            "message_to_sign should be SECURITY bytes"
+            message_to_sign, expected_hash,
+            "Hash should match the expected value"
         );
         assert_eq!(
-            &message_to_sign[..],
-            &expected_hash_full[0..crate::SECURITY as usize],
-            "Truncated hash should match"
+            padded_message, expected_hash,
+            "Padded hash should equal the full hash output"
         );
 
         // Now we can find the signature in the usual way.

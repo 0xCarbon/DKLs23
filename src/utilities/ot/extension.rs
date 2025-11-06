@@ -45,7 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
-use crate::utilities::hashes::{hash, hash_as_scalar, hash_full, HashOutput};
+use crate::utilities::hashes::{hash, hash_as_scalar};
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
@@ -76,6 +76,8 @@ pub const EXTENDED_BATCH_SIZE: u16 = BATCH_SIZE + OT_SECURITY;
 pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
+/// OTE Seed type - matches KAPPA/8 bytes
+pub type OTESeed = [u8; (KAPPA / 8) as usize];
 
 /// Size of PRGOutput in bytes - computed at compile time
 const PRG_OUTPUT_SIZE: usize = (EXTENDED_BATCH_SIZE / 8) as usize;
@@ -107,14 +109,14 @@ where
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTESender {
     pub correlation: Vec<bool>, // We will deal with bits separately
-    pub seeds: Vec<HashOutput>,
+    pub seeds: Vec<OTESeed>,
 }
 
 /// Receiver's data and methods for the OTE protocol.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OTEReceiver {
-    pub seeds0: Vec<HashOutput>,
-    pub seeds1: Vec<HashOutput>,
+    pub seeds0: Vec<OTESeed>,
+    pub seeds1: Vec<OTESeed>,
 }
 
 /// Data transmitted by the receiver to the sender after his first phase.
@@ -176,7 +178,14 @@ impl OTESender {
         dlog_proof: &DLogProof,
     ) -> Result<OTESender, ErrorOT> {
         // The outputs from the base OT become the sender's seeds.
-        let seeds = ot_receiver.run_phase2_batch(session_id, vec_r, dlog_proof)?;
+        let seeds_full = ot_receiver.run_phase2_batch(session_id, vec_r, dlog_proof)?;
+        
+        // Truncate the seeds to KAPPA/8 bytes
+        let seeds: Vec<OTESeed> = seeds_full.iter().map(|s| {
+            let mut seed = [0u8; (KAPPA / 8) as usize];
+            seed.copy_from_slice(&s[..(KAPPA / 8) as usize]);
+            seed
+        }).collect();
 
         Ok(OTESender { correlation, seeds })
     }
@@ -283,8 +292,8 @@ impl OTESender {
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        let full_hash1 = hash_full(&msg, &salt1);
-        let full_hash2 = hash_full(&msg, &salt2);
+        let full_hash1 = hash(&msg, &salt1);
+        let full_hash2 = hash(&msg, &salt2);
         chi1.clone_from_slice(&full_hash1[0..(OT_SECURITY / 8) as usize]);
         chi2.clone_from_slice(&full_hash2[0..(OT_SECURITY / 8) as usize]);
 
@@ -469,7 +478,19 @@ impl OTEReceiver {
         enc_proofs: &[EncProof],
     ) -> Result<OTEReceiver, ErrorOT> {
         // The outputs from the base OT become the receiver's seeds.
-        let (seeds0, seeds1) = ot_sender.run_phase2_batch(session_id, seed, enc_proofs)?;
+        let (seeds0_full, seeds1_full) = ot_sender.run_phase2_batch(session_id, seed, enc_proofs)?;
+        
+        // Truncate the seeds to KAPPA/8 bytes
+        let seeds0: Vec<OTESeed> = seeds0_full.iter().map(|s| {
+            let mut seed = [0u8; (KAPPA / 8) as usize];
+            seed.copy_from_slice(&s[..(KAPPA / 8) as usize]);
+            seed
+        }).collect();
+        let seeds1: Vec<OTESeed> = seeds1_full.iter().map(|s| {
+            let mut seed = [0u8; (KAPPA / 8) as usize];
+            seed.copy_from_slice(&s[..(KAPPA / 8) as usize]);
+            seed
+        }).collect();
 
         Ok(OTEReceiver { seeds0, seeds1 })
     }
@@ -597,8 +618,8 @@ impl OTEReceiver {
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        let full_hash1 = hash_full(&msg, &salt1);
-        let full_hash2 = hash_full(&msg, &salt2);
+        let full_hash1 = hash(&msg, &salt1);
+        let full_hash2 = hash(&msg, &salt2);
         chi1.clone_from_slice(&full_hash1[0..(OT_SECURITY / 8) as usize]);
         chi2.clone_from_slice(&full_hash2[0..(OT_SECURITY / 8) as usize]);
 
@@ -769,9 +790,10 @@ impl OTEReceiver {
 /// This code was essentially copied from the function `transposeBooleanMatrix` here:
 /// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
 #[must_use]
-pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
+pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<OTESeed> {
     // We initialize the output as a zero matrix.
-    let mut output: Vec<HashOutput> = vec![[0u8; (KAPPA / 8) as usize]; BATCH_SIZE as usize];
+    // OTESeed size matches KAPPA/8 bytes
+    let mut output: Vec<OTESeed> = vec![[0u8; (KAPPA / 8) as usize]; BATCH_SIZE as usize];
 
     for row_byte in 0..KAPPA / 8 {
         for row_bit_within_byte in 0..8 {

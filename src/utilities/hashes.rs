@@ -17,26 +17,14 @@ use bitcoin_hashes::sha256;
 use k256::elliptic_curve::{bigint::Encoding, group::GroupEncoding, ops::Reduce};
 use k256::{AffinePoint, Scalar, U256};
 
-use crate::SECURITY;
-
 /// Represents the output of the hash function.
 ///
-/// We are using SHA-256, so the hash values have 256 bits.
-pub type HashOutput = [u8; SECURITY as usize];
+/// We are using SHA-256, so the hash values always have 256 bits (32 bytes).
+pub type HashOutput = [u8; 32];
 
 /// Hash with result in bytes.
 #[must_use]
 pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
-    let concatenation = [salt, msg].concat();
-    let full_hash = sha256::Hash::hash(&concatenation).to_byte_array();
-    let mut result = [0u8; SECURITY as usize];
-    result.copy_from_slice(&full_hash[0..SECURITY as usize]);
-    result
-}
-
-/// Hash with full SHA-256 output (32 bytes) - used internally for OT operations.
-#[must_use]
-pub fn hash_full(msg: &[u8], salt: &[u8]) -> [u8; 32] {
     let concatenation = [salt, msg].concat();
     sha256::Hash::hash(&concatenation).to_byte_array()
 }
@@ -45,10 +33,7 @@ pub fn hash_full(msg: &[u8], salt: &[u8]) -> [u8; 32] {
 #[must_use]
 pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> U256 {
     let as_bytes = hash(msg, salt);
-    // Pad the hash to 32 bytes if SECURITY < 32
-    let mut padded = [0u8; 32];
-    padded[32 - (SECURITY as usize)..].copy_from_slice(&as_bytes);
-    U256::from_be_bytes(padded)
+    U256::from_be_bytes(as_bytes)
 }
 
 /// Hash with result as a scalar.

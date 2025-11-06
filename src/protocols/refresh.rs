@@ -818,7 +818,7 @@ impl Party {
                 let b_double_prime = new_ote_sender.correlation[i as usize] ^ b_prime;
                 let r_prime_b_double_prime = if b_double_prime { r1_prime } else { r0_prime };
 
-                let mut r_double_prime: HashOutput = [0; crate::SECURITY as usize];
+                let mut r_double_prime = [0u8; crate::SECURITY as usize];
                 for j in 0..crate::SECURITY {
                     r_double_prime[j as usize] = new_ote_sender.seeds[i as usize][j as usize]
                         ^ r_prime_b_double_prime[j as usize];
@@ -869,8 +869,8 @@ impl Party {
                     new_ote_receiver.seeds1[i as usize]
                 };
 
-                let mut r0_double_prime: HashOutput = [0; crate::SECURITY as usize];
-                let mut r1_double_prime: HashOutput = [0; crate::SECURITY as usize];
+                let mut r0_double_prime = [0u8; crate::SECURITY as usize];
+                let mut r1_double_prime = [0u8; crate::SECURITY as usize];
                 for j in 0..crate::SECURITY {
                     r0_double_prime[j as usize] = r_b_prime[j as usize] ^ r0_prime[j as usize];
                     r1_double_prime[j as usize] =
