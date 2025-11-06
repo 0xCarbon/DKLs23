@@ -853,9 +853,10 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
 
     // Irreducible pentanomials for the supported fields
     let (k3, k2, k1): (u32, u32, u32) = match m_bits {
-        208 => (9, 3, 1), // x^208 + x^9 + x^3 + x + 1
-        192 => (7, 2, 1), // x^192 + x^7 + x^2 + x + 1
-        128 => (7, 2, 1), // x^128 + x^7 + x^2 + x + 1
+        208 => (9, 3, 1),   // x^208 + x^9 + x^3 + x + 1
+        192 => (7, 2, 1),   // x^192 + x^7 + x^2 + x + 1
+        144 => (7, 4, 2),   // x^144 + x^7 + x^4 + x^2 + 1
+        128 => (7, 2, 1),   // x^128 + x^7 + x^2 + x + 1
         _ => panic!("Unsupported OT_SECURITY = {m_bits}"),
     };
 
