@@ -192,12 +192,14 @@ impl Party {
             // First, let us compute a session id for it.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             // We also use both the sign id and the DKG id.
+            // The chain code binds the signing session to the derived key path.
             let mul_sid = [
                 "Multiplication protocol".as_bytes(),
                 &self.party_index.to_be_bytes(),
                 &counterparty.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -238,6 +240,7 @@ impl Party {
             "Zero shares protocol".as_bytes(),
             &self.session_id,
             &data.sign_id,
+            &self.derivation_data.chain_code,
         ]
         .concat();
 
@@ -331,6 +334,7 @@ impl Party {
                 &self.party_index.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -477,6 +481,7 @@ impl Party {
                 &counterparty.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
