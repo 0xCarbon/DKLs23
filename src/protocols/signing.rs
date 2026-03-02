@@ -33,6 +33,7 @@ use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinat
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use hex;
 
@@ -95,7 +96,7 @@ pub struct Broadcast3to4 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct KeepPhase1to2 {
     pub salt: Vec<u8>,
     pub chi: Scalar,
@@ -105,7 +106,7 @@ pub struct KeepPhase1to2 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct KeepPhase2to3 {
     pub c_u: Scalar,
     pub c_v: Scalar,
@@ -117,9 +118,10 @@ pub struct KeepPhase2to3 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct UniqueKeep1to2 {
     pub instance_key: Scalar,
+    #[zeroize(skip)]
     pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub zeta: Scalar,
@@ -128,12 +130,14 @@ pub struct UniqueKeep1to2 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct UniqueKeep2to3 {
     pub instance_key: Scalar,
+    #[zeroize(skip)]
     pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub key_share: Scalar,
+    #[zeroize(skip)]
     pub public_share: AffinePoint,
 }
 
@@ -148,24 +152,57 @@ impl Party {
     /// The outputs should be kept or transmitted according to the conventions
     /// [here](self).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Will panic if the number of counterparties in `data` is incompatible.
-    #[must_use]
+    /// Will return `Err` if the number of counterparties is wrong, if any
+    /// party index is out of range, or if the counterparty list contains our
+    /// own index.
     pub fn sign_phase1(
         &self,
         data: &SignData,
-    ) -> (
-        UniqueKeep1to2,
-        BTreeMap<u8, KeepPhase1to2>,
-        Vec<TransmitPhase1to2>,
-    ) {
+    ) -> Result<
+        (
+            UniqueKeep1to2,
+            BTreeMap<u8, KeepPhase1to2>,
+            Vec<TransmitPhase1to2>,
+        ),
+        Abort,
+    > {
         // Step 4 - We check if we have the correct number of counter parties.
-        assert_eq!(
-            data.counterparties.len(),
-            (self.parameters.threshold - 1) as usize,
-            "The number of signing parties is not right!"
-        );
+        if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
+            return Err(Abort::new(
+                self.party_index,
+                "The number of signing parties is not right!",
+            ));
+        }
+
+        // Validate party index ranges and uniqueness.
+        if self.party_index < 1 || self.party_index > self.parameters.share_count {
+            return Err(Abort::new(
+                self.party_index,
+                &format!(
+                    "Own party index {} is out of range [1, {}]",
+                    self.party_index, self.parameters.share_count
+                ),
+            ));
+        }
+        for counterparty in &data.counterparties {
+            if *counterparty < 1 || *counterparty > self.parameters.share_count {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Counterparty index {} is out of range [1, {}]",
+                        counterparty, self.parameters.share_count
+                    ),
+                ));
+            }
+            if *counterparty == self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Counterparty list must not contain our own index",
+                ));
+            }
+        }
 
         // Step 5 - We sample our secret data.
         let instance_key = Scalar::random(rng::get_rng());
@@ -188,12 +225,14 @@ impl Party {
             // First, let us compute a session id for it.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             // We also use both the sign id and the DKG id.
+            // The chain code binds the signing session to the derived key path.
             let mul_sid = [
                 "Multiplication protocol".as_bytes(),
                 &self.party_index.to_be_bytes(),
                 &counterparty.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -234,6 +273,7 @@ impl Party {
             "Zero shares protocol".as_bytes(),
             &self.session_id,
             &data.sign_id,
+            &self.derivation_data.chain_code,
         ]
         .concat();
 
@@ -248,7 +288,7 @@ impl Party {
         };
 
         // We now return all these values.
-        (unique_keep, keep, transmit)
+        Ok((unique_keep, keep, transmit))
     }
 
     // Communication round 1
@@ -312,8 +352,23 @@ impl Party {
         let mut transmit: Vec<TransmitPhase2to3> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for message in received {
-            // Index for the counterparty.
+            // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
+            if !data.counterparties.contains(&counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Received message from unknown sender {counterparty}"),
+                ));
+            }
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Received message addressed to {}, but we are {}",
+                        message.parties.receiver, self.party_index
+                    ),
+                ));
+            }
             let current_kept = kept.get(&counterparty).unwrap();
 
             // We continue the multiplication protocol to get the values
@@ -327,6 +382,7 @@ impl Party {
                 &self.party_index.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -341,8 +397,9 @@ impl Party {
             let mul_transmit: MulDataToReceiver;
             match mul_result {
                 Err(error) => {
-                    return Err(Abort::new(
+                    return Err(Abort::ban(
                         self.party_index,
+                        counterparty,
                         &format!(
                             "Two-party multiplication protocol failed because of Party {}: {:?}",
                             counterparty, error.description
@@ -444,8 +501,23 @@ impl Party {
         let mut second_sum_v = Scalar::ZERO;
 
         for message in received {
-            // Index for the counterparty.
+            // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
+            if !data.counterparties.contains(&counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Received message from unknown sender {counterparty}"),
+                ));
+            }
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Received message addressed to {}, but we are {}",
+                        message.parties.receiver, self.party_index
+                    ),
+                ));
+            }
             let current_kept = kept.get(&counterparty).unwrap();
 
             // Checking the committed value.
@@ -472,6 +544,7 @@ impl Party {
                 &counterparty.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -485,8 +558,9 @@ impl Party {
             let d_v: Scalar;
             match mul_result {
                 Err(error) => {
-                    return Err(Abort::new(
+                    return Err(Abort::ban(
                         self.party_index,
+                        counterparty,
                         &format!(
                             "Two-party multiplication protocol failed because of Party {}: {:?}",
                             counterparty, error.description
@@ -504,8 +578,9 @@ impl Party {
 
             if (message.instance_point * current_kept.chi) != ((generator * d_u) + message.gamma_u)
             {
-                return Err(Abort::new(
+                return Err(Abort::ban(
                     self.party_index,
+                    counterparty,
                     &format!("Consistency check with u-variables failed for Party {counterparty}!"),
                 ));
             }
@@ -515,8 +590,9 @@ impl Party {
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.
             if (message.public_share * current_kept.chi) != ((generator * d_v) + message.gamma_v) {
-                return Err(Abort::new(
+                return Err(Abort::ban(
                     self.party_index,
+                    counterparty,
                     &format!("Consistency check with v-variables failed for Party {counterparty}!"),
                 ));
             }
@@ -637,12 +713,16 @@ impl Party {
         let signature_point = ((first + second) * s_inverse).to_affine();
 
         // Now the recovery id can be calculated using the following conditions:
-        // - If R.y is even and R.x is less than the curve order n: recovery_id = 0
-        // - If R.y is odd and R.x is less than the curve order n: recovery_id = 1
-        // - If R.y is even and R.x is greater than the curve order n: recovery_id = 2
-        // - If R.y is odd and R.x is greater than the curve order n: recovery_id = 3
-        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
-        let is_x_reduced = s > half_order;
+        // - If R.y is even and R.x < n (curve order): recovery_id = 0
+        // - If R.y is odd  and R.x < n:               recovery_id = 1
+        // - If R.y is even and R.x >= n:               recovery_id = 2
+        // - If R.y is odd  and R.x >= n:               recovery_id = 3
+        //
+        // is_x_reduced is true when R.x (as a field element) >= the curve order n,
+        // meaning Scalar::reduce(R.x) lost information. For secp256k1, n < p, so
+        // this can happen in the range [n, p-1] with negligible probability.
+        let x_as_int = U256::from_be_hex(x_coord);
+        let is_x_reduced = x_as_int >= Secp256k1::ORDER;
         let is_y_odd = signature_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
@@ -753,7 +833,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -908,7 +989,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -1043,8 +1125,8 @@ mod tests {
         let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
 
         // Calculate the expected recovery id
-        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
-        let is_x_reduced = expected_signature_as_scalar > half_order;
+        let x_as_int = U256::from_be_hex(&expected_x_coord);
+        let is_x_reduced = x_as_int >= Secp256k1::ORDER;
         let is_y_odd = total_instance_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
         let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
@@ -1271,7 +1353,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);

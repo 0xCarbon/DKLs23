@@ -12,6 +12,7 @@ use crate::utilities::rng;
 use k256::Scalar;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
@@ -19,7 +20,7 @@ use crate::SECURITY;
 pub type Seed = [u8; SECURITY as usize];
 
 /// Represents the common seed a pair of parties shares.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct SeedPair {
     /// Verifies if the party that owns this data has the lowest index in the pair.
     pub lowest_index: bool,
@@ -28,7 +29,7 @@ pub struct SeedPair {
 }
 
 /// Used to run the protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct ZeroShare {
     pub seeds: Vec<SeedPair>,
 }
