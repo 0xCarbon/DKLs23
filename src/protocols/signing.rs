@@ -668,12 +668,16 @@ impl Party {
         let signature_point = ((first + second) * s_inverse).to_affine();
 
         // Now the recovery id can be calculated using the following conditions:
-        // - If R.y is even and R.x is less than the curve order n: recovery_id = 0
-        // - If R.y is odd and R.x is less than the curve order n: recovery_id = 1
-        // - If R.y is even and R.x is greater than the curve order n: recovery_id = 2
-        // - If R.y is odd and R.x is greater than the curve order n: recovery_id = 3
-        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
-        let is_x_reduced = s > half_order;
+        // - If R.y is even and R.x < n (curve order): recovery_id = 0
+        // - If R.y is odd  and R.x < n:               recovery_id = 1
+        // - If R.y is even and R.x >= n:               recovery_id = 2
+        // - If R.y is odd  and R.x >= n:               recovery_id = 3
+        //
+        // is_x_reduced is true when R.x (as a field element) >= the curve order n,
+        // meaning Scalar::reduce(R.x) lost information. For secp256k1, n < p, so
+        // this can happen in the range [n, p-1] with negligible probability.
+        let x_as_int = U256::from_be_hex(x_coord);
+        let is_x_reduced = x_as_int >= Secp256k1::ORDER;
         let is_y_odd = signature_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
@@ -1074,8 +1078,8 @@ mod tests {
         let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
 
         // Calculate the expected recovery id
-        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
-        let is_x_reduced = expected_signature_as_scalar > half_order;
+        let x_as_int = U256::from_be_hex(&expected_x_coord);
+        let is_x_reduced = x_as_int >= Secp256k1::ORDER;
         let is_y_odd = total_instance_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
         let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
