@@ -518,6 +518,12 @@ impl Party {
                     ),
                 ));
             }
+            if message.instance_point == AffinePoint::IDENTITY {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Party {counterparty} sent identity as instance point"),
+                ));
+            }
             let current_kept = kept.get(&counterparty).unwrap();
 
             // Checking the committed value.
@@ -665,7 +671,8 @@ impl Party {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the final ECDSA signature is invalid.
+    /// Will return `Err` if the final ECDSA signature is invalid
+    /// or if the denominator in signature assembly is zero.
     pub fn sign_phase4(
         &self,
         data: &SignData,
@@ -682,7 +689,16 @@ impl Party {
             denominator += &message.u;
         }
 
-        let mut s = numerator * (denominator.invert().unwrap());
+        let denominator_inverse = match Option::<Scalar>::from(denominator.invert()) {
+            Some(inv) => inv,
+            None => {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Zero denominator in signature assembly — possible adversarial u-values",
+                ));
+            }
+        };
+        let mut s = numerator * denominator_inverse;
 
         // Normalize signature into "low S" form as described in
         // BIP-0062 Dealing with Malleability: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
@@ -1456,5 +1472,34 @@ mod tests {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
+    }
+
+    /// Tests if sign_phase4 handles zero denominator without panicking.
+    #[test]
+    fn test_sign_phase4_zero_denominator_returns_abort() {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::random(rng::get_rng());
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        let data = SignData {
+            sign_id: rng::get_rng().gen::<[u8; 32]>().to_vec(),
+            counterparties: vec![2],
+            message_hash: hash("Message to sign!".as_bytes(), &[]),
+        };
+
+        let received = vec![Broadcast3to4 {
+            u: Scalar::ZERO,
+            w: Scalar::ONE,
+        }];
+        let result = parties[0].sign_phase4(&data, "01", &received, true);
+        let abort = result.expect_err("zero denominator should return abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Zero denominator in signature assembly"));
     }
 }
