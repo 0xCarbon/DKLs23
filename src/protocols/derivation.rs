@@ -17,6 +17,7 @@ use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacE
 use k256::elliptic_curve::{ops::Reduce, Curve};
 use k256::{AffinePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::protocols::Party;
 use crate::utilities::hashes::point_to_bytes;
@@ -55,7 +56,7 @@ impl ErrorDeriv {
 /// if someone wants to retrieve the full extended public key
 /// as in BIP-32. The only field missing is the one for the
 /// network, but it can be easily inferred from context.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct DerivData {
     /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,
@@ -66,6 +67,7 @@ pub struct DerivData {
     /// Behaves as the secret key share.
     pub poly_point: Scalar,
     /// Public key.
+    #[zeroize(skip)]
     pub pk: AffinePoint,
     /// Extra entropy given by BIP-32.
     pub chain_code: ChainCode,

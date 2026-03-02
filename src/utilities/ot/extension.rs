@@ -40,6 +40,7 @@ use k256::Scalar;
 use rand::Rng;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
@@ -99,14 +100,14 @@ where
 }
 
 /// Sender's data and methods for the OTE protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct OTESender {
     pub correlation: Vec<bool>, // We will deal with bits separately
     pub seeds: Vec<HashOutput>,
 }
 
 /// Receiver's data and methods for the OTE protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct OTEReceiver {
     pub seeds0: Vec<HashOutput>,
     pub seeds1: Vec<HashOutput>,

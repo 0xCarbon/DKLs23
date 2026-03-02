@@ -10,6 +10,7 @@
 use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
@@ -31,14 +32,14 @@ pub const L: u8 = 2;
 pub const OT_WIDTH: u8 = 2 * L;
 
 /// Sender's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct MulSender {
     pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
 /// Receiver's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct MulReceiver {
     pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
@@ -54,7 +55,7 @@ pub struct MulDataToReceiver {
 }
 
 /// Data kept by the receiver between phases.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct MulDataToKeepReceiver {
     pub b: Scalar,
     pub choice_bits: Vec<bool>,

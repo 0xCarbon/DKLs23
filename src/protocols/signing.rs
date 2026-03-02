@@ -33,6 +33,7 @@ use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinat
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use hex;
 
@@ -95,7 +96,7 @@ pub struct Broadcast3to4 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct KeepPhase1to2 {
     pub salt: Vec<u8>,
     pub chi: Scalar,
@@ -105,7 +106,7 @@ pub struct KeepPhase1to2 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct KeepPhase2to3 {
     pub c_u: Scalar,
     pub c_v: Scalar,
@@ -117,9 +118,10 @@ pub struct KeepPhase2to3 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct UniqueKeep1to2 {
     pub instance_key: Scalar,
+    #[zeroize(skip)]
     pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub zeta: Scalar,
@@ -128,12 +130,14 @@ pub struct UniqueKeep1to2 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct UniqueKeep2to3 {
     pub instance_key: Scalar,
+    #[zeroize(skip)]
     pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub key_share: Scalar,
+    #[zeroize(skip)]
     pub public_share: AffinePoint,
 }
 
@@ -341,8 +345,9 @@ impl Party {
             let mul_transmit: MulDataToReceiver;
             match mul_result {
                 Err(error) => {
-                    return Err(Abort::new(
+                    return Err(Abort::ban(
                         self.party_index,
+                        counterparty,
                         &format!(
                             "Two-party multiplication protocol failed because of Party {}: {:?}",
                             counterparty, error.description
@@ -485,8 +490,9 @@ impl Party {
             let d_v: Scalar;
             match mul_result {
                 Err(error) => {
-                    return Err(Abort::new(
+                    return Err(Abort::ban(
                         self.party_index,
+                        counterparty,
                         &format!(
                             "Two-party multiplication protocol failed because of Party {}: {:?}",
                             counterparty, error.description
