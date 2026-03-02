@@ -171,6 +171,26 @@ impl Party {
             "The number of signing parties is not right!"
         );
 
+        // Validate party index ranges and uniqueness.
+        assert!(
+            self.party_index >= 1 && self.party_index <= self.parameters.share_count,
+            "Own party index {} is out of range [1, {}]",
+            self.party_index,
+            self.parameters.share_count
+        );
+        for counterparty in &data.counterparties {
+            assert!(
+                *counterparty >= 1 && *counterparty <= self.parameters.share_count,
+                "Counterparty index {} is out of range [1, {}]",
+                counterparty,
+                self.parameters.share_count
+            );
+            assert_ne!(
+                *counterparty, self.party_index,
+                "Counterparty list must not contain our own index"
+            );
+        }
+
         // Step 5 - We sample our secret data.
         let instance_key = Scalar::random(rng::get_rng());
         let inversion_mask = Scalar::random(rng::get_rng());
