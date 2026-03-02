@@ -152,43 +152,56 @@ impl Party {
     /// The outputs should be kept or transmitted according to the conventions
     /// [here](self).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Will panic if the number of counterparties in `data` is incompatible.
-    #[must_use]
+    /// Will return `Err` if the number of counterparties is wrong, if any
+    /// party index is out of range, or if the counterparty list contains our
+    /// own index.
     pub fn sign_phase1(
         &self,
         data: &SignData,
-    ) -> (
-        UniqueKeep1to2,
-        BTreeMap<u8, KeepPhase1to2>,
-        Vec<TransmitPhase1to2>,
-    ) {
+    ) -> Result<
+        (
+            UniqueKeep1to2,
+            BTreeMap<u8, KeepPhase1to2>,
+            Vec<TransmitPhase1to2>,
+        ),
+        Abort,
+    > {
         // Step 4 - We check if we have the correct number of counter parties.
-        assert_eq!(
-            data.counterparties.len(),
-            (self.parameters.threshold - 1) as usize,
-            "The number of signing parties is not right!"
-        );
+        if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
+            return Err(Abort::new(
+                self.party_index,
+                "The number of signing parties is not right!",
+            ));
+        }
 
         // Validate party index ranges and uniqueness.
-        assert!(
-            self.party_index >= 1 && self.party_index <= self.parameters.share_count,
-            "Own party index {} is out of range [1, {}]",
-            self.party_index,
-            self.parameters.share_count
-        );
+        if self.party_index < 1 || self.party_index > self.parameters.share_count {
+            return Err(Abort::new(
+                self.party_index,
+                &format!(
+                    "Own party index {} is out of range [1, {}]",
+                    self.party_index, self.parameters.share_count
+                ),
+            ));
+        }
         for counterparty in &data.counterparties {
-            assert!(
-                *counterparty >= 1 && *counterparty <= self.parameters.share_count,
-                "Counterparty index {} is out of range [1, {}]",
-                counterparty,
-                self.parameters.share_count
-            );
-            assert_ne!(
-                *counterparty, self.party_index,
-                "Counterparty list must not contain our own index"
-            );
+            if *counterparty < 1 || *counterparty > self.parameters.share_count {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Counterparty index {} is out of range [1, {}]",
+                        counterparty, self.parameters.share_count
+                    ),
+                ));
+            }
+            if *counterparty == self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Counterparty list must not contain our own index",
+                ));
+            }
         }
 
         // Step 5 - We sample our secret data.
@@ -275,7 +288,7 @@ impl Party {
         };
 
         // We now return all these values.
-        (unique_keep, keep, transmit)
+        Ok((unique_keep, keep, transmit))
     }
 
     // Communication round 1
@@ -339,8 +352,23 @@ impl Party {
         let mut transmit: Vec<TransmitPhase2to3> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for message in received {
-            // Index for the counterparty.
+            // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
+            if !data.counterparties.contains(&counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Received message from unknown sender {counterparty}"),
+                ));
+            }
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Received message addressed to {}, but we are {}",
+                        message.parties.receiver, self.party_index
+                    ),
+                ));
+            }
             let current_kept = kept.get(&counterparty).unwrap();
 
             // We continue the multiplication protocol to get the values
@@ -473,8 +501,23 @@ impl Party {
         let mut second_sum_v = Scalar::ZERO;
 
         for message in received {
-            // Index for the counterparty.
+            // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
+            if !data.counterparties.contains(&counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Received message from unknown sender {counterparty}"),
+                ));
+            }
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Received message addressed to {}, but we are {}",
+                        message.parties.receiver, self.party_index
+                    ),
+                ));
+            }
             let current_kept = kept.get(&counterparty).unwrap();
 
             // Checking the committed value.
@@ -535,8 +578,9 @@ impl Party {
 
             if (message.instance_point * current_kept.chi) != ((generator * d_u) + message.gamma_u)
             {
-                return Err(Abort::new(
+                return Err(Abort::ban(
                     self.party_index,
+                    counterparty,
                     &format!("Consistency check with u-variables failed for Party {counterparty}!"),
                 ));
             }
@@ -546,8 +590,9 @@ impl Party {
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.
             if (message.public_share * current_kept.chi) != ((generator * d_v) + message.gamma_v) {
-                return Err(Abort::new(
+                return Err(Abort::ban(
                     self.party_index,
+                    counterparty,
                     &format!("Consistency check with v-variables failed for Party {counterparty}!"),
                 ));
             }
@@ -788,7 +833,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -943,7 +989,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -1306,7 +1353,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);

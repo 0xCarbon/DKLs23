@@ -53,6 +53,7 @@ pub struct Party {
 
 impl Zeroize for Party {
     fn zeroize(&mut self) {
+        // `parameters`, `party_index`, and `pk` are public values — not zeroized.
         self.session_id.zeroize();
         self.poly_point.zeroize();
         self.zero_share.zeroize();

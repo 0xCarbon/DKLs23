@@ -13,6 +13,7 @@ use rand::rngs::ThreadRng;
 #[cfg(all(test, feature = "insecure-rng"))]
 use rand::SeedableRng;
 
+#[cfg(all(test, feature = "insecure-rng"))]
 pub const DEFAULT_SEED: u64 = 42;
 
 #[cfg(not(all(test, feature = "insecure-rng")))]
