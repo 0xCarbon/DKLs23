@@ -196,7 +196,7 @@ impl OTESender {
     ///
     /// # Errors
     ///
-    /// Will return  `Err` if `input_correlations` does not have the correct length
+    /// Will return `Err` if `input_correlations` does not have the correct length,
     /// if the received data has incorrect dimensions, or if the consistency
     /// check using the receiver values fails.
     pub fn run(
