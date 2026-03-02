@@ -196,8 +196,9 @@ impl OTESender {
     ///
     /// # Errors
     ///
-    /// Will return  `Err` if `input_correlations` does not have the correct length
-    /// or if the consistency check using the receiver values fails.
+    /// Will return `Err` if `input_correlations` does not have the correct length,
+    /// if the received data has incorrect dimensions, or if the consistency
+    /// check using the receiver values fails.
     pub fn run(
         &self,
         session_id: &[u8],
@@ -210,6 +211,9 @@ impl OTESender {
             return Err(ErrorOT::new(
                 "The vector of input correlations does not have the expected size!",
             ));
+        }
+        if data.u.len() != KAPPA as usize || data.verify_t.len() != KAPPA as usize {
+            return Err(ErrorOT::new("OTE data has incorrect dimensions"));
         }
 
         // EXTEND
@@ -653,7 +657,8 @@ impl OTEReceiver {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the length of `vector_of_tau` is not `ot_width`.
+    /// Will return `Err` if the length of `vector_of_tau` is not `ot_width`
+    /// or if one of its inner vectors does not have length [`BATCH_SIZE`].
     pub fn run_phase2(
         &self,
         session_id: &[u8],
@@ -669,6 +674,11 @@ impl OTEReceiver {
             return Err(ErrorOT::new(
                 "The vector sent by the sender does not have the expected size!",
             ));
+        }
+        for tau in vector_of_tau {
+            if tau.len() != BATCH_SIZE as usize {
+                return Err(ErrorOT::new("Tau vector has incorrect inner length"));
+            }
         }
 
         // TRANSPOSE AND RANDOMIZE
@@ -1074,5 +1084,82 @@ mod tests {
         //       and was generating repeated outputs for the sender. A more appropriate
         //       test would be to run this test many times and attest that there is no
         //       noticeable correlation between the outputs.
+    }
+
+    /// Tests if sender-side OTE rejects malformed dimensions from deserialized input.
+    #[test]
+    fn test_ot_extension_sender_rejects_malformed_data_dimensions() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+
+        // INITIALIZATION
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1(&session_id);
+        let seed = ot_receiver.seed;
+
+        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
+            .expect("OTE receiver init should succeed");
+        let ote_sender =
+            OTESender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof)
+                .expect("OTE sender init should succeed");
+
+        // PROTOCOL
+        let ot_width = 1;
+        let mut sender_input_correlations: Vec<Vec<Scalar>> = Vec::with_capacity(1);
+        let mut correlation_row: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+        for _ in 0..BATCH_SIZE {
+            correlation_row.push(Scalar::random(rng::get_rng()));
+        }
+        sender_input_correlations.push(correlation_row);
+
+        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
+        for _ in 0..BATCH_SIZE {
+            receiver_choice_bits.push(rng::get_rng().gen());
+        }
+        let (_, data_to_sender) = ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
+
+        let mut malformed = data_to_sender.clone();
+        malformed.u.pop();
+
+        let result = ote_sender.run(
+            &session_id,
+            ot_width,
+            &sender_input_correlations,
+            &malformed,
+        );
+        let error = result.expect_err("malformed OTE data should fail");
+        assert!(error.description.contains("incorrect dimensions"));
+    }
+
+    /// Tests if receiver-side OTE rejects tau vectors with incorrect inner length.
+    #[test]
+    fn test_ot_extension_receiver_rejects_short_tau_rows() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+
+        // INITIALIZATION
+        let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
+        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
+        let seed = ot_receiver.seed;
+
+        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
+            .expect("OTE receiver init should succeed");
+
+        // Phase 1 - Receiver
+        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
+        for _ in 0..BATCH_SIZE {
+            receiver_choice_bits.push(rng::get_rng().gen());
+        }
+        let (extended_seeds, _) = ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
+
+        // Phase 2 - Receiver with malformed sender data.
+        let malformed_tau = vec![vec![Scalar::ZERO; (BATCH_SIZE as usize) - 1]];
+        let result = ote_receiver.run_phase2(
+            &session_id,
+            1,
+            &receiver_choice_bits,
+            &extended_seeds,
+            &malformed_tau,
+        );
+        let error = result.expect_err("short tau row should fail");
+        assert!(error.description.contains("incorrect inner length"));
     }
 }

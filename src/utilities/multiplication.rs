@@ -482,14 +482,21 @@ impl MulReceiver {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the consistency check using the sender values fails
-    /// or if the underlying OT extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
+    /// Will return `Err` if received vectors have incorrect dimensions, if the
+    /// consistency check using the sender values fails or if the underlying OT
+    /// extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
     pub fn run_phase2(
         &self,
         session_id: &[u8],
         data_kept: &MulDataToKeepReceiver,
         data_received: &MulDataToReceiver,
     ) -> Result<Vec<Scalar>, ErrorMul> {
+        if data_received.verify_u.len() != L as usize
+            || data_received.gamma_sender.len() != L as usize
+        {
+            return Err(ErrorMul::new("Received data has incorrect dimensions"));
+        }
+
         // Step 3 (Conclusion) - We conclude the OT protocol.
 
         // The sender applied the protocol 2*L times with our data,
@@ -682,5 +689,49 @@ mod tests {
             let sum = sender_output[i as usize] + receiver_output[i as usize];
             assert_eq!(sum, sender_input[i as usize] * receiver_random);
         }
+    }
+
+    /// Tests if receiver-side multiplication rejects malformed vector lengths.
+    #[test]
+    fn test_multiplication_receiver_rejects_wrong_verify_vector_lengths() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+
+        // INITIALIZATION
+        let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(&session_id);
+        let seed = ot_receiver.seed;
+
+        let mul_receiver =
+            MulReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs, &nonce)
+                .expect("mul receiver init should succeed");
+        let mul_sender = MulSender::init_phase2(
+            &ot_receiver,
+            &session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+            &nonce,
+        )
+        .expect("mul sender init should succeed");
+
+        // PROTOCOL
+        let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
+        for _ in 0..L {
+            sender_input.push(Scalar::random(rng::get_rng()));
+        }
+
+        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
+        let (_, mut data_to_receiver) =
+            match mul_sender.run(&session_id, &sender_input, &data_to_sender) {
+                Ok(result) => result,
+                Err(error) => {
+                    panic!("Two-party multiplication error: {:?}", error.description);
+                }
+            };
+
+        data_to_receiver.verify_u.pop();
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        let error = result.expect_err("wrong verify_u length should fail");
+        assert!(error.description.contains("incorrect dimensions"));
     }
 }

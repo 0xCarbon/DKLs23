@@ -111,6 +111,12 @@ impl InteractiveDLogProof {
     /// inside the struct.
     #[must_use]
     pub fn verify(&self, point: &AffinePoint, point_rand_commitment: &AffinePoint) -> bool {
+        // Challenges are expected to be short (in this implementation they are 1 byte),
+        // and must never exceed T/8 bytes.
+        if self.challenge.is_empty() || self.challenge.len() > (T / 8) as usize {
+            return false;
+        }
+
         // For convenience, we are using a challenge in bytes.
         // We convert it back to a scalar.
         // The challenge will have T bits, so we first extend it to 256 bits.
@@ -957,5 +963,25 @@ mod tests {
         let verification = proof.verify(&session_id);
 
         assert!(verification);
+    }
+
+    /// Tests that oversized interactive challenges are rejected during verification.
+    #[test]
+    fn test_interactive_dlog_proof_rejects_oversized_challenge() {
+        let proof = InteractiveDLogProof {
+            challenge: vec![0u8; (T / 8 + 1) as usize],
+            challenge_response: Scalar::ZERO,
+        };
+        assert!(!proof.verify(&AffinePoint::GENERATOR, &AffinePoint::GENERATOR));
+    }
+
+    /// Tests that empty challenges are rejected during verification.
+    #[test]
+    fn test_interactive_dlog_proof_rejects_empty_challenge() {
+        let proof = InteractiveDLogProof {
+            challenge: vec![],
+            challenge_response: Scalar::ZERO,
+        };
+        assert!(!proof.verify(&AffinePoint::GENERATOR, &AffinePoint::GENERATOR));
     }
 }

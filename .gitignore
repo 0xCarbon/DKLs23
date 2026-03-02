@@ -1,2 +1,6 @@
 /target
 /Cargo.lock
+
+# Coder workflow
+.coder/
+coder.json
