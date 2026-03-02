@@ -331,7 +331,10 @@ pub fn step5(
 
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
             let point_j = committed_points.get(&j).ok_or_else(|| {
-                Abort::new(party_index, &format!("Missing committed point for party {j}"))
+                Abort::new(
+                    party_index,
+                    &format!("Missing committed point for party {j}"),
+                )
             })?;
             let lj_times_point = *point_j * lj;
 
@@ -823,10 +826,16 @@ pub fn phase4(
     for i in 1..=data.parameters.share_count {
         // We take the messages in the correct order (that's why the BTreeMap).
         let phase3_msg = bip_received_phase3.get(&i).ok_or_else(|| {
-            Abort::new(data.party_index, &format!("Missing BIP phase 3 message from party {i}"))
+            Abort::new(
+                data.party_index,
+                &format!("Missing BIP phase 3 message from party {i}"),
+            )
         })?;
         let phase2_msg = bip_received_phase2.get(&i).ok_or_else(|| {
-            Abort::new(data.party_index, &format!("Missing BIP phase 2 message from party {i}"))
+            Abort::new(
+                data.party_index,
+                &format!("Missing BIP phase 2 message from party {i}"),
+            )
         })?;
         let verification = commits::verify_commitment(
             &phase3_msg.aux_chain_code,
