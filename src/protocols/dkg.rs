@@ -330,7 +330,10 @@ pub fn step5(
             }
 
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
-            let lj_times_point = *committed_points.get(&j).unwrap() * lj;
+            let point_j = committed_points.get(&j).ok_or_else(|| {
+                Abort::new(party_index, &format!("Missing committed point for party {j}"))
+            })?;
+            let lj_times_point = *point_j * lj;
 
             current_pk = (lj_times_point + current_pk).to_affine();
         }
@@ -819,17 +822,23 @@ pub fn phase4(
     let mut chain_code: ChainCode = [0; 32];
     for i in 1..=data.parameters.share_count {
         // We take the messages in the correct order (that's why the BTreeMap).
+        let phase3_msg = bip_received_phase3.get(&i).ok_or_else(|| {
+            Abort::new(data.party_index, &format!("Missing BIP phase 3 message from party {i}"))
+        })?;
+        let phase2_msg = bip_received_phase2.get(&i).ok_or_else(|| {
+            Abort::new(data.party_index, &format!("Missing BIP phase 2 message from party {i}"))
+        })?;
         let verification = commits::verify_commitment(
-            &bip_received_phase3.get(&i).unwrap().aux_chain_code,
-            &bip_received_phase2.get(&i).unwrap().cc_commitment,
-            &bip_received_phase3.get(&i).unwrap().cc_salt,
+            &phase3_msg.aux_chain_code,
+            &phase2_msg.cc_commitment,
+            &phase3_msg.cc_salt,
         );
         if !verification {
             return Err(Abort::new(data.party_index, &format!("Initialization for key derivation failed because Party {} cheated when sending the auxiliary chain code!", i+1)));
         }
 
         // We XOR this auxiliary chain code to the final result.
-        let current_aux_chain_code = bip_received_phase3.get(&i).unwrap().aux_chain_code;
+        let current_aux_chain_code = phase3_msg.aux_chain_code;
         for j in 0..32 {
             chain_code[j] ^= current_aux_chain_code[j];
         }
