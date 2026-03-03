@@ -848,6 +848,41 @@ mod tests {
         assert!(!(DLogProof::verify(&proof, &session_id)));
     }
 
+    /// Ensures duplicated random commitments are rejected.
+    #[test]
+    fn test_dlog_proof_rejects_duplicate_rand_commitments() {
+        let scalar = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let mut proof = DLogProof::prove(&scalar, &session_id);
+        proof.rand_commitments[1] = proof.rand_commitments[0];
+        assert!(!DLogProof::verify(&proof, &session_id));
+    }
+
+    /// Ensures wrong proof/commitment vector lengths are rejected.
+    #[test]
+    fn test_dlog_proof_rejects_wrong_vector_lengths() {
+        let scalar = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+
+        let mut proof_short_commitments = DLogProof::prove(&scalar, &session_id);
+        proof_short_commitments.rand_commitments.pop();
+        assert!(!DLogProof::verify(&proof_short_commitments, &session_id));
+
+        let mut proof_short_proofs = DLogProof::prove(&scalar, &session_id);
+        proof_short_proofs.proofs.pop();
+        assert!(!DLogProof::verify(&proof_short_proofs, &session_id));
+    }
+
+    /// Ensures session-id mismatches invalidate the proof.
+    #[test]
+    fn test_dlog_proof_rejects_mismatched_session_id() {
+        let scalar = Scalar::random(rng::get_rng());
+        let prove_sid = rng::get_rng().gen::<[u8; 32]>();
+        let verify_sid = rng::get_rng().gen::<[u8; 32]>();
+        let proof = DLogProof::prove(&scalar, &prove_sid);
+        assert!(!DLogProof::verify(&proof, &verify_sid));
+    }
+
     /// Tests if proving and verifying work for [`DLogProof`]
     /// in the case with commitment.
     #[test]
@@ -941,6 +976,28 @@ mod tests {
         assert!(verification);
     }
 
+    /// Ensures simulated proofs fail when verified against a different statement.
+    #[test]
+    fn test_cp_proof_simulate_wrong_statement_fails() {
+        let log_base_g = Scalar::random(rng::get_rng());
+        let log_base_h = Scalar::random(rng::get_rng());
+        let log_point_u = Scalar::random(rng::get_rng());
+        let log_point_v = Scalar::random(rng::get_rng());
+
+        let generator = AffinePoint::GENERATOR;
+        let base_g = (generator * log_base_g).to_affine();
+        let base_h = (generator * log_base_h).to_affine();
+        let point_u = (generator * log_point_u).to_affine();
+        let point_v = (generator * log_point_v).to_affine();
+
+        let (rand_commitments, challenge, mut proof) =
+            CPProof::simulate(&base_g, &base_h, &point_u, &point_v);
+        proof.point_u =
+            (ProjectivePoint::from(proof.point_u) + ProjectivePoint::GENERATOR).to_affine();
+
+        assert!(!proof.verify(&rand_commitments, &challenge));
+    }
+
     // EncProof
 
     /// Tests if proving and verifying work for [`EncProof`].
@@ -963,6 +1020,36 @@ mod tests {
         let verification = proof.verify(&session_id);
 
         assert!(verification);
+    }
+
+    /// Ensures incompatible sub-proofs are rejected.
+    #[test]
+    fn test_enc_proof_rejects_incompatible_subproofs() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let log_base_h = Scalar::random(rng::get_rng());
+        let base_h = (AffinePoint::GENERATOR * log_base_h).to_affine();
+        let scalar = Scalar::random(rng::get_rng());
+        let bit: bool = rng::get_rng().gen();
+
+        let mut proof = EncProof::prove(&session_id, &base_h, &scalar, bit);
+        proof.proof0.base_g = (AffinePoint::GENERATOR * Scalar::from(2u32)).to_affine();
+
+        assert!(!proof.verify(&session_id));
+    }
+
+    /// Ensures challenge-sum mismatch is rejected.
+    #[test]
+    fn test_enc_proof_rejects_challenge_sum_mismatch() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let log_base_h = Scalar::random(rng::get_rng());
+        let base_h = (AffinePoint::GENERATOR * log_base_h).to_affine();
+        let scalar = Scalar::random(rng::get_rng());
+        let bit: bool = rng::get_rng().gen();
+
+        let mut proof = EncProof::prove(&session_id, &base_h, &scalar, bit);
+        proof.challenge0 += Scalar::ONE;
+
+        assert!(!proof.verify(&session_id));
     }
 
     /// Tests that oversized interactive challenges are rejected during verification.
