@@ -593,6 +593,53 @@ mod tests {
     use super::*;
     use rand::Rng;
 
+    fn prepare_mul_receiver_inputs(
+        session_id: &[u8; 32],
+    ) -> (MulReceiver, MulDataToKeepReceiver, MulDataToReceiver) {
+        // INITIALIZATION
+        let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(session_id);
+        let seed = ot_receiver.seed;
+
+        let mul_receiver =
+            match MulReceiver::init_phase2(&ot_sender, session_id, &seed, &enc_proofs, &nonce) {
+                Ok(r) => r,
+                Err(error) => {
+                    panic!("Two-party multiplication error: {:?}", error.description);
+                }
+            };
+        let mul_sender = match MulSender::init_phase2(
+            &ot_receiver,
+            session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+            &nonce,
+        ) {
+            Ok(s) => s,
+            Err(error) => {
+                panic!("Two-party multiplication error: {:?}", error.description);
+            }
+        };
+
+        // PROTOCOL
+        let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
+        for _ in 0..L {
+            sender_input.push(Scalar::random(rng::get_rng()));
+        }
+
+        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(session_id);
+        let (_, data_to_receiver) = match mul_sender.run(session_id, &sender_input, &data_to_sender)
+        {
+            Ok(result) => result,
+            Err(error) => {
+                panic!("Two-party multiplication error: {:?}", error.description);
+            }
+        };
+
+        (mul_receiver, data_to_keep, data_to_receiver)
+    }
+
     /// Tests if the outputs for the multiplication protocol
     /// satisfy the relations they are supposed to satisfy.
     #[test]
@@ -733,5 +780,76 @@ mod tests {
         let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
         let error = result.expect_err("wrong verify_u length should fail");
         assert!(error.description.contains("incorrect dimensions"));
+    }
+
+    /// Tests if the receiver rejects a tampered verify_r hash.
+    #[test]
+    fn test_multiplication_rejects_tampered_verify_r() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, mut data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
+
+        data_to_receiver.verify_r[0] ^= 1;
+
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        let error = result.expect_err("tampered verify_r should fail");
+        assert!(error.description.contains("Consistency check failed"));
+    }
+
+    /// Tests if the receiver rejects tampered verify_u entries.
+    #[test]
+    fn test_multiplication_rejects_tampered_verify_u() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, mut data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
+
+        data_to_receiver.verify_u[0] += Scalar::ONE;
+
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        let error = result.expect_err("tampered verify_u should fail");
+        assert!(error.description.contains("Consistency check failed"));
+    }
+
+    /// Tests that tampering tau vectors is either rejected or changes receiver output.
+    ///
+    /// The protocol does not authenticate tau values directly, so some tampering
+    /// patterns can propagate as incorrect outputs instead of immediate rejection.
+    #[test]
+    fn test_multiplication_rejects_tampered_tau_vectors() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, mut data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
+
+        let honest_output =
+            match mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver) {
+                Ok(output) => output,
+                Err(error) => {
+                    panic!("Two-party multiplication error: {:?}", error.description);
+                }
+            };
+
+        for tau_row in &mut data_to_receiver.vector_of_tau {
+            for value in tau_row {
+                *value += Scalar::ONE;
+            }
+        }
+
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        match result {
+            Err(error) => {
+                assert!(
+                    error
+                        .description
+                        .contains("OTE error during multiplication")
+                        || error.description.contains("Consistency check failed")
+                );
+            }
+            Ok(tampered_output) => {
+                assert_ne!(
+                    tampered_output, honest_output,
+                    "tampered tau vectors should not preserve honest receiver output"
+                );
+            }
+        }
     }
 }

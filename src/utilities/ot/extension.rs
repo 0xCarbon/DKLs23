@@ -900,6 +900,55 @@ mod tests {
     use rand::Rng;
     use std::collections::HashSet;
 
+    fn prepare_ote_sender_inputs(
+        session_id: &[u8; 32],
+        ot_width: u8,
+    ) -> (OTESender, Vec<Vec<Scalar>>, OTEDataToSender) {
+        // INITIALIZATION
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1(session_id);
+        let seed = ot_receiver.seed;
+
+        let ote_receiver =
+            match OTEReceiver::init_phase2(&ot_sender, session_id, &seed, &enc_proofs) {
+                Ok(r) => r,
+                Err(error) => {
+                    panic!("OTE error: {:?}", error.description);
+                }
+            };
+        let ote_sender = match OTESender::init_phase2(
+            &ot_receiver,
+            session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+        ) {
+            Ok(s) => s,
+            Err(error) => {
+                panic!("OTE error: {:?}", error.description);
+            }
+        };
+
+        // PROTOCOL INPUTS
+        let mut sender_input_correlations: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        for _ in 0..ot_width {
+            let mut current_input_correlation: Vec<Scalar> =
+                Vec::with_capacity(BATCH_SIZE as usize);
+            for _ in 0..BATCH_SIZE {
+                current_input_correlation.push(Scalar::random(rng::get_rng()));
+            }
+            sender_input_correlations.push(current_input_correlation);
+        }
+
+        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
+        for _ in 0..BATCH_SIZE {
+            receiver_choice_bits.push(rng::get_rng().gen());
+        }
+        let (_, data_to_sender) = ote_receiver.run_phase1(session_id, &receiver_choice_bits);
+
+        (ote_sender, sender_input_correlations, data_to_sender)
+    }
+
     /// Tests if [`field_mul`] is correctly computing
     /// the multiplication in the finite field.
     ///
@@ -1161,5 +1210,66 @@ mod tests {
         );
         let error = result.expect_err("short tau row should fail");
         assert!(error.description.contains("incorrect inner length"));
+    }
+
+    /// Tests if sender-side OTE rejects tampered u matrix rows.
+    #[test]
+    fn test_ot_extension_sender_rejects_tampered_u() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let ot_width = 2;
+        let (ote_sender, sender_input_correlations, mut data_to_sender) =
+            prepare_ote_sender_inputs(&session_id, ot_width);
+
+        data_to_sender.u[0][0] ^= 1;
+
+        let result = ote_sender.run(
+            &session_id,
+            ot_width,
+            &sender_input_correlations,
+            &data_to_sender,
+        );
+        let error = result.expect_err("tampered u should fail");
+        assert!(error.description.contains("Receiver cheated in OTE"));
+    }
+
+    /// Tests if sender-side OTE rejects tampered verify_x.
+    #[test]
+    fn test_ot_extension_sender_rejects_tampered_verify_x() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let ot_width = 2;
+        let (ote_sender, sender_input_correlations, mut data_to_sender) =
+            prepare_ote_sender_inputs(&session_id, ot_width);
+
+        data_to_sender.verify_x[0] ^= 1;
+
+        let result = ote_sender.run(
+            &session_id,
+            ot_width,
+            &sender_input_correlations,
+            &data_to_sender,
+        );
+        let error = result.expect_err("tampered verify_x should fail");
+        assert!(error.description.contains("Receiver cheated in OTE"));
+    }
+
+    /// Tests if sender-side OTE rejects tampered verify_t entries.
+    #[test]
+    fn test_ot_extension_sender_rejects_tampered_verify_t() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        // Exercise a different width than the other adversarial OTE tests.
+        let ot_width = 1;
+        let (ote_sender, sender_input_correlations, mut data_to_sender) =
+            prepare_ote_sender_inputs(&session_id, ot_width);
+
+        data_to_sender.verify_t[0][0] ^= 1;
+
+        let result = ote_sender.run(
+            &session_id,
+            ot_width,
+            &sender_input_correlations,
+            &data_to_sender,
+        );
+        let error = result.expect_err("tampered verify_t should fail");
+        assert!(error.description.contains("Receiver cheated in OTE"));
     }
 }
