@@ -480,7 +480,14 @@ impl Party {
                 let mul_receiver: MulReceiver = match receiver_result {
                     Ok(r) => r,
                     Err(error) => {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
+                        return Err(Abort::ban(
+                            self.party_index,
+                            their_index,
+                            &format!(
+                                "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                                their_index, error.description
+                            ),
+                        ));
                     }
                 };
 
@@ -509,7 +516,14 @@ impl Party {
                 let mul_sender: MulSender = match sender_result {
                     Ok(s) => s,
                     Err(error) => {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
+                        return Err(Abort::ban(
+                            self.party_index,
+                            their_index,
+                            &format!(
+                                "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                                their_index, error.description
+                            ),
+                        ));
                     }
                 };
 
@@ -940,9 +954,209 @@ mod tests {
 
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
-    use crate::protocols::Parameters;
+    use crate::protocols::{AbortKind, Parameters};
 
     use rand::RngExt;
+
+    struct CompleteRefreshPhase4Inputs {
+        parties: Vec<Party>,
+        refresh_sid: [u8; 32],
+        correction_values: Vec<Scalar>,
+        proofs_commitments: Vec<ProofCommitment>,
+        zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>>,
+        zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>>,
+        zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>>,
+        mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>>,
+        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>>,
+    }
+
+    fn setup_two_party_complete_refresh_phase4_inputs() -> CompleteRefreshPhase4Inputs {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+
+        // Phase 1
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            dkg_1.push(parties[i as usize].refresh_complete_phase1());
+        }
+
+        // Communication round 1
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
+            parameters.share_count as usize
+        ];
+        for row_i in dkg_1 {
+            for j in 0..parameters.share_count {
+                poly_fragments[j as usize].push(row_i[j as usize]);
+            }
+        }
+
+        // Phase 2
+        let mut correction_values: Vec<Scalar> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut proofs_commitments: Vec<ProofCommitment> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4) = parties[i as usize]
+                .refresh_complete_phase2(&refresh_sid, &poly_fragments[i as usize]);
+
+            correction_values.push(out1);
+            proofs_commitments.push(out2);
+            zero_kept_2to3.push(out3);
+            zero_transmit_2to4.push(out4);
+        }
+
+        // Communication round 2
+        let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_2to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_2to4.push(new_row);
+        }
+
+        // Phase 3
+        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4) = parties[i as usize]
+                .refresh_complete_phase3(&refresh_sid, &zero_kept_2to3[i as usize]);
+
+            zero_kept_3to4.push(out1);
+            zero_transmit_3to4.push(out2);
+            mul_kept_3to4.push(out3);
+            mul_transmit_3to4.push(out4);
+        }
+
+        // Communication round 3
+        let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut zero_row: Vec<TransmitInitZeroSharePhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        zero_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_3to4.push(zero_row);
+
+            let mut mul_row: Vec<TransmitInitMulPhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &mul_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        mul_row.push(message.clone());
+                    }
+                }
+            }
+            mul_received_3to4.push(mul_row);
+        }
+
+        CompleteRefreshPhase4Inputs {
+            parties,
+            refresh_sid,
+            correction_values,
+            proofs_commitments,
+            zero_kept_3to4,
+            zero_received_2to4,
+            zero_received_3to4,
+            mul_kept_3to4,
+            mul_received_3to4,
+        }
+    }
+
+    /// Tests that complete refresh phase 4 bans on tampered OT encryption proofs.
+    #[test]
+    fn test_refresh_complete_phase4_bans_on_tampered_enc_proof() {
+        let mut data = setup_two_party_complete_refresh_phase4_inputs();
+
+        let tampered = data.mul_received_3to4[0]
+            .iter_mut()
+            .find(|message| message.parties.sender == 2 && message.parties.receiver == 1)
+            .expect("expected party-2 message for party 1 in complete refresh");
+        assert!(
+            !tampered.enc_proofs.is_empty(),
+            "expected non-empty enc_proofs in complete refresh test setup"
+        );
+        tampered.enc_proofs[0].challenge0 += Scalar::ONE;
+
+        let result = data.parties[0].refresh_complete_phase4(
+            &data.refresh_sid,
+            &data.correction_values[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+        );
+        let abort = result.expect_err("tampered complete-refresh enc proof should be rejected");
+        assert_eq!(abort.kind, AbortKind::BanCounterparty(2));
+        assert!(abort
+            .description
+            .contains("Initialization for multiplication protocol failed because of Party 2"));
+    }
+
+    /// Tests that complete refresh phase 4 bans on tampered OT DLog proofs.
+    #[test]
+    fn test_refresh_complete_phase4_bans_on_tampered_dlog_proof() {
+        let mut data = setup_two_party_complete_refresh_phase4_inputs();
+
+        let tampered = data.mul_received_3to4[0]
+            .iter_mut()
+            .find(|message| message.parties.sender == 2 && message.parties.receiver == 1)
+            .expect("expected party-2 message for party 1 in complete refresh");
+        assert!(
+            !tampered.dlog_proof.proofs.is_empty(),
+            "expected non-empty DLog proof vector in complete refresh test setup"
+        );
+        tampered.dlog_proof.proofs[0].challenge_response += Scalar::ONE;
+
+        let result = data.parties[0].refresh_complete_phase4(
+            &data.refresh_sid,
+            &data.correction_values[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+        );
+        let abort = result.expect_err("tampered complete-refresh DLog proof should be rejected");
+        assert_eq!(abort.kind, AbortKind::BanCounterparty(2));
+        assert!(abort
+            .description
+            .contains("Initialization for multiplication protocol failed because of Party 2"));
+    }
 
     /// Tests if the complete refresh protocol generates parties
     /// still capable of running the signing protocol.
