@@ -878,7 +878,8 @@ mod tests {
     fn test_dlog_proof_rejects_mismatched_session_id() {
         let scalar = Scalar::random(rng::get_rng());
         let prove_sid = rng::get_rng().gen::<[u8; 32]>();
-        let verify_sid = rng::get_rng().gen::<[u8; 32]>();
+        let mut verify_sid = prove_sid;
+        verify_sid[0] ^= 1;
         let proof = DLogProof::prove(&scalar, &prove_sid);
         assert!(!DLogProof::verify(&proof, &verify_sid));
     }
@@ -990,6 +991,7 @@ mod tests {
         let point_u = (generator * log_point_u).to_affine();
         let point_v = (generator * log_point_v).to_affine();
 
+        // We intentionally use a random statement and then tamper it further.
         let (rand_commitments, challenge, mut proof) =
             CPProof::simulate(&base_g, &base_h, &point_u, &point_v);
         proof.point_u =
