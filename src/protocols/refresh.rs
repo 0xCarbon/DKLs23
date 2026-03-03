@@ -418,7 +418,12 @@ impl Party {
                         &message_received_3.salt,
                     );
                     if !verification {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
+                        return Err(Abort::new(
+                            self.party_index,
+                            &format!(
+                                "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
+                            ),
+                        ));
                     }
 
                     // We form the final seed pairs.
@@ -757,7 +762,12 @@ impl Party {
                         &message_received_3.salt,
                     );
                     if !verification {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
+                        return Err(Abort::new(
+                            self.party_index,
+                            &format!(
+                                "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
+                            ),
+                        ));
                     }
 
                     // We form the final seed pairs.

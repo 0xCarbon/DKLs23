@@ -718,7 +718,12 @@ pub fn phase4(
                     &message_received_3.salt,
                 );
                 if !verification {
-                    return Err(Abort::new(data.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
+                    return Err(Abort::new(
+                        data.party_index,
+                        &format!(
+                            "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
+                        ),
+                    ));
                 }
 
                 // We form the final seed pairs.
@@ -780,6 +785,8 @@ pub fn phase4(
             let mul_receiver: MulReceiver = match receiver_result {
                 Ok(r) => r,
                 Err(error) => {
+                    // In DKG this failed run does not produce reusable OT state,
+                    // so we keep abort classification recoverable.
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
             };
@@ -809,6 +816,8 @@ pub fn phase4(
             let mul_sender: MulSender = match sender_result {
                 Ok(s) => s,
                 Err(error) => {
+                    // In DKG this failed run does not produce reusable OT state,
+                    // so we keep abort classification recoverable.
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
             };
