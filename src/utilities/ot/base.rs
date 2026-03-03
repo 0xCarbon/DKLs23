@@ -322,6 +322,45 @@ impl OTReceiver {
 mod tests {
     use super::*;
 
+    /// Ensures receiver rejects a tampered DLogProof from sender.
+    #[test]
+    fn test_ot_base_rejects_tampered_dlog_proof() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+
+        let sender = OTSender::init(&session_id);
+        let receiver = OTReceiver::init();
+
+        let mut dlog_proof = sender.run_phase1();
+        dlog_proof.proofs[0].challenge_response += Scalar::ONE;
+
+        let result = receiver.run_phase2_step1(&session_id, &dlog_proof);
+        let error = result.expect_err("tampered DLogProof should be rejected");
+        assert!(error
+            .description
+            .contains("Sender cheated in OT: Proof of discrete logarithm failed!"));
+    }
+
+    /// Ensures sender rejects a tampered encryption proof from receiver.
+    #[test]
+    fn test_ot_base_rejects_tampered_enc_proof() {
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+
+        let sender = OTSender::init(&session_id);
+        let receiver = OTReceiver::init();
+
+        let bit = rng::get_rng().gen();
+        let (_, mut enc_proof) = receiver.run_phase1(&session_id, bit);
+        let seed = receiver.seed;
+
+        enc_proof.challenge0 += Scalar::ONE;
+
+        let result = sender.run_phase2(&session_id, &seed, &enc_proof);
+        let error = result.expect_err("tampered EncProof should be rejected");
+        assert!(error
+            .description
+            .contains("Receiver cheated in OT: Encryption proof failed!"));
+    }
+
     /// Tests if the outputs for the OT base protocol
     /// satisfy the relations they are supposed to satisfy.
     #[test]
