@@ -4,14 +4,12 @@
 //! previous version of the `DKLs` protocol (<https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>).
 //!
 //! As explained by one of the authors (see <https://youtu.be/-d0Ny7NAG-w?si=POTKF1BwwGOzvIpL&t=3065>),
-//! each subprotocol should use a different random oracle. For this purpose, our implementation
-//! has a "salt" parameter to modify the hash function. In our main protocol, the salt is
-//! usually derived from the session id.
-
-// TODO/FOR THE FUTURE: It requires some work to really guarantee that all "salts" are
-// different for each subprotocol. For example, the implementation above has a
-// file just for this purpose. Thus, it's worth analyzing this code in the future
-// and maybe implementing something similar.
+//! each subprotocol should use a different random oracle. This crate implements
+//! explicit domain separation via [`tagged_hash`] and fixed tags in
+//! `utilities::oracle_tags`.
+//!
+//! The legacy `hash(msg, salt)` helpers are retained for compatibility at the
+//! API level, but internal protocol oracles should use tagged hashing.
 
 use bitcoin_hashes::sha256;
 use k256::elliptic_curve::{bigint::Encoding, group::GroupEncoding, ops::Reduce};
@@ -24,11 +22,20 @@ use crate::SECURITY;
 /// We are using SHA-256, so the hash values have 256 bits.
 pub type HashOutput = [u8; SECURITY as usize];
 
+fn hash_bytes(msg: &[u8]) -> HashOutput {
+    sha256::Hash::hash(msg).to_byte_array()
+}
+
+fn append_len_prefixed(encoded: &mut Vec<u8>, component: &[u8]) {
+    encoded.extend_from_slice(&(component.len() as u64).to_be_bytes());
+    encoded.extend_from_slice(component);
+}
+
 /// Hash with result in bytes.
 #[must_use]
 pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
     let concatenation = [salt, msg].concat();
-    sha256::Hash::hash(&concatenation).to_byte_array()
+    hash_bytes(&concatenation)
 }
 
 /// Hash with result as an integer.
@@ -44,6 +51,35 @@ pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> U256 {
 #[must_use]
 pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
     let as_int = hash_as_int(msg, salt);
+    Scalar::reduce(&as_int)
+}
+
+/// Length-delimited tagged hash with result in bytes.
+///
+/// Encoding is:
+/// `len(tag)||tag||len(component_0)||component_0||...`.
+#[must_use]
+pub fn tagged_hash(tag: &[u8], components: &[&[u8]]) -> HashOutput {
+    let mut encoded =
+        Vec::with_capacity(8 + tag.len() + components.iter().map(|c| 8 + c.len()).sum::<usize>());
+    append_len_prefixed(&mut encoded, tag);
+    for component in components {
+        append_len_prefixed(&mut encoded, component);
+    }
+    hash_bytes(&encoded)
+}
+
+/// Length-delimited tagged hash with result as an integer.
+#[must_use]
+pub fn tagged_hash_as_int(tag: &[u8], components: &[&[u8]]) -> U256 {
+    let as_bytes = tagged_hash(tag, components);
+    U256::from_be_bytes(as_bytes.into())
+}
+
+/// Length-delimited tagged hash with result as a scalar.
+#[must_use]
+pub fn tagged_hash_as_scalar(tag: &[u8], components: &[&[u8]]) -> Scalar {
+    let as_int = tagged_hash_as_int(tag, components);
     Scalar::reduce(&as_int)
 }
 
@@ -109,6 +145,14 @@ mod tests {
             hash_as_int(msg, salt),
             U256::from_be_hex("847bf2f0d27a519b25e519efebc9d509316539b89ee8f6f09ef6d2abc08113ba")
         );
+    }
+
+    #[test]
+    fn test_tagged_hash_is_length_delimited() {
+        let tag = b"tag";
+        let hash1 = tagged_hash(tag, &[b"ab", b"c"]);
+        let hash2 = tagged_hash(tag, &[b"a", b"bc"]);
+        assert_ne!(hash1, hash2);
     }
 
     /// Tests if [`scalar_to_bytes`] converts a `Scalar`

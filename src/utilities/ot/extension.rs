@@ -44,7 +44,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
-use crate::utilities::hashes::{hash, hash_as_scalar, HashOutput};
+use crate::utilities::hashes::{tagged_hash, tagged_hash_as_scalar, HashOutput};
+use crate::utilities::oracle_tags::{TAG_OTE_CHI, TAG_OTE_PRG, TAG_OTE_RANDOMIZE};
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
@@ -230,11 +231,13 @@ impl OTESender {
             // The reason for this is that we need more than 256 bits.
             let mut count = 0u16;
             while prg.len() < (EXTENDED_BATCH_SIZE / 8) as usize {
-                // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let i_bytes = i.to_be_bytes();
+                let count_bytes = count.to_be_bytes();
                 count += 1;
-
-                let chunk = hash(&self.seeds[i as usize], &salt);
+                let chunk = tagged_hash(
+                    TAG_OTE_PRG,
+                    &[session_id, &i_bytes, &count_bytes, &self.seeds[i as usize]],
+                );
 
                 prg.extend_from_slice(&chunk);
             }
@@ -273,18 +276,18 @@ impl OTESender {
         // pseudorandom numbers chi1 and chi2. They have OT_SECURITY = 208 bits.
         // We can generate them with a hash.
 
-        // This time, we are hashing the same message twice, so we put the tags 1 and 2 in the salt.
-        let salt1 = [&(1u8).to_be_bytes(), session_id].concat();
-        let salt2 = [&(2u8).to_be_bytes(), session_id].concat();
-
         // We concatenate the rows of the matrix u.
         let msg = data.u.concat();
 
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
+        chi1.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi1", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
+        chi2.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
 
         // Step 2 - No action for the sender.
 
@@ -377,17 +380,27 @@ impl OTESender {
                         transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
                 }
 
-                // This salt must depend on iteration (otherwise, v0 and v1 would be always the same).
-                let salt = [
-                    &j.to_be_bytes(),
-                    session_id,
-                    "Iteration number:".as_bytes(),
-                    &iteration.to_be_bytes(),
-                ]
-                .concat();
+                let j_bytes = j.to_be_bytes();
+                let iteration_bytes = iteration.to_be_bytes();
 
-                v0.push(hash_as_scalar(&transposed_q[j as usize], &salt));
-                v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
+                v0.push(tagged_hash_as_scalar(
+                    TAG_OTE_RANDOMIZE,
+                    &[
+                        session_id,
+                        &j_bytes,
+                        &iteration_bytes,
+                        &transposed_q[j as usize],
+                    ],
+                ));
+                v1.push(tagged_hash_as_scalar(
+                    TAG_OTE_RANDOMIZE,
+                    &[
+                        session_id,
+                        &j_bytes,
+                        &iteration_bytes,
+                        &transposed_qj_plus_correlation,
+                    ],
+                ));
             }
 
             vector_of_v0.push(v0);
@@ -526,12 +539,17 @@ impl OTEReceiver {
             // The reason for this is that we need more than 256 bits.
             let mut count = 0u16;
             while prg0.len() < (EXTENDED_BATCH_SIZE / 8) as usize {
-                // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let i_bytes = i.to_be_bytes();
+                let count_bytes = count.to_be_bytes();
                 count += 1;
-
-                let chunk0 = hash(&self.seeds0[i as usize], &salt);
-                let chunk1 = hash(&self.seeds1[i as usize], &salt);
+                let chunk0 = tagged_hash(
+                    TAG_OTE_PRG,
+                    &[session_id, &i_bytes, &count_bytes, &self.seeds0[i as usize]],
+                );
+                let chunk1 = tagged_hash(
+                    TAG_OTE_PRG,
+                    &[session_id, &i_bytes, &count_bytes, &self.seeds1[i as usize]],
+                );
 
                 prg0.extend_from_slice(&chunk0);
                 prg1.extend_from_slice(&chunk1);
@@ -574,18 +592,18 @@ impl OTEReceiver {
         // pseudorandom numbers chi1 and chi2. They have OT_SECURITY = 208 bits.
         // We can generate them with a hash.
 
-        // This time, we are hashing the same message twice, so we put the tags 1 and 2 in the salt.
-        let salt1 = [&(1u8).to_be_bytes(), session_id].concat();
-        let salt2 = [&(2u8).to_be_bytes(), session_id].concat();
-
         // We concatenate the rows of the matrix u.
         let msg = u.concat();
 
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
+        chi1.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi1", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
+        chi2.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
 
         // Step 2 - We compute the verification values to the sender.
 
@@ -695,14 +713,17 @@ impl OTEReceiver {
         for iteration in 0..ot_width {
             let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
-                let salt = [
-                    &j.to_be_bytes(),
-                    session_id,
-                    "Iteration number:".as_bytes(),
-                    &iteration.to_be_bytes(),
-                ]
-                .concat();
-                v.push(hash_as_scalar(&transposed_t[j as usize], &salt));
+                let j_bytes = j.to_be_bytes();
+                let iteration_bytes = iteration.to_be_bytes();
+                v.push(tagged_hash_as_scalar(
+                    TAG_OTE_RANDOMIZE,
+                    &[
+                        session_id,
+                        &j_bytes,
+                        &iteration_bytes,
+                        &transposed_t[j as usize],
+                    ],
+                ));
             }
 
             vector_of_v.push(v);

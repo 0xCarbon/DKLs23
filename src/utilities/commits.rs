@@ -4,7 +4,8 @@
 //! We follow the approach suggested on page 7 of their paper
 //! (<https://eprint.iacr.org/2023/765.pdf>).
 
-use crate::utilities::hashes::{hash, point_to_bytes, HashOutput};
+use crate::utilities::hashes::{point_to_bytes, tagged_hash, HashOutput};
+use crate::utilities::oracle_tags::TAG_COMMITMENT;
 use crate::utilities::rng;
 use k256::AffinePoint;
 use rand::RngExt;
@@ -25,7 +26,7 @@ pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
     let mut salt = [0u8; 2 * SECURITY as usize];
     rng::get_rng().fill(&mut salt[..]);
 
-    let commitment = hash(msg, &salt);
+    let commitment = tagged_hash(TAG_COMMITMENT, &[&salt, msg]);
 
     (commitment, salt.to_vec())
 }
@@ -36,7 +37,7 @@ pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
 /// verifies if these data are compatible.
 #[must_use]
 pub fn verify_commitment(msg: &[u8], commitment: &HashOutput, salt: &[u8]) -> bool {
-    let expected_commitment = hash(msg, salt);
+    let expected_commitment = tagged_hash(TAG_COMMITMENT, &[salt, msg]);
     *commitment == expected_commitment
 }
 

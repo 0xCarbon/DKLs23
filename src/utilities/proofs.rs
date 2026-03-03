@@ -39,7 +39,12 @@ use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, scalar_to_bytes, HashOutput};
+use crate::utilities::hashes::{
+    point_to_bytes, scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput,
+};
+use crate::utilities::oracle_tags::{
+    TAG_DLOG_PROOF_COMMITMENT, TAG_DLOG_PROOF_FISCHLIN, TAG_ENCPROOF_FS,
+};
 use crate::utilities::rng;
 
 /// Constants for the randomized Fischlin transform.
@@ -228,7 +233,8 @@ impl DLogProof {
                 ]
                 .concat();
                 // The random oracle has to return an array of 2l bits = l/4 bytes, so we take a slice.
-                let first_hash = &hash(&first_msg, session_id)[0..(L / 4) as usize];
+                let first_hash = &tagged_hash(TAG_DLOG_PROOF_FISCHLIN, &[session_id, &first_msg])
+                    [0..(L / 4) as usize];
 
                 // Now comes the search for the next challenge.
                 let mut second_counter = 0u16;
@@ -255,7 +261,9 @@ impl DLogProof {
                         &scalar_to_bytes(&second_proof.challenge_response),
                     ]
                     .concat();
-                    let second_hash = &hash(&second_msg, session_id)[0..(L / 4) as usize];
+                    let second_hash =
+                        &tagged_hash(TAG_DLOG_PROOF_FISCHLIN, &[session_id, &second_msg])
+                            [0..(L / 4) as usize];
 
                     // If the hashes are equal, we are successful and we can break both loops.
                     if *first_hash == *second_hash {
@@ -335,7 +343,8 @@ impl DLogProof {
                 &scalar_to_bytes(&proof.proofs[i as usize].challenge_response),
             ]
             .concat();
-            let first_hash = &hash(&first_msg, session_id)[0..(L / 4) as usize];
+            let first_hash = &tagged_hash(TAG_DLOG_PROOF_FISCHLIN, &[session_id, &first_msg])
+                [0..(L / 4) as usize];
 
             let second_msg = [
                 &point_to_bytes(&AffinePoint::GENERATOR),
@@ -345,7 +354,8 @@ impl DLogProof {
                 &scalar_to_bytes(&proof.proofs[(i + (R / 2)) as usize].challenge_response),
             ]
             .concat();
-            let second_hash = &hash(&second_msg, session_id)[0..(L / 4) as usize];
+            let second_hash = &tagged_hash(TAG_DLOG_PROOF_FISCHLIN, &[session_id, &second_msg])
+                [0..(L / 4) as usize];
 
             if *first_hash != *second_hash {
                 return false;
@@ -408,7 +418,10 @@ impl DLogProof {
             responses_as_bytes,
         ]
         .concat();
-        let commitment = hash(&msg_for_commitment, session_id);
+        let commitment = tagged_hash(
+            TAG_DLOG_PROOF_COMMITMENT,
+            &[session_id, &msg_for_commitment],
+        );
 
         (proof, commitment)
     }
@@ -447,7 +460,10 @@ impl DLogProof {
             responses_as_bytes,
         ]
         .concat();
-        let expected_commitment = hash(&msg_for_commitment, session_id);
+        let expected_commitment = tagged_hash(
+            TAG_DLOG_PROOF_COMMITMENT,
+            &[session_id, &msg_for_commitment],
+        );
 
         (*commitment == expected_commitment) && Self::verify(proof, session_id)
     }
@@ -702,7 +718,7 @@ impl EncProof {
             .concat()
         };
 
-        let challenge = hash_as_scalar(&msg_for_challenge, session_id);
+        let challenge = tagged_hash_as_scalar(TAG_ENCPROOF_FS, &[session_id, &msg_for_challenge]);
 
         // STEP 3
         // We compute the real challenge for our real proof.
@@ -796,7 +812,8 @@ impl EncProof {
             rc1_h_as_bytes,
         ]
         .concat();
-        let expected_challenge = hash_as_scalar(&msg_for_challenge, session_id);
+        let expected_challenge =
+            tagged_hash_as_scalar(TAG_ENCPROOF_FS, &[session_id, &msg_for_challenge]);
 
         // The challenge should be the sum of the challenges used in the proofs.
         if expected_challenge != self.challenge0 + self.challenge1 {
