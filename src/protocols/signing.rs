@@ -1711,11 +1711,11 @@ mod tests {
         );
 
         let mut tampered = received_2to3.get(&1).unwrap().clone();
-        if tampered[0].salt.is_empty() {
-            tampered[0].salt.push(1);
-        } else {
-            tampered[0].salt[0] ^= 1;
-        }
+        assert!(
+            !tampered[0].salt.is_empty(),
+            "phase-3 decommit salt should be non-empty"
+        );
+        tampered[0].salt[0] ^= 1;
 
         let result = parties[0].sign_phase3(
             all_data.get(&1).unwrap(),

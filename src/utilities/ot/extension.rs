@@ -1256,7 +1256,8 @@ mod tests {
     #[test]
     fn test_ot_extension_sender_rejects_tampered_verify_t() {
         let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let ot_width = 2;
+        // Exercise a different width than the other adversarial OTE tests.
+        let ot_width = 1;
         let (ote_sender, sender_input_correlations, mut data_to_sender) =
             prepare_ote_sender_inputs(&session_id, ot_width);
 
