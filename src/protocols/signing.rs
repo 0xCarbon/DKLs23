@@ -27,8 +27,7 @@
 
 use k256::ecdsa::RecoveryId;
 use k256::elliptic_curve::scalar::IsHigh;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
-use k256::elliptic_curve::ScalarPrimitive;
+use k256::elliptic_curve::sec1::ToSec1Point;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
@@ -205,8 +204,8 @@ impl Party {
         }
 
         // Step 5 - We sample our secret data.
-        let instance_key = Scalar::random(rng::get_rng());
-        let inversion_mask = Scalar::random(rng::get_rng());
+        let instance_key = Scalar::random(&mut rng::get_rng());
+        let inversion_mask = Scalar::random(&mut rng::get_rng());
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
 
@@ -638,11 +637,11 @@ impl Party {
         let u = (unique_kept.instance_key * first_sum_u_v) + second_sum_u;
         let v = (unique_kept.key_share * first_sum_u_v) + second_sum_v;
 
-        let x_coord = hex::encode(total_instance_point.x().as_slice());
+        let x_coord = hex::encode(total_instance_point.x());
         // There is no salt because the hash function here is always the same.
-        let w = (Scalar::reduce(U256::from_be_bytes(data.message_hash))
+        let w = (Scalar::reduce(&U256::from_be_bytes(data.message_hash.into()))
             * unique_kept.inversion_mask)
-            + (v * Scalar::reduce(U256::from_be_hex(&x_coord)));
+            + (v * Scalar::reduce(&U256::from_be_hex(&x_coord)));
 
         let broadcast = Broadcast3to4 { u, w };
 
@@ -703,10 +702,10 @@ impl Party {
         // Normalize signature into "low S" form as described in
         // BIP-0062 Dealing with Malleability: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
         if normalize && s.is_high().into() {
-            s = ScalarPrimitive::from(-s).into();
+            s = -s;
         }
 
-        let signature = hex::encode(s.to_bytes().as_slice());
+        let signature = hex::encode(s.to_bytes());
 
         let verification =
             verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
@@ -721,8 +720,8 @@ impl Party {
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
-        let rx_as_scalar = Scalar::reduce(U256::from_be_hex(x_coord));
-        let hashed_msg_as_scalar = Scalar::reduce(U256::from_be_bytes(data.message_hash));
+        let rx_as_scalar = Scalar::reduce(&U256::from_be_hex(x_coord));
+        let hashed_msg_as_scalar = Scalar::reduce(&U256::from_be_bytes(data.message_hash.into()));
         let first = AffinePoint::GENERATOR * hashed_msg_as_scalar;
         let second = self.pk * rx_as_scalar;
         let s_inverse = s.invert().unwrap();
@@ -735,11 +734,11 @@ impl Party {
         // - If R.y is odd  and R.x >= n:               recovery_id = 3
         //
         // is_x_reduced is true when R.x (as a field element) >= the curve order n,
-        // meaning Scalar::reduce(R.x) lost information. For secp256k1, n < p, so
+        // meaning Scalar::reduce(&R.x) lost information. For secp256k1, n < p, so
         // this can happen in the range [n, p-1] with negligible probability.
         let x_as_int = U256::from_be_hex(x_coord);
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
-        let is_y_odd = signature_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        let is_y_odd = signature_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         Ok((signature, rec_id.into()))
@@ -768,12 +767,12 @@ pub fn verify_ecdsa_signature(
         return false;
     }
 
-    let rx_as_scalar = Scalar::reduce(rx_as_int);
-    let s_as_scalar = Scalar::reduce(s_as_int);
+    let rx_as_scalar = Scalar::reduce(&rx_as_int);
+    let s_as_scalar = Scalar::reduce(&s_as_int);
 
     let inverse_s = s_as_scalar.invert().unwrap();
 
-    let first = Scalar::reduce(U256::from_be_bytes(*msg)) * inverse_s;
+    let first = Scalar::reduce(&U256::from_be_bytes((*msg).into())) * inverse_s;
     let second = rx_as_scalar * inverse_s;
 
     let point_to_check = ((AffinePoint::GENERATOR * first) + (*pk * second)).to_affine();
@@ -781,7 +780,7 @@ pub fn verify_ecdsa_signature(
         return false;
     }
 
-    let x_check = Scalar::reduce(U256::from_be_slice(point_to_check.x().as_slice()));
+    let x_check = Scalar::reduce(&U256::from_be_slice(point_to_check.x().as_ref()));
 
     x_check == rx_as_scalar
 }
@@ -793,7 +792,7 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
     use crate::utilities::hashes::hash;
-    use rand::Rng;
+    use rand::RngExt;
 
     /// Tests if the signing protocol generates a valid ECDSA signature.
     ///
@@ -805,8 +804,8 @@ mod tests {
         // parties are being simulated one after the other, but they
         // should actually execute the protocol simultaneously.
 
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -814,13 +813,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -961,8 +960,8 @@ mod tests {
     /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_signing_against_ecdsa() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -970,13 +969,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1122,14 +1121,14 @@ mod tests {
 
         // We compare the total "instance point" with the parties' calculations.
         let total_instance_point = (AffinePoint::GENERATOR * total_instance_key).to_affine();
-        let expected_x_coord = hex::encode(total_instance_point.x().as_slice());
+        let expected_x_coord = hex::encode(total_instance_point.x());
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:
-        let hashed_message = Scalar::reduce(U256::from_be_bytes(message_to_sign));
+        let hashed_message = Scalar::reduce(&U256::from_be_bytes(message_to_sign.into()));
         assert_eq!(
             hashed_message,
-            Scalar::reduce(U256::from_be_hex(
+            Scalar::reduce(&U256::from_be_hex(
                 "ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d"
             ))
         );
@@ -1137,13 +1136,13 @@ mod tests {
         // Now we can find the signature in the usual way.
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
-                + (secret_key * Scalar::reduce(U256::from_be_hex(&expected_x_coord))));
-        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
+                + (secret_key * Scalar::reduce(&U256::from_be_hex(&expected_x_coord))));
+        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes());
 
         // Calculate the expected recovery id
         let x_as_int = U256::from_be_hex(&expected_x_coord);
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
-        let is_y_odd = total_instance_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        let is_y_odd = total_instance_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
         let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         // We compare the results.
@@ -1159,14 +1158,14 @@ mod tests {
     fn test_dkg_and_signing() {
         // DKG (as in test_dkg_initialization)
 
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1340,7 +1339,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1481,12 +1480,12 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
-            sign_id: rng::get_rng().gen::<[u8; 32]>().to_vec(),
+            sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
             counterparties: vec![2],
             message_hash: hash("Message to sign!".as_bytes(), &[]),
         };
@@ -1514,11 +1513,11 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
