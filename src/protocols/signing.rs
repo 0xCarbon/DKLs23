@@ -1502,4 +1502,287 @@ mod tests {
             .description
             .contains("Zero denominator in signature assembly"));
     }
+
+    fn setup_two_party_signing_phase1() -> (
+        Vec<Party>,
+        BTreeMap<u8, SignData>,
+        BTreeMap<u8, UniqueKeep1to2>,
+        BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>>,
+        BTreeMap<u8, Vec<TransmitPhase1to2>>,
+    ) {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let secret_key = Scalar::random(rng::get_rng());
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+
+        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+        all_data.insert(
+            1,
+            SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties: vec![2],
+                message_hash: message_to_sign,
+            },
+        );
+        all_data.insert(
+            2,
+            SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties: vec![1],
+                message_hash: message_to_sign,
+            },
+        );
+
+        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let (unique_keep, keep, transmit) = match parties[(party_index - 1) as usize]
+                .sign_phase1(all_data.get(&party_index).unwrap())
+            {
+                Ok(result) => result,
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                }
+            };
+
+            unique_kept_1to2.insert(party_index, unique_keep);
+            kept_1to2.insert(party_index, keep);
+            transmit_1to2.insert(party_index, transmit);
+        }
+
+        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+            received_1to2.insert(party_index, messages_for_party);
+        }
+
+        (
+            parties,
+            all_data,
+            unique_kept_1to2,
+            kept_1to2,
+            received_1to2,
+        )
+    }
+
+    fn run_two_party_phase2(
+        parties: &[Party],
+        all_data: &BTreeMap<u8, SignData>,
+        unique_kept_1to2: &BTreeMap<u8, UniqueKeep1to2>,
+        kept_1to2: &BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>>,
+        received_1to2: &BTreeMap<u8, Vec<TransmitPhase1to2>>,
+    ) -> (
+        BTreeMap<u8, UniqueKeep2to3>,
+        BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>>,
+        BTreeMap<u8, Vec<TransmitPhase2to3>>,
+    ) {
+        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let result = parties[(party_index - 1) as usize].sign_phase2(
+                all_data.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap(),
+                kept_1to2.get(&party_index).unwrap(),
+                received_1to2.get(&party_index).unwrap(),
+            );
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                }
+                Ok((unique_keep, keep, transmit)) => {
+                    unique_kept_2to3.insert(party_index, unique_keep);
+                    kept_2to3.insert(party_index, keep);
+                    transmit_2to3.insert(party_index, transmit);
+                }
+            }
+        }
+
+        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+            received_2to3.insert(party_index, messages_for_party);
+        }
+
+        (unique_kept_2to3, kept_2to3, received_2to3)
+    }
+
+    fn run_two_party_phase3(
+        parties: &[Party],
+        all_data: &BTreeMap<u8, SignData>,
+        unique_kept_2to3: &BTreeMap<u8, UniqueKeep2to3>,
+        kept_2to3: &BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>>,
+        received_2to3: &BTreeMap<u8, Vec<TransmitPhase2to3>>,
+    ) -> (String, Vec<Broadcast3to4>) {
+        let mut x_coords: Vec<String> = Vec::with_capacity(2);
+        let mut broadcasts: Vec<Broadcast3to4> = Vec::with_capacity(2);
+        for party_index in [1u8, 2u8] {
+            let result = parties[(party_index - 1) as usize].sign_phase3(
+                all_data.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap(),
+                kept_2to3.get(&party_index).unwrap(),
+                received_2to3.get(&party_index).unwrap(),
+            );
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                }
+                Ok((x_coord, broadcast)) => {
+                    x_coords.push(x_coord);
+                    broadcasts.push(broadcast);
+                }
+            }
+        }
+
+        assert_eq!(x_coords[0], x_coords[1]);
+        (x_coords[0].clone(), broadcasts)
+    }
+
+    /// Tests if phase 2 rejects messages from unknown senders.
+    #[test]
+    fn test_sign_phase2_rejects_unknown_sender() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+
+        let mut tampered = received_1to2.get(&1).unwrap().clone();
+        tampered[0].parties.sender = 3;
+
+        let result = parties[0].sign_phase2(
+            all_data.get(&1).unwrap(),
+            unique_kept_1to2.get(&1).unwrap(),
+            kept_1to2.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("unknown sender should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Received message from unknown sender"));
+    }
+
+    /// Tests if phase 2 rejects messages addressed to a different receiver.
+    #[test]
+    fn test_sign_phase2_rejects_wrong_receiver() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+
+        let mut tampered = received_1to2.get(&1).unwrap().clone();
+        tampered[0].parties.receiver = 2;
+
+        let result = parties[0].sign_phase2(
+            all_data.get(&1).unwrap(),
+            unique_kept_1to2.get(&1).unwrap(),
+            kept_1to2.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("wrong receiver should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort.description.contains("Received message addressed to"));
+    }
+
+    /// Tests if phase 3 rejects invalid decommitment data.
+    #[test]
+    fn test_sign_phase3_rejects_invalid_commitment_decommit() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+
+        let mut tampered = received_2to3.get(&1).unwrap().clone();
+        if tampered[0].salt.is_empty() {
+            tampered[0].salt.push(1);
+        } else {
+            tampered[0].salt[0] ^= 1;
+        }
+
+        let result = parties[0].sign_phase3(
+            all_data.get(&1).unwrap(),
+            unique_kept_2to3.get(&1).unwrap(),
+            kept_2to3.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("invalid decommit should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort.description.contains("Failed to verify commitment"));
+    }
+
+    /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
+    #[test]
+    fn test_sign_phase3_bans_on_inconsistent_gamma_u() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+
+        let mut tampered = received_2to3.get(&1).unwrap().clone();
+        tampered[0].gamma_u =
+            (ProjectivePoint::from(tampered[0].gamma_u) + ProjectivePoint::GENERATOR).to_affine();
+
+        let result = parties[0].sign_phase3(
+            all_data.get(&1).unwrap(),
+            unique_kept_2to3.get(&1).unwrap(),
+            kept_2to3.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("inconsistent gamma_u should be rejected");
+        assert_eq!(abort.kind, AbortKind::BanCounterparty(2));
+        assert!(abort
+            .description
+            .contains("Consistency check with u-variables failed"));
+    }
+
+    /// Tests if phase 4 rejects tampered broadcast values that invalidate signature assembly.
+    #[test]
+    fn test_sign_phase4_rejects_tampered_broadcast() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+        let (x_coord, mut broadcasts) = run_two_party_phase3(
+            &parties,
+            &all_data,
+            &unique_kept_2to3,
+            &kept_2to3,
+            &received_2to3,
+        );
+
+        broadcasts[0].w += Scalar::ONE;
+
+        let result = parties[0].sign_phase4(all_data.get(&1).unwrap(), &x_coord, &broadcasts, true);
+        let abort = result.expect_err("tampered broadcast should fail signature validation");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort.description.contains("Invalid ECDSA signature"));
+    }
 }
