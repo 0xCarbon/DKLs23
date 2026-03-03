@@ -18,7 +18,7 @@ pub const DEFAULT_SEED: u64 = 42;
 
 #[cfg(not(all(test, feature = "insecure-rng")))]
 pub fn get_rng() -> ThreadRng {
-    rand::thread_rng()
+    rand::rng()
 }
 
 #[cfg(all(test, feature = "insecure-rng"))]

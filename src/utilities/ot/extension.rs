@@ -37,7 +37,7 @@
 //! k vectors of single correlations, where k is the OT width.
 
 use k256::Scalar;
-use rand::Rng;
+use rand::RngExt;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -147,7 +147,7 @@ impl OTESender {
         // The choice bits are sampled randomly.
         let mut correlation: Vec<bool> = Vec::with_capacity(KAPPA as usize);
         for _ in 0..KAPPA {
-            correlation.push(rng::get_rng().gen());
+            correlation.push(rng::get_rng().random());
         }
 
         let (vec_r, enc_proofs) = ot_receiver.run_phase1_batch(session_id, &correlation);
@@ -493,7 +493,7 @@ impl OTEReceiver {
         // Step 1 - Extend the choice bits by adding random noise.
         let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY as usize);
         for _ in 0..OT_SECURITY {
-            random_choice_bits.push(rng::get_rng().gen());
+            random_choice_bits.push(rng::get_rng().random());
         }
         let extended_choice_bits = [choice_bits, &random_choice_bits].concat();
 
@@ -897,7 +897,7 @@ mod tests {
     use super::*;
     use crate::utilities::hashes::scalar_to_bytes;
     use k256::elliptic_curve::Field;
-    use rand::Rng;
+    use rand::RngExt;
     use std::collections::HashSet;
 
     fn prepare_ote_sender_inputs(
@@ -935,14 +935,14 @@ mod tests {
             let mut current_input_correlation: Vec<Scalar> =
                 Vec::with_capacity(BATCH_SIZE as usize);
             for _ in 0..BATCH_SIZE {
-                current_input_correlation.push(Scalar::random(rng::get_rng()));
+                current_input_correlation.push(Scalar::random(&mut rng::get_rng()));
             }
             sender_input_correlations.push(current_input_correlation);
         }
 
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            receiver_choice_bits.push(rng::get_rng().gen());
+            receiver_choice_bits.push(rng::get_rng().random());
         }
         let (_, data_to_sender) = ote_receiver.run_phase1(session_id, &receiver_choice_bits);
 
@@ -957,7 +957,7 @@ mod tests {
     #[test]
     fn test_field_mul() {
         for _ in 0..100 {
-            let initial = rng::get_rng().gen::<FieldElement>();
+            let initial = rng::get_rng().random::<FieldElement>();
 
             //Raising an element to the power 2^208 must not change it.
             let mut result = initial;
@@ -973,7 +973,7 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_extension() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // INITIALIZATION
 
@@ -1015,14 +1015,14 @@ mod tests {
             let mut current_input_correlation: Vec<Scalar> =
                 Vec::with_capacity(BATCH_SIZE as usize);
             for _ in 0..BATCH_SIZE {
-                current_input_correlation.push(Scalar::random(rng::get_rng()));
+                current_input_correlation.push(Scalar::random(&mut rng::get_rng()));
             }
             sender_input_correlations.push(current_input_correlation);
         }
 
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            receiver_choice_bits.push(rng::get_rng().gen());
+            receiver_choice_bits.push(rng::get_rng().random());
         }
 
         // Phase 1 - Receiver
@@ -1138,7 +1138,7 @@ mod tests {
     /// Tests if sender-side OTE rejects malformed dimensions from deserialized input.
     #[test]
     fn test_ot_extension_sender_rejects_malformed_data_dimensions() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // INITIALIZATION
         let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(&session_id);
@@ -1156,13 +1156,13 @@ mod tests {
         let mut sender_input_correlations: Vec<Vec<Scalar>> = Vec::with_capacity(1);
         let mut correlation_row: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            correlation_row.push(Scalar::random(rng::get_rng()));
+            correlation_row.push(Scalar::random(&mut rng::get_rng()));
         }
         sender_input_correlations.push(correlation_row);
 
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            receiver_choice_bits.push(rng::get_rng().gen());
+            receiver_choice_bits.push(rng::get_rng().random());
         }
         let (_, data_to_sender) = ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
 
@@ -1182,7 +1182,7 @@ mod tests {
     /// Tests if receiver-side OTE rejects tau vectors with incorrect inner length.
     #[test]
     fn test_ot_extension_receiver_rejects_short_tau_rows() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // INITIALIZATION
         let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
@@ -1195,7 +1195,7 @@ mod tests {
         // Phase 1 - Receiver
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            receiver_choice_bits.push(rng::get_rng().gen());
+            receiver_choice_bits.push(rng::get_rng().random());
         }
         let (extended_seeds, _) = ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
 
@@ -1215,7 +1215,7 @@ mod tests {
     /// Tests if sender-side OTE rejects tampered u matrix rows.
     #[test]
     fn test_ot_extension_sender_rejects_tampered_u() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
         let ot_width = 2;
         let (ote_sender, sender_input_correlations, mut data_to_sender) =
             prepare_ote_sender_inputs(&session_id, ot_width);
@@ -1235,7 +1235,7 @@ mod tests {
     /// Tests if sender-side OTE rejects tampered verify_x.
     #[test]
     fn test_ot_extension_sender_rejects_tampered_verify_x() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
         let ot_width = 2;
         let (ote_sender, sender_input_correlations, mut data_to_sender) =
             prepare_ote_sender_inputs(&session_id, ot_width);
@@ -1255,7 +1255,7 @@ mod tests {
     /// Tests if sender-side OTE rejects tampered verify_t entries.
     #[test]
     fn test_ot_extension_sender_rejects_tampered_verify_t() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
         // Exercise a different width than the other adversarial OTE tests.
         let ot_width = 1;
         let (ote_sender, sender_input_correlations, mut data_to_sender) =

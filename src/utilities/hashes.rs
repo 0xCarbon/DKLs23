@@ -35,7 +35,7 @@ pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
 #[must_use]
 pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> U256 {
     let as_bytes = hash(msg, salt);
-    U256::from_be_bytes(as_bytes)
+    U256::from_be_bytes(as_bytes.into())
 }
 
 /// Hash with result as a scalar.
@@ -44,7 +44,7 @@ pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> U256 {
 #[must_use]
 pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
     let as_int = hash_as_int(msg, salt);
-    Scalar::reduce(as_int)
+    Scalar::reduce(&as_int)
 }
 
 /// Converts a `Scalar` to bytes.
@@ -53,7 +53,7 @@ pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
 /// This function writes this integer as a byte array.
 #[must_use]
 pub fn scalar_to_bytes(scalar: &Scalar) -> Vec<u8> {
-    scalar.to_bytes().as_slice().to_vec()
+    scalar.to_bytes().to_vec()
 }
 
 /// Converts a point on the elliptic curve secp256k1 to bytes.
@@ -62,7 +62,7 @@ pub fn scalar_to_bytes(scalar: &Scalar) -> Vec<u8> {
 /// representation of `point`.
 #[must_use]
 pub fn point_to_bytes(point: &AffinePoint) -> Vec<u8> {
-    point.to_bytes().as_slice().to_vec()
+    point.to_bytes().to_vec()
 }
 
 #[cfg(test)]
@@ -72,7 +72,7 @@ mod tests {
     use crate::utilities::rng;
     use hex;
     use k256::elliptic_curve::{point::AffineCoordinates, Field};
-    use rand::Rng;
+    use rand::RngExt;
 
     /// Tests if [`hash`] really works as `SHA-256` is intended.
     ///
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn test_scalar_to_bytes() {
         for _ in 0..100 {
-            let number: u32 = rng::get_rng().gen();
+            let number: u32 = rng::get_rng().random();
             let scalar = Scalar::from(number);
 
             let number_as_bytes = [vec![0u8; 28], number.to_be_bytes().to_vec()].concat();
@@ -130,14 +130,14 @@ mod tests {
     #[test]
     fn test_point_to_bytes() {
         for _ in 0..100 {
-            let point = (AffinePoint::GENERATOR * Scalar::random(rng::get_rng())).to_affine();
+            let point = (AffinePoint::GENERATOR * Scalar::random(&mut rng::get_rng())).to_affine();
             if point == AffinePoint::IDENTITY {
                 continue;
             }
 
             let mut compressed_point = Vec::with_capacity(33);
             compressed_point.push(if bool::from(point.y_is_odd()) { 3 } else { 2 });
-            compressed_point.extend_from_slice(point.x().as_slice());
+            compressed_point.extend_from_slice(point.x().as_ref());
 
             assert_eq!(compressed_point, point_to_bytes(&point));
         }

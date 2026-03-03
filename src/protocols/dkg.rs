@@ -51,9 +51,9 @@ use std::collections::BTreeMap;
 
 use hex;
 use k256::elliptic_curve::Field;
-use k256::{elliptic_curve::sec1::ToEncodedPoint, AffinePoint, Scalar};
+use k256::{elliptic_curve::sec1::ToSec1Point, AffinePoint, Scalar};
 
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -441,7 +441,7 @@ pub fn phase2(
     // Initialization - BIP-32.
 
     // Each party samples a random auxiliary chain code.
-    let aux_chain_code: ChainCode = rng::get_rng().gen();
+    let aux_chain_code: ChainCode = rng::get_rng().random();
     let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
 
     let bip_keep = UniqueKeepDerivationPhase2to3 {
@@ -891,7 +891,7 @@ pub fn phase4(
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
     // Serialize the public key in uncompressed form
-    let uncompressed_pk = pk.to_encoded_point(false);
+    let uncompressed_pk = pk.to_sec1_point(false);
 
     // Compute the Keccak256 hash of the serialized public key
     // Skip the "04" SEC-1 prefix, see: https://www.secg.org/sec1-v2.pdf sec 3.3.3 page 11
@@ -929,7 +929,7 @@ mod tests {
     use super::*;
     use k256::elliptic_curve::ops::Reduce;
     use k256::U256;
-    use rand::Rng;
+    use rand::RngExt;
 
     // DISTRIBUTED KEY GENERATION (without initializations)
 
@@ -946,7 +946,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Phase 1 (Steps 1 and 2)
         let p1_phase1 = step2(&parameters, &step1(&parameters)); //p1 = Party 1
@@ -983,14 +983,14 @@ mod tests {
     /// t and n are small random values.
     #[test]
     fn test_dkg_random() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
@@ -1047,7 +1047,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(1u32), Scalar::from(3u32)];
@@ -1091,7 +1091,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(12u32), Scalar::from(2u32)];
@@ -1136,7 +1136,7 @@ mod tests {
             threshold: 3,
             share_count: 5,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // We will define the fragments directly
         let poly_fragments = vec![
@@ -1234,14 +1234,14 @@ mod tests {
     /// The correctness of the protocol is verified on `test_dkg_and_signing`.
     #[test]
     fn test_dkg_initialization() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1420,7 +1420,7 @@ mod tests {
     fn test_compute_eth_address() {
         // You should test different values using, for example,
         // https://www.rfctools.com/ethereum-address-test-tool/.
-        let sk = Scalar::reduce(U256::from_be_hex(
+        let sk = Scalar::reduce(&U256::from_be_hex(
             "0249815B0D7E186DB61E7A6AAD6226608BB1C48B309EA8903CAB7A7283DA64A5",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();

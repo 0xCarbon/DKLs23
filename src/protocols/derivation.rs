@@ -110,7 +110,7 @@ impl DerivData {
             ));
         }
 
-        let tweak = Scalar::reduce(number_for_tweak);
+        let tweak = Scalar::reduce(&number_for_tweak);
         let chain_code: ChainCode = hmac_bytes[32..]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
@@ -309,7 +309,7 @@ mod tests {
     use crate::utilities::rng;
     use hex;
     use k256::elliptic_curve::Field;
-    use rand::Rng;
+    use rand::RngExt;
     use std::collections::BTreeMap;
 
     /// Tests if the method `derive_from_path` from [`DerivData`]
@@ -321,7 +321,7 @@ mod tests {
     fn test_derivation() {
         // The following values were calculated at random with: https://bitaps.com/bip32.
         // You should test other values as well.
-        let sk = Scalar::reduce(U256::from_be_hex(
+        let sk = Scalar::reduce(&U256::from_be_hex(
             "6728f18f7163f7a0c11cc0ad53140afb4e345d760f966176865a860041549903",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();
@@ -372,8 +372,8 @@ mod tests {
     /// the signing protocol after being derived.
     #[test]
     fn test_derivation_and_signing() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -381,8 +381,8 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // DERIVATION
@@ -406,7 +406,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
