@@ -389,53 +389,119 @@ impl Party {
         }
 
         // Initialization - Zero shares.
+        let mut zero_received_phase2_by_sender: BTreeMap<u8, &TransmitInitZeroSharePhase2to4> =
+            BTreeMap::new();
+        for message in zero_received_phase2 {
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Received a zero-share phase-2 message not meant for me!",
+                ));
+            }
+            if !zero_kept.contains_key(&message.parties.sender) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Unexpected zero-share phase-2 sender {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+            if zero_received_phase2_by_sender
+                .insert(message.parties.sender, message)
+                .is_some()
+            {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Duplicate zero-share phase-2 message from Party {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+        }
+        let mut zero_received_phase3_by_sender: BTreeMap<u8, &TransmitInitZeroSharePhase3to4> =
+            BTreeMap::new();
+        for message in zero_received_phase3 {
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Received a zero-share phase-3 message not meant for me!",
+                ));
+            }
+            if !zero_kept.contains_key(&message.parties.sender) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Unexpected zero-share phase-3 sender {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+            if zero_received_phase3_by_sender
+                .insert(message.parties.sender, message)
+                .is_some()
+            {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Duplicate zero-share phase-3 message from Party {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+        }
+        if zero_received_phase2_by_sender.len() != zero_kept.len()
+            || zero_received_phase3_by_sender.len() != zero_kept.len()
+        {
+            return Err(Abort::new(
+                self.party_index,
+                "Missing zero-share initialization messages from one or more parties",
+            ));
+        }
+
         let mut seeds: Vec<zero_shares::SeedPair> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for (target_party, message_kept) in zero_kept {
-            for message_received_2 in zero_received_phase2 {
-                for message_received_3 in zero_received_phase3 {
-                    let my_index = message_received_2.parties.receiver;
-                    let their_index = message_received_2.parties.sender;
+            let message_received_2 = zero_received_phase2_by_sender
+                .get(target_party)
+                .ok_or_else(|| {
+                    Abort::new(
+                        self.party_index,
+                        &format!("Missing zero-share phase-2 message from Party {target_party}"),
+                    )
+                })?;
+            let message_received_3 = zero_received_phase3_by_sender
+                .get(target_party)
+                .ok_or_else(|| {
+                    Abort::new(
+                        self.party_index,
+                        &format!("Missing zero-share phase-3 message from Party {target_party}"),
+                    )
+                })?;
 
-                    // Confirm that the message is for us.
-                    if my_index != self.party_index {
-                        return Err(Abort::new(
-                            self.party_index,
-                            "Received a message not meant for me!",
-                        ));
-                    }
-
-                    // We first check if the messages relate to the same party.
-                    if *target_party != their_index
-                        || message_received_3.parties.sender != their_index
-                    {
-                        continue;
-                    }
-
-                    // We verify the commitment.
-                    let verification = ZeroShare::verify_seed(
-                        &message_received_3.seed,
-                        &message_received_2.commitment,
-                        &message_received_3.salt,
-                    );
-                    if !verification {
-                        return Err(Abort::new(
-                            self.party_index,
-                            &format!(
-                                "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
-                            ),
-                        ));
-                    }
-
-                    // We form the final seed pairs.
-                    seeds.push(ZeroShare::generate_seed_pair(
-                        my_index,
-                        their_index,
-                        &message_kept.seed,
-                        &message_received_3.seed,
-                    ));
-                }
+            // We verify the commitment.
+            let verification = ZeroShare::verify_seed(
+                &message_received_3.seed,
+                &message_received_2.commitment,
+                &message_received_3.salt,
+            );
+            if !verification {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
+                    ),
+                ));
             }
+
+            // We form the final seed pairs.
+            seeds.push(ZeroShare::generate_seed_pair(
+                self.party_index,
+                *target_party,
+                &message_kept.seed,
+                &message_received_3.seed,
+            ));
         }
 
         // This finishes the initialization.
@@ -444,101 +510,127 @@ impl Party {
         // Initialization - Two-party multiplication.
         let mut mul_receivers: BTreeMap<u8, MulReceiver> = BTreeMap::new();
         let mut mul_senders: BTreeMap<u8, MulSender> = BTreeMap::new();
-        for (target_party, message_kept) in mul_kept {
-            for message_received in mul_received {
-                let my_index = message_received.parties.receiver;
-                let their_index = message_received.parties.sender;
+        let mut mul_received_by_sender: BTreeMap<u8, &TransmitInitMulPhase3to4> = BTreeMap::new();
+        for message in mul_received {
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Received a multiplication-init message not meant for me!",
+                ));
+            }
+            if !mul_kept.contains_key(&message.parties.sender) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Unexpected multiplication-init sender {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+            if mul_received_by_sender
+                .insert(message.parties.sender, message)
+                .is_some()
+            {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Duplicate multiplication-init message from Party {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+        }
+        if mul_received_by_sender.len() != mul_kept.len() {
+            return Err(Abort::new(
+                self.party_index,
+                "Missing multiplication initialization messages from one or more parties",
+            ));
+        }
 
-                // Confirm that the message is for us.
-                if my_index != self.party_index {
+        for (target_party, message_kept) in mul_kept {
+            let message_received = mul_received_by_sender.get(target_party).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing multiplication-init message from Party {target_party}"),
+                )
+            })?;
+
+            // RECEIVER
+            // We are the receiver and target_party = sender.
+
+            // We retrieve the id used for multiplication. Note that the first party
+            // is the receiver and the second, the sender.
+            let mul_sid_receiver = [
+                "Multiplication protocol".as_bytes(),
+                &self.party_index.to_be_bytes(),
+                &target_party.to_be_bytes(),
+                refresh_sid,
+            ]
+            .concat();
+
+            let receiver_result = MulReceiver::init_phase2(
+                &message_kept.ot_sender,
+                &mul_sid_receiver,
+                &message_received.seed,
+                &message_received.enc_proofs,
+                &message_kept.nonce,
+            );
+
+            let mul_receiver: MulReceiver = match receiver_result {
+                Ok(r) => r,
+                Err(error) => {
+                    // Complete refresh builds fresh OT from scratch (no reused COTe state),
+                    // so init failures are recoverable, matching DKG classification.
                     return Err(Abort::new(
                         self.party_index,
-                        "Received a message not meant for me!",
+                        &format!(
+                            "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                            target_party, error.description
+                        ),
                     ));
                 }
+            };
 
-                // We first check if the messages relate to the same party.
-                if their_index != *target_party {
-                    continue;
+            // SENDER
+            // We are the sender and target_party = receiver.
+
+            // We retrieve the id used for multiplication. Note that the first party
+            // is the receiver and the second, the sender.
+            let mul_sid_sender = [
+                "Multiplication protocol".as_bytes(),
+                &target_party.to_be_bytes(),
+                &self.party_index.to_be_bytes(),
+                refresh_sid,
+            ]
+            .concat();
+
+            let sender_result = MulSender::init_phase2(
+                &message_kept.ot_receiver,
+                &mul_sid_sender,
+                message_kept.correlation.clone(),
+                &message_kept.vec_r,
+                &message_received.dlog_proof,
+                &message_received.nonce,
+            );
+
+            let mul_sender: MulSender = match sender_result {
+                Ok(s) => s,
+                Err(error) => {
+                    // Complete refresh builds fresh OT from scratch (no reused COTe state),
+                    // so init failures are recoverable, matching DKG classification.
+                    return Err(Abort::new(
+                        self.party_index,
+                        &format!(
+                            "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                            target_party, error.description
+                        ),
+                    ));
                 }
+            };
 
-                // RECEIVER
-                // We are the receiver and target_party = sender.
-
-                // We retrieve the id used for multiplication. Note that the first party
-                // is the receiver and the second, the sender.
-                let mul_sid_receiver = [
-                    "Multiplication protocol".as_bytes(),
-                    &my_index.to_be_bytes(),
-                    &their_index.to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
-
-                let receiver_result = MulReceiver::init_phase2(
-                    &message_kept.ot_sender,
-                    &mul_sid_receiver,
-                    &message_received.seed,
-                    &message_received.enc_proofs,
-                    &message_kept.nonce,
-                );
-
-                let mul_receiver: MulReceiver = match receiver_result {
-                    Ok(r) => r,
-                    Err(error) => {
-                        // Complete refresh builds fresh OT from scratch (no reused COTe state),
-                        // so init failures are recoverable, matching DKG classification.
-                        return Err(Abort::new(
-                            self.party_index,
-                            &format!(
-                                "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                                their_index, error.description
-                            ),
-                        ));
-                    }
-                };
-
-                // SENDER
-                // We are the sender and target_party = receiver.
-
-                // We retrieve the id used for multiplication. Note that the first party
-                // is the receiver and the second, the sender.
-                let mul_sid_sender = [
-                    "Multiplication protocol".as_bytes(),
-                    &their_index.to_be_bytes(),
-                    &my_index.to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
-
-                let sender_result = MulSender::init_phase2(
-                    &message_kept.ot_receiver,
-                    &mul_sid_sender,
-                    message_kept.correlation.clone(),
-                    &message_kept.vec_r,
-                    &message_received.dlog_proof,
-                    &message_received.nonce,
-                );
-
-                let mul_sender: MulSender = match sender_result {
-                    Ok(s) => s,
-                    Err(error) => {
-                        // Complete refresh builds fresh OT from scratch (no reused COTe state),
-                        // so init failures are recoverable, matching DKG classification.
-                        return Err(Abort::new(
-                            self.party_index,
-                            &format!(
-                                "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                                their_index, error.description
-                            ),
-                        ));
-                    }
-                };
-
-                // We finish the initialization.
-                mul_receivers.insert(their_index, mul_receiver);
-                mul_senders.insert(their_index, mul_sender.clone());
-            }
+            // We finish the initialization.
+            mul_receivers.insert(*target_party, mul_receiver);
+            mul_senders.insert(*target_party, mul_sender.clone());
         }
 
         // For key derivation, we just update poly_point.
@@ -735,53 +827,117 @@ impl Party {
         }
 
         // Initialization - Zero shares.
+        let mut received_phase2_by_sender: BTreeMap<u8, &TransmitRefreshPhase2to4> =
+            BTreeMap::new();
+        for message in received_phase2 {
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Received a refresh phase-2 message not meant for me!",
+                ));
+            }
+            if !kept.contains_key(&message.parties.sender) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Unexpected refresh phase-2 sender {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+            if received_phase2_by_sender
+                .insert(message.parties.sender, message)
+                .is_some()
+            {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Duplicate refresh phase-2 message from Party {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+        }
+        let mut received_phase3_by_sender: BTreeMap<u8, &TransmitRefreshPhase3to4> =
+            BTreeMap::new();
+        for message in received_phase3 {
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Received a refresh phase-3 message not meant for me!",
+                ));
+            }
+            if !kept.contains_key(&message.parties.sender) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Unexpected refresh phase-3 sender {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+            if received_phase3_by_sender
+                .insert(message.parties.sender, message)
+                .is_some()
+            {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Duplicate refresh phase-3 message from Party {}",
+                        message.parties.sender
+                    ),
+                ));
+            }
+        }
+        if received_phase2_by_sender.len() != kept.len()
+            || received_phase3_by_sender.len() != kept.len()
+        {
+            return Err(Abort::new(
+                self.party_index,
+                "Missing refresh initialization messages from one or more parties",
+            ));
+        }
+
         let mut seeds: Vec<zero_shares::SeedPair> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for (target_party, message_kept) in kept {
-            for message_received_2 in received_phase2 {
-                for message_received_3 in received_phase3 {
-                    let my_index = message_received_2.parties.receiver;
-                    let their_index = message_received_2.parties.sender;
+            let message_received_2 =
+                received_phase2_by_sender.get(target_party).ok_or_else(|| {
+                    Abort::new(
+                        self.party_index,
+                        &format!("Missing refresh phase-2 message from Party {target_party}"),
+                    )
+                })?;
+            let message_received_3 =
+                received_phase3_by_sender.get(target_party).ok_or_else(|| {
+                    Abort::new(
+                        self.party_index,
+                        &format!("Missing refresh phase-3 message from Party {target_party}"),
+                    )
+                })?;
 
-                    // Confirm that the message is for us.
-                    if my_index != self.party_index {
-                        return Err(Abort::new(
-                            self.party_index,
-                            "Received a message not meant for me!",
-                        ));
-                    }
-
-                    // We first check if the messages relate to the same party.
-                    if *target_party != their_index
-                        || message_received_3.parties.sender != their_index
-                    {
-                        continue;
-                    }
-
-                    // We verify the commitment.
-                    let verification = ZeroShare::verify_seed(
-                        &message_received_3.seed,
-                        &message_received_2.commitment,
-                        &message_received_3.salt,
-                    );
-                    if !verification {
-                        return Err(Abort::new(
-                            self.party_index,
-                            &format!(
-                                "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
-                            ),
-                        ));
-                    }
-
-                    // We form the final seed pairs.
-                    seeds.push(ZeroShare::generate_seed_pair(
-                        my_index,
-                        their_index,
-                        &message_kept.seed,
-                        &message_received_3.seed,
-                    ));
-                }
+            // We verify the commitment.
+            let verification = ZeroShare::verify_seed(
+                &message_received_3.seed,
+                &message_received_2.commitment,
+                &message_received_3.salt,
+            );
+            if !verification {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
+                    ),
+                ));
             }
+
+            // We form the final seed pairs.
+            seeds.push(ZeroShare::generate_seed_pair(
+                self.party_index,
+                *target_party,
+                &message_kept.seed,
+                &message_received_3.seed,
+            ));
         }
 
         // Having the seeds, we can update the data for multiplication.
@@ -795,8 +951,18 @@ impl Party {
             let their_index = seed_pair.index_counterparty;
             let seed = seed_pair.seed;
 
-            let mul_sender = self.mul_senders.get(&their_index).unwrap();
-            let mul_receiver = self.mul_receivers.get(&their_index).unwrap();
+            let mul_sender = self.mul_senders.get(&their_index).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing multiplication sender state for party {their_index}"),
+                )
+            })?;
+            let mul_receiver = self.mul_receivers.get(&their_index).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing multiplication receiver state for party {their_index}"),
+                )
+            })?;
 
             // We update the OT data.
 
@@ -1149,6 +1315,34 @@ mod tests {
         assert!(abort
             .description
             .contains("Initialization for multiplication protocol failed because of Party 2"));
+    }
+
+    /// Tests if complete refresh phase 4 rejects duplicate multiplication-init senders.
+    #[test]
+    fn test_refresh_complete_phase4_rejects_duplicate_mul_init_sender() {
+        let mut data = setup_two_party_complete_refresh_phase4_inputs();
+
+        let duplicate = data.mul_received_3to4[0]
+            .first()
+            .expect("expected at least one mul-init message in test setup")
+            .clone();
+        data.mul_received_3to4[0].push(duplicate);
+
+        let result = data.parties[0].refresh_complete_phase4(
+            &data.refresh_sid,
+            &data.correction_values[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+        );
+        let abort = result.expect_err("duplicate mul-init sender should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Duplicate multiplication-init message from Party 2"));
     }
 
     /// Tests if the complete refresh protocol generates parties
