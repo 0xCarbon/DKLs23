@@ -1050,6 +1050,184 @@ mod tests {
     use k256::U256;
     use rand::RngExt;
 
+    struct DkgPhase4Inputs {
+        all_data: Vec<SessionData>,
+        poly_points: Vec<Scalar>,
+        proofs_commitments: Vec<ProofCommitment>,
+        zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>>,
+        zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>>,
+        zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>>,
+        mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>>,
+        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>>,
+        bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4>,
+        bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4>,
+    }
+
+    fn setup_two_party_dkg_phase4_inputs() -> DkgPhase4Inputs {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+
+        // Each party prepares their data for this DKG.
+        let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            all_data.push(SessionData {
+                parameters: parameters.clone(),
+                party_index: i + 1,
+                session_id: session_id.to_vec(),
+            });
+        }
+
+        // Phase 1
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            let out1 = phase1(&all_data[i as usize]);
+            dkg_1.push(out1);
+        }
+
+        // Communication round 1
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
+            parameters.share_count as usize
+        ];
+        for row_i in dkg_1 {
+            for j in 0..parameters.share_count {
+                poly_fragments[j as usize].push(row_i[j as usize]);
+            }
+        }
+
+        // Phase 2
+        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
+        let mut proofs_commitments: Vec<ProofCommitment> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4> = BTreeMap::new();
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4, out5, out6) =
+                phase2(&all_data[i as usize], &poly_fragments[i as usize]);
+
+            poly_points.push(out1);
+            proofs_commitments.push(out2);
+            zero_kept_2to3.push(out3);
+            zero_transmit_2to4.push(out4);
+            bip_kept_2to3.push(out5);
+            bip_broadcast_2to4.insert(i + 1, out6);
+        }
+
+        // Communication round 2
+        let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_2to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_2to4.push(new_row);
+        }
+
+        // Phase 3
+        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4> = BTreeMap::new();
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4, out5) = phase3(
+                &all_data[i as usize],
+                &zero_kept_2to3[i as usize],
+                &bip_kept_2to3[i as usize],
+            );
+
+            zero_kept_3to4.push(out1);
+            zero_transmit_3to4.push(out2);
+            mul_kept_3to4.push(out3);
+            mul_transmit_3to4.push(out4);
+            bip_broadcast_3to4.insert(i + 1, out5);
+        }
+
+        // Communication round 3
+        let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut zero_row: Vec<TransmitInitZeroSharePhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        zero_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_3to4.push(zero_row);
+
+            let mut mul_row: Vec<TransmitInitMulPhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &mul_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        mul_row.push(message.clone());
+                    }
+                }
+            }
+            mul_received_3to4.push(mul_row);
+        }
+
+        DkgPhase4Inputs {
+            all_data,
+            poly_points,
+            proofs_commitments,
+            zero_kept_3to4,
+            zero_received_2to4,
+            zero_received_3to4,
+            mul_kept_3to4,
+            mul_received_3to4,
+            bip_broadcast_2to4,
+            bip_broadcast_3to4,
+        }
+    }
+
+    /// Tests if phase 4 aborts when multiplication-init messages are missing.
+    #[test]
+    fn test_dkg_phase4_rejects_missing_mul_init_messages() {
+        let mut data = setup_two_party_dkg_phase4_inputs();
+        data.mul_received_3to4[0].clear();
+
+        let result = phase4(
+            &data.all_data[0],
+            &data.poly_points[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+            &data.bip_broadcast_2to4,
+            &data.bip_broadcast_3to4,
+        );
+        let abort = result.expect_err("missing multiplication-init message should be rejected");
+        assert!(abort
+            .description
+            .contains("Missing multiplication initialization messages"));
+    }
+
     // DISTRIBUTED KEY GENERATION (without initializations)
 
     // We are not testing in the moment the initializations for zero shares

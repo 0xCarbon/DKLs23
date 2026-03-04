@@ -1317,6 +1317,34 @@ mod tests {
             .contains("Initialization for multiplication protocol failed because of Party 2"));
     }
 
+    /// Tests if complete refresh phase 4 rejects duplicate multiplication-init senders.
+    #[test]
+    fn test_refresh_complete_phase4_rejects_duplicate_mul_init_sender() {
+        let mut data = setup_two_party_complete_refresh_phase4_inputs();
+
+        let duplicate = data.mul_received_3to4[0]
+            .first()
+            .expect("expected at least one mul-init message in test setup")
+            .clone();
+        data.mul_received_3to4[0].push(duplicate);
+
+        let result = data.parties[0].refresh_complete_phase4(
+            &data.refresh_sid,
+            &data.correction_values[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+        );
+        let abort = result.expect_err("duplicate mul-init sender should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Duplicate multiplication-init message from Party 2"));
+    }
+
     /// Tests if the complete refresh protocol generates parties
     /// still capable of running the signing protocol.
     ///

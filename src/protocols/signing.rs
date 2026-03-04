@@ -1620,6 +1620,46 @@ mod tests {
         ));
     }
 
+    /// Tests if phase 1 rejects duplicate counterparties.
+    #[test]
+    fn test_sign_phase1_rejects_duplicate_counterparty() {
+        let parameters = Parameters {
+            threshold: 3,
+            share_count: 3,
+        };
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        let data = SignData {
+            sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
+            counterparties: vec![2, 2],
+            message_hash: hash("Message to sign!".as_bytes(), &[]),
+        };
+
+        let abort = parties[0]
+            .sign_phase1(&data)
+            .expect_err("duplicate counterparty should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort.description.contains("appears more than once"));
+    }
+
+    /// Tests if phase 1 rejects missing multiplication state.
+    #[test]
+    fn test_sign_phase1_rejects_missing_mul_state() {
+        let (parties, all_data, _, _, _) = setup_two_party_signing_phase1();
+        let mut party = parties[0].clone();
+        party.mul_senders.remove(&2);
+
+        let abort = party
+            .sign_phase1(all_data.get(&1).expect("party data should exist"))
+            .expect_err("missing multiplication state should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Missing multiplication state for counterparty 2"));
+    }
+
     fn setup_two_party_signing_phase1() -> (
         Vec<Party>,
         BTreeMap<u8, SignData>,
@@ -1814,6 +1854,24 @@ mod tests {
         assert!(abort.description.contains("Received message addressed to"));
     }
 
+    /// Tests if phase 2 rejects message vectors with unexpected size.
+    #[test]
+    fn test_sign_phase2_rejects_wrong_message_count() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, _) = setup_two_party_signing_phase1();
+
+        let result = parties[0].sign_phase2(
+            all_data.get(&1).unwrap(),
+            unique_kept_1to2.get(&1).unwrap(),
+            kept_1to2.get(&1).unwrap(),
+            &[],
+        );
+        let abort = result.expect_err("wrong message count should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("unexpected number of round-1 messages"));
+    }
+
     /// Tests if phase 3 rejects invalid decommitment data.
     #[test]
     fn test_sign_phase3_rejects_invalid_commitment_decommit() {
@@ -1843,6 +1901,32 @@ mod tests {
         let abort = result.expect_err("invalid decommit should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
         assert!(abort.description.contains("Failed to verify commitment"));
+    }
+
+    /// Tests if phase 3 rejects message vectors with unexpected size.
+    #[test]
+    fn test_sign_phase3_rejects_wrong_message_count() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, _) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+
+        let result = parties[0].sign_phase3(
+            all_data.get(&1).unwrap(),
+            unique_kept_2to3.get(&1).unwrap(),
+            kept_2to3.get(&1).unwrap(),
+            &[],
+        );
+        let abort = result.expect_err("wrong message count should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("unexpected number of round-2 messages"));
     }
 
     /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
