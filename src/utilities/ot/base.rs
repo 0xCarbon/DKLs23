@@ -21,7 +21,8 @@ use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
-use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, HashOutput};
+use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
+use crate::utilities::oracle_tags::{TAG_OT_BASE_H, TAG_OT_BASE_MSG};
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
@@ -61,10 +62,7 @@ impl OTSender {
             s = Scalar::random(&mut rng::get_rng());
         }
 
-        // In the paper, different protocols use different random oracles.
-        // Thus, we will add a unique string to the session id here.
-        let current_sid = [session_id, "DLogProof".as_bytes()].concat();
-        let proof = DLogProof::prove(&s, &current_sid);
+        let proof = DLogProof::prove(&s, session_id);
 
         OTSender { s, proof }
     }
@@ -99,15 +97,12 @@ impl OTSender {
         enc_proof: &EncProof,
     ) -> Result<(HashOutput, HashOutput), ErrorOT> {
         // We reconstruct h from the seed (as in the paper).
-        // Instead of using a real identifier for the receiver,
-        // we just take the word 'Receiver' for simplicity.
-        // I guess we could omit it, but we leave it to "change the oracle".
-        let msg_for_h = ["Receiver".as_bytes(), seed].concat();
-        let h = (AffinePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id)).to_affine();
+        let h = (AffinePoint::GENERATOR
+            * tagged_hash_as_scalar(TAG_OT_BASE_H, &[session_id, seed]))
+        .to_affine();
 
         // We verify the proof.
-        let current_sid = [session_id, "EncProof".as_bytes()].concat();
-        let verification = enc_proof.verify(&current_sid);
+        let verification = enc_proof.verify(session_id);
 
         // h is already in enc_proof, but we check if the values agree.
         if !verification || (h != enc_proof.proof0.base_h) {
@@ -117,19 +112,17 @@ impl OTSender {
         }
 
         // We compute the messages.
-        // As before, instead of an identifier for the sender,
-        // we just take the word 'Sender' for simplicity.
 
         let (_, v) = enc_proof.get_u_and_v();
 
         let value_for_m0 = (v * self.s).to_affine();
         let value_for_m1 = ((ProjectivePoint::from(v) - h) * self.s).to_affine();
 
-        let msg_for_m0 = ["Sender".as_bytes(), &point_to_bytes(&value_for_m0)].concat();
-        let msg_for_m1 = ["Sender".as_bytes(), &point_to_bytes(&value_for_m1)].concat();
+        let value_for_m0_bytes = point_to_bytes(&value_for_m0);
+        let value_for_m1_bytes = point_to_bytes(&value_for_m1);
 
-        let m0 = hash(&msg_for_m0, session_id);
-        let m1 = hash(&msg_for_m1, session_id);
+        let m0 = tagged_hash(TAG_OT_BASE_MSG, &[session_id, &value_for_m0_bytes]);
+        let m1 = tagged_hash(TAG_OT_BASE_MSG, &[session_id, &value_for_m1_bytes]);
 
         Ok((m0, m1))
     }
@@ -189,17 +182,12 @@ impl OTReceiver {
         let r = Scalar::random(&mut rng::get_rng());
 
         // We compute h as in the paper.
-        // Instead of using a real identifier for the receiver,
-        // we just take the word 'Receiver' for simplicity.
-        // I guess we could omit it, but we leave it to "change the oracle".
-        let msg_for_h = ["Receiver".as_bytes(), &self.seed].concat();
-        let h = (AffinePoint::GENERATOR * hash_as_scalar(&msg_for_h, session_id)).to_affine();
+        let h = (AffinePoint::GENERATOR
+            * tagged_hash_as_scalar(TAG_OT_BASE_H, &[session_id, &self.seed]))
+        .to_affine();
 
         // We prove our data.
-        // In the paper, different protocols use different random oracles.
-        // Thus, we will add a unique string to the session id here.
-        let current_sid = [session_id, "EncProof".as_bytes()].concat();
-        let proof = EncProof::prove(&current_sid, &h, &r, bit);
+        let proof = EncProof::prove(session_id, &h, &r, bit);
 
         // r should be kept and proof should be sent.
         (r, proof)
@@ -253,8 +241,7 @@ impl OTReceiver {
         dlog_proof: &DLogProof,
     ) -> Result<AffinePoint, ErrorOT> {
         // Verification of the proof.
-        let current_sid = [session_id, "DLogProof".as_bytes()].concat();
-        let verification = DLogProof::verify(dlog_proof, &current_sid);
+        let verification = DLogProof::verify(dlog_proof, session_id);
 
         if !verification {
             return Err(ErrorOT::new(
@@ -272,15 +259,12 @@ impl OTReceiver {
     #[must_use]
     pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
         // We compute the message.
-        // As before, instead of an identifier for the sender,
-        // we just take the word 'Sender' for simplicity.
 
         let value_for_mb = (*z * r).to_affine();
-
-        let msg_for_mb = ["Sender".as_bytes(), &point_to_bytes(&value_for_mb)].concat();
+        let value_for_mb_bytes = point_to_bytes(&value_for_mb);
 
         // We could return the bit as in the paper, but the receiver has this information.
-        hash(&msg_for_mb, session_id)
+        tagged_hash(TAG_OT_BASE_MSG, &[session_id, &value_for_mb_bytes])
     }
 
     // Phase 2 batch version: used for multiple executions (e.g. OT extension).

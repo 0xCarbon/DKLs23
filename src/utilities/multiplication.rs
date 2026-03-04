@@ -12,7 +12,10 @@ use k256::Scalar;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
+use crate::utilities::hashes::{scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
+use crate::utilities::oracle_tags::{
+    TAG_MUL_CHI_HAT, TAG_MUL_CHI_TILDE, TAG_MUL_GADGET, TAG_MUL_VERIFY,
+};
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
@@ -69,6 +72,7 @@ pub struct MulDataToKeepReceiver {
 }
 
 /// Represents an error during the multiplication protocol.
+#[derive(Debug)]
 pub struct ErrorMul {
     pub description: String,
 }
@@ -126,7 +130,11 @@ impl MulSender {
         let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
             counter += Scalar::ONE;
-            public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
+            let counter_bytes = scalar_to_bytes(&counter);
+            public_gadget.push(tagged_hash_as_scalar(
+                TAG_MUL_GADGET,
+                &[session_id, &counter_bytes],
+            ));
         }
 
         let mul_sender = MulSender {
@@ -248,12 +256,14 @@ impl MulSender {
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            // We compute the salts according to i and the variable.
-            let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-            let salt_hat = [&(2u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-
-            chi_tilde.push(hash_as_scalar(&transcript, &salt_tilde));
-            chi_hat.push(hash_as_scalar(&transcript, &salt_hat));
+            chi_tilde.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_TILDE,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
+            chi_hat.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_HAT,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
         }
 
         // Step 5 - We compute the verification value.
@@ -286,7 +296,7 @@ impl MulSender {
         let r_as_bytes = rows_r_as_bytes.concat();
 
         // We transform r into a hash.
-        let verify_r: HashOutput = hash(&r_as_bytes, session_id);
+        let verify_r: HashOutput = tagged_hash(TAG_MUL_VERIFY, &[session_id, &r_as_bytes]);
 
         // Step 6 - No action for the sender.
 
@@ -375,7 +385,11 @@ impl MulReceiver {
         let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
             counter += Scalar::ONE;
-            public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
+            let counter_bytes = scalar_to_bytes(&counter);
+            public_gadget.push(tagged_hash_as_scalar(
+                TAG_MUL_GADGET,
+                &[session_id, &counter_bytes],
+            ));
         }
 
         let mul_receiver = MulReceiver {
@@ -401,11 +415,14 @@ impl MulReceiver {
     /// The random factor coming from the protocol is already returned here.
     /// There are two other outputs: one to be kept for the next phase
     /// and one to be sent to the sender (related to the OT extension).
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the underlying OTE receiver phase 1 fails.
     pub fn run_phase1(
         &self,
         session_id: &[u8],
-    ) -> (Scalar, MulDataToKeepReceiver, OTEDataToSender) {
+    ) -> Result<(Scalar, MulDataToKeepReceiver, OTEDataToSender), ErrorMul> {
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - We sample the choice bits and compute the pad b_tilde.
@@ -434,7 +451,16 @@ impl MulReceiver {
 
         let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
 
-        let (extended_seeds, data_to_sender) = self.ote_receiver.run_phase1(&ote_sid, &choice_bits);
+        let (extended_seeds, data_to_sender) =
+            match self.ote_receiver.run_phase1(&ote_sid, &choice_bits) {
+                Ok(values) => values,
+                Err(error) => {
+                    return Err(ErrorMul::new(&format!(
+                        "OTE error during multiplication: {:?}",
+                        error.description
+                    )));
+                }
+            };
 
         // Step 4 - We compute the shared random values.
 
@@ -451,12 +477,14 @@ impl MulReceiver {
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            // We compute the salts according to i and the variable.
-            let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-            let salt_hat = [&(2u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-
-            chi_tilde.push(hash_as_scalar(&transcript, &salt_tilde));
-            chi_hat.push(hash_as_scalar(&transcript, &salt_hat));
+            chi_tilde.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_TILDE,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
+            chi_hat.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_HAT,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
         }
 
         // Step 5 - No action for the receiver, but he will receive
@@ -472,7 +500,7 @@ impl MulReceiver {
             chi_hat,
         };
 
-        (b, data_to_keep, data_to_sender)
+        Ok((b, data_to_keep, data_to_sender))
     }
 
     /// Finishes the receiver's protocol and gives his output.
@@ -557,7 +585,7 @@ impl MulReceiver {
         let r_as_bytes = rows_r_as_bytes.concat();
 
         // We transform r into a hash.
-        let expected_verify_r: HashOutput = hash(&r_as_bytes, session_id);
+        let expected_verify_r: HashOutput = tagged_hash(TAG_MUL_VERIFY, &[session_id, &r_as_bytes]);
 
         // We compare the values.
         if data_received.verify_r != expected_verify_r {
@@ -628,7 +656,9 @@ mod tests {
             sender_input.push(Scalar::random(&mut rng::get_rng()));
         }
 
-        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(session_id);
+        let (_, data_to_keep, data_to_sender) = mul_receiver
+            .run_phase1(session_id)
+            .expect("mul receiver phase1 should succeed");
         let (_, data_to_receiver) = match mul_sender.run(session_id, &sender_input, &data_to_sender)
         {
             Ok(result) => result,
@@ -694,7 +724,9 @@ mod tests {
         }
 
         // Phase 1 - Receiver
-        let (receiver_random, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
+        let (receiver_random, data_to_keep, data_to_sender) = mul_receiver
+            .run_phase1(&session_id)
+            .expect("mul receiver phase1 should succeed");
 
         // Communication round 1
         // Receiver keeps receiver_random (part of the output)
@@ -767,7 +799,9 @@ mod tests {
             sender_input.push(Scalar::random(&mut rng::get_rng()));
         }
 
-        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
+        let (_, data_to_keep, data_to_sender) = mul_receiver
+            .run_phase1(&session_id)
+            .expect("mul receiver phase1 should succeed");
         let (_, mut data_to_receiver) =
             match mul_sender.run(&session_id, &sender_input, &data_to_sender) {
                 Ok(result) => result,

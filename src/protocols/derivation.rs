@@ -296,6 +296,7 @@ pub fn parse_path(path: &str) -> Result<Vec<u32>, ErrorDeriv> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
 
     use super::*;

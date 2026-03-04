@@ -44,7 +44,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
-use crate::utilities::hashes::{hash, hash_as_scalar, HashOutput};
+use crate::utilities::hashes::{tagged_hash, tagged_hash_as_scalar, HashOutput};
+use crate::utilities::oracle_tags::{TAG_OTE_CHI, TAG_OTE_PRG, TAG_OTE_RANDOMIZE};
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
@@ -212,6 +213,16 @@ impl OTESender {
                 "The vector of input correlations does not have the expected size!",
             ));
         }
+        for correlation in input_correlations {
+            if correlation.len() != BATCH_SIZE as usize {
+                return Err(ErrorOT::new(
+                    "A correlation vector has incorrect inner length",
+                ));
+            }
+        }
+        if self.correlation.len() != KAPPA as usize || self.seeds.len() != KAPPA as usize {
+            return Err(ErrorOT::new("OTE sender state has incorrect dimensions"));
+        }
         if data.u.len() != KAPPA as usize || data.verify_t.len() != KAPPA as usize {
             return Err(ErrorOT::new("OTE data has incorrect dimensions"));
         }
@@ -230,11 +241,13 @@ impl OTESender {
             // The reason for this is that we need more than 256 bits.
             let mut count = 0u16;
             while prg.len() < (EXTENDED_BATCH_SIZE / 8) as usize {
-                // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let i_bytes = i.to_be_bytes();
+                let count_bytes = count.to_be_bytes();
                 count += 1;
-
-                let chunk = hash(&self.seeds[i as usize], &salt);
+                let chunk = tagged_hash(
+                    TAG_OTE_PRG,
+                    &[session_id, &i_bytes, &count_bytes, &self.seeds[i as usize]],
+                );
 
                 prg.extend_from_slice(&chunk);
             }
@@ -273,18 +286,18 @@ impl OTESender {
         // pseudorandom numbers chi1 and chi2. They have OT_SECURITY = 208 bits.
         // We can generate them with a hash.
 
-        // This time, we are hashing the same message twice, so we put the tags 1 and 2 in the salt.
-        let salt1 = [&(1u8).to_be_bytes(), session_id].concat();
-        let salt2 = [&(2u8).to_be_bytes(), session_id].concat();
-
         // We concatenate the rows of the matrix u.
         let msg = data.u.concat();
 
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
+        chi1.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi1", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
+        chi2.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
 
         // Step 2 - No action for the sender.
 
@@ -293,11 +306,11 @@ impl OTESender {
         let mut verify_q: Vec<FieldElement> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
             // The summation sign on the protocol is just the sum of the following two terms:
-            let prod_qi_1 = field_mul(&q[i as usize][0..(OT_SECURITY / 8) as usize], &chi1);
+            let prod_qi_1 = field_mul(&q[i as usize][0..(OT_SECURITY / 8) as usize], &chi1)?;
             let prod_qi_2 = field_mul(
                 &q[i as usize][((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
                 &chi2,
-            );
+            )?;
 
             //We sum the terms to get q_i.
             let mut verify_qi = [0u8; (OT_SECURITY / 8) as usize];
@@ -333,7 +346,7 @@ impl OTESender {
 
         // Step 1 - We compute the transpose of q and take the first BATCH_SIZE rows.
 
-        let transposed_q = cut_and_transpose(&q);
+        let transposed_q = cut_and_transpose(&q)?;
 
         // Step 2 - No action for the sender.
 
@@ -377,17 +390,27 @@ impl OTESender {
                         transposed_q[j as usize][i as usize] ^ compressed_correlation[i as usize];
                 }
 
-                // This salt must depend on iteration (otherwise, v0 and v1 would be always the same).
-                let salt = [
-                    &j.to_be_bytes(),
-                    session_id,
-                    "Iteration number:".as_bytes(),
-                    &iteration.to_be_bytes(),
-                ]
-                .concat();
+                let j_bytes = j.to_be_bytes();
+                let iteration_bytes = iteration.to_be_bytes();
 
-                v0.push(hash_as_scalar(&transposed_q[j as usize], &salt));
-                v1.push(hash_as_scalar(&transposed_qj_plus_correlation, &salt));
+                v0.push(tagged_hash_as_scalar(
+                    TAG_OTE_RANDOMIZE,
+                    &[
+                        session_id,
+                        &j_bytes,
+                        &iteration_bytes,
+                        &transposed_q[j as usize],
+                    ],
+                ));
+                v1.push(tagged_hash_as_scalar(
+                    TAG_OTE_RANDOMIZE,
+                    &[
+                        session_id,
+                        &j_bytes,
+                        &iteration_bytes,
+                        &transposed_qj_plus_correlation,
+                    ],
+                ));
             }
 
             vector_of_v0.push(v0);
@@ -482,12 +505,24 @@ impl OTEReceiver {
     /// Input: [`BATCH_SIZE`] choice bits.
     ///
     /// Output: Extended seeds (used in the next phase) and data to be sent to the sender.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if `choice_bits` does not have length [`BATCH_SIZE`]
+    /// or if receiver seed vectors have invalid dimensions.
     pub fn run_phase1(
         &self,
         session_id: &[u8],
         choice_bits: &[bool],
-    ) -> (Vec<PRGOutput>, OTEDataToSender) {
+    ) -> Result<(Vec<PRGOutput>, OTEDataToSender), ErrorOT> {
+        if choice_bits.len() != BATCH_SIZE as usize {
+            return Err(ErrorOT::new("Choice bits vector has incorrect length"));
+        }
+        if self.seeds0.len() != KAPPA as usize || self.seeds1.len() != KAPPA as usize {
+            return Err(ErrorOT::new(
+                "OTE receiver seed vectors have incorrect dimensions",
+            ));
+        }
         // EXTEND
 
         // Step 1 - Extend the choice bits by adding random noise.
@@ -526,12 +561,17 @@ impl OTEReceiver {
             // The reason for this is that we need more than 256 bits.
             let mut count = 0u16;
             while prg0.len() < (EXTENDED_BATCH_SIZE / 8) as usize {
-                // To change the "random oracle", we include the index and a counter into the salt.
-                let salt = [&i.to_be_bytes(), &count.to_be_bytes(), session_id].concat();
+                let i_bytes = i.to_be_bytes();
+                let count_bytes = count.to_be_bytes();
                 count += 1;
-
-                let chunk0 = hash(&self.seeds0[i as usize], &salt);
-                let chunk1 = hash(&self.seeds1[i as usize], &salt);
+                let chunk0 = tagged_hash(
+                    TAG_OTE_PRG,
+                    &[session_id, &i_bytes, &count_bytes, &self.seeds0[i as usize]],
+                );
+                let chunk1 = tagged_hash(
+                    TAG_OTE_PRG,
+                    &[session_id, &i_bytes, &count_bytes, &self.seeds1[i as usize]],
+                );
 
                 prg0.extend_from_slice(&chunk0);
                 prg1.extend_from_slice(&chunk1);
@@ -574,18 +614,18 @@ impl OTEReceiver {
         // pseudorandom numbers chi1 and chi2. They have OT_SECURITY = 208 bits.
         // We can generate them with a hash.
 
-        // This time, we are hashing the same message twice, so we put the tags 1 and 2 in the salt.
-        let salt1 = [&(1u8).to_be_bytes(), session_id].concat();
-        let salt2 = [&(2u8).to_be_bytes(), session_id].concat();
-
         // We concatenate the rows of the matrix u.
         let msg = u.concat();
 
         // We apply the hash and remove extra bytes.
         let mut chi1 = [0u8; (OT_SECURITY / 8) as usize];
         let mut chi2 = [0u8; (OT_SECURITY / 8) as usize];
-        chi1.clone_from_slice(&hash(&msg, &salt1)[0..(OT_SECURITY / 8) as usize]);
-        chi2.clone_from_slice(&hash(&msg, &salt2)[0..(OT_SECURITY / 8) as usize]);
+        chi1.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi1", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
+        chi2.clone_from_slice(
+            &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
+        );
 
         // Step 2 - We compute the verification values to the sender.
 
@@ -593,12 +633,12 @@ impl OTEReceiver {
         let prod_x_1 = field_mul(
             &compressed_extended_bits[0..(OT_SECURITY / 8) as usize],
             &chi1,
-        );
+        )?;
         let prod_x_2 = field_mul(
             &compressed_extended_bits
                 [((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
             &chi2,
-        );
+        )?;
 
         // We sum the terms to get x.
         let mut verify_x = [0u8; (OT_SECURITY / 8) as usize];
@@ -614,12 +654,12 @@ impl OTEReceiver {
             let prod_ti_1 = field_mul(
                 &extended_seeds0[i as usize][0..(OT_SECURITY / 8) as usize],
                 &chi1,
-            );
+            )?;
             let prod_ti_2 = field_mul(
                 &extended_seeds0[i as usize]
                     [((OT_SECURITY / 8) as usize)..((2 * OT_SECURITY / 8) as usize)],
                 &chi2,
-            );
+            )?;
 
             //We sum the terms to get t_i.
             let mut verify_ti = [0u8; (OT_SECURITY / 8) as usize];
@@ -642,7 +682,7 @@ impl OTEReceiver {
         };
 
         // extended_seeds0 has to be kept for the next phase.
-        (extended_seeds0, data_to_sender)
+        Ok((extended_seeds0, data_to_sender))
     }
 
     /// Finishes the receiver's protocol and gives his output.
@@ -657,8 +697,7 @@ impl OTEReceiver {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the length of `vector_of_tau` is not `ot_width`
-    /// or if one of its inner vectors does not have length [`BATCH_SIZE`].
+    /// Will return `Err` if the dimensions of one of the input vectors are invalid.
     pub fn run_phase2(
         &self,
         session_id: &[u8],
@@ -670,6 +709,14 @@ impl OTEReceiver {
         // IMPORTANT: Since the sender executed its part with our data ot_width times,
         // our final result will be ot_width times the usual result we would get.
         // But first, we check that the sender gave us a message with the correct length.
+        if choice_bits.len() != BATCH_SIZE as usize {
+            return Err(ErrorOT::new("Choice bits vector has incorrect length"));
+        }
+        if extended_seeds.len() != KAPPA as usize {
+            return Err(ErrorOT::new(
+                "Extended seed matrix has incorrect dimensions",
+            ));
+        }
         if vector_of_tau.len() != ot_width as usize {
             return Err(ErrorOT::new(
                 "The vector sent by the sender does not have the expected size!",
@@ -685,7 +732,7 @@ impl OTEReceiver {
 
         // Step 1 - We compute the transpose of extended_seeds and take the first BATCH_SIZE rows.
 
-        let transposed_t = cut_and_transpose(extended_seeds);
+        let transposed_t = cut_and_transpose(extended_seeds)?;
 
         // Step 2 - We compute the final message. For the final part, it will be better
         // if we compute it in the form Scalar<Secp256k1>.
@@ -695,14 +742,17 @@ impl OTEReceiver {
         for iteration in 0..ot_width {
             let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
-                let salt = [
-                    &j.to_be_bytes(),
-                    session_id,
-                    "Iteration number:".as_bytes(),
-                    &iteration.to_be_bytes(),
-                ]
-                .concat();
-                v.push(hash_as_scalar(&transposed_t[j as usize], &salt));
+                let j_bytes = j.to_be_bytes();
+                let iteration_bytes = iteration.to_be_bytes();
+                v.push(tagged_hash_as_scalar(
+                    TAG_OTE_RANDOMIZE,
+                    &[
+                        session_id,
+                        &j_bytes,
+                        &iteration_bytes,
+                        &transposed_t[j as usize],
+                    ],
+                ));
             }
 
             vector_of_v.push(v);
@@ -759,8 +809,12 @@ impl OTEReceiver {
 ///
 /// This code was essentially copied from the function `transposeBooleanMatrix` here:
 /// <https://github.com/coinbase/kryptology/blob/master/pkg/ot/extension/kos/kos.go>.
-#[must_use]
-pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
+pub fn cut_and_transpose(input: &[PRGOutput]) -> Result<Vec<HashOutput>, ErrorOT> {
+    if input.len() != KAPPA as usize {
+        return Err(ErrorOT::new(
+            "Transpose input matrix has incorrect dimensions",
+        ));
+    }
     // We initialize the output as a zero matrix.
     let mut output: Vec<HashOutput> = vec![[0u8; (KAPPA / 8) as usize]; BATCH_SIZE as usize];
 
@@ -794,7 +848,7 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
         }
     }
 
-    output
+    Ok(output)
 }
 
 /// Multiplication in the finite field of order 2^[`OT_SECURITY`]].
@@ -805,19 +859,21 @@ pub fn cut_and_transpose(input: &[PRGOutput]) -> Vec<HashOutput> {
 /// and Figure 2.9 (for reduction modulo the irreducible polynomial) of the book
 /// Guide to Elliptic Curve Cryptography by Hankerson, Menezes and Vanstone.
 ///
-/// # Panics
 ///
-/// Will panic if `left` or `right` doesn't have the correct size, that is [`OT_SECURITY`] = 208 bits.
-#[must_use]
-pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
+/// # Errors
+///
+/// Will return `Err` if `left` or `right` doesn't have the correct size, that is
+/// [`OT_SECURITY`] = 208 bits.
+pub fn field_mul(left: &[u8], right: &[u8]) -> Result<FieldElement, ErrorOT> {
     // Constants W and t from Section 2.3 in the book.
     const W: u8 = 64;
     const T: u8 = 4;
 
-    assert!(
-        (left.len() == (OT_SECURITY / 8) as usize) && (right.len() == (OT_SECURITY / 8) as usize),
-        "Binary field multiplication: Entries don't have the correct length!"
-    );
+    if (left.len() != (OT_SECURITY / 8) as usize) || (right.len() != (OT_SECURITY / 8) as usize) {
+        return Err(ErrorOT::new(
+            "Binary field multiplication: entries don't have the correct length",
+        ));
+    }
 
     let mut a = [0u64; T as usize];
     let mut b = [0u64; (T + 1) as usize]; //b has extra space because it will be shifted.
@@ -889,7 +945,7 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> FieldElement {
             .expect("This value fits into an u8!");
     }
 
-    result
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -944,7 +1000,9 @@ mod tests {
         for _ in 0..BATCH_SIZE {
             receiver_choice_bits.push(rng::get_rng().random());
         }
-        let (_, data_to_sender) = ote_receiver.run_phase1(session_id, &receiver_choice_bits);
+        let (_, data_to_sender) = ote_receiver
+            .run_phase1(session_id, &receiver_choice_bits)
+            .expect("OTE receiver phase1 should succeed");
 
         (ote_sender, sender_input_correlations, data_to_sender)
     }
@@ -962,11 +1020,77 @@ mod tests {
             //Raising an element to the power 2^208 must not change it.
             let mut result = initial;
             for _ in 0..OT_SECURITY {
-                result = field_mul(&result, &result);
+                result = field_mul(&result, &result).expect("field multiplication should succeed");
             }
 
             assert_eq!(initial, result);
         }
+    }
+
+    /// Tests that field multiplication rejects malformed input lengths.
+    #[test]
+    fn test_field_mul_rejects_wrong_lengths() {
+        let short = [0u8; ((OT_SECURITY / 8) - 1) as usize];
+        let exact = [0u8; (OT_SECURITY / 8) as usize];
+        let error = field_mul(&short, &exact).expect_err("short input should fail");
+        assert!(error.description.contains("correct length"));
+    }
+
+    /// Tests that transpose helper rejects malformed outer dimensions.
+    #[test]
+    fn test_cut_and_transpose_rejects_wrong_dimensions() {
+        let malformed = vec![[0u8; (EXTENDED_BATCH_SIZE / 8) as usize]; (KAPPA as usize) - 1];
+        let error = cut_and_transpose(&malformed).expect_err("wrong row count should fail");
+        assert!(error.description.contains("incorrect dimensions"));
+    }
+
+    /// Tests if receiver-side OTE phase 1 rejects malformed choice bit lengths.
+    #[test]
+    fn test_ot_extension_receiver_phase1_rejects_wrong_choice_bits_len() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
+        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
+        let seed = ot_receiver.seed;
+
+        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
+            .expect("OTE receiver init should succeed");
+
+        let wrong_choice_bits = vec![false; (BATCH_SIZE as usize) - 1];
+        let error = ote_receiver
+            .run_phase1(&session_id, &wrong_choice_bits)
+            .expect_err("wrong choice-bit length should fail");
+        assert!(error
+            .description
+            .contains("Choice bits vector has incorrect length"));
+    }
+
+    /// Tests if receiver-side OTE phase 2 rejects malformed choice bit lengths.
+    #[test]
+    fn test_ot_extension_receiver_phase2_rejects_wrong_choice_bits_len() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
+        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
+        let seed = ot_receiver.seed;
+
+        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
+            .expect("OTE receiver init should succeed");
+
+        let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
+        for _ in 0..BATCH_SIZE {
+            receiver_choice_bits.push(rng::get_rng().random());
+        }
+        let (extended_seeds, _) = ote_receiver
+            .run_phase1(&session_id, &receiver_choice_bits)
+            .expect("OTE receiver phase1 should succeed");
+
+        let wrong_choice_bits = vec![false; (BATCH_SIZE as usize) - 1];
+        let tau = vec![vec![Scalar::ZERO; BATCH_SIZE as usize]];
+        let error = ote_receiver
+            .run_phase2(&session_id, 1, &wrong_choice_bits, &extended_seeds, &tau)
+            .expect_err("wrong choice-bit length should fail");
+        assert!(error
+            .description
+            .contains("Choice bits vector has incorrect length"));
     }
 
     /// Tests if the outputs for the OTE protocol
@@ -1026,8 +1150,9 @@ mod tests {
         }
 
         // Phase 1 - Receiver
-        let (extended_seeds, data_to_sender) =
-            ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
+        let (extended_seeds, data_to_sender) = ote_receiver
+            .run_phase1(&session_id, &receiver_choice_bits)
+            .expect("OTE receiver phase1 should succeed");
 
         // Communication round 1
         // Receiver keeps extended_seeds and transmits data_to_sender.
@@ -1164,7 +1289,9 @@ mod tests {
         for _ in 0..BATCH_SIZE {
             receiver_choice_bits.push(rng::get_rng().random());
         }
-        let (_, data_to_sender) = ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
+        let (_, data_to_sender) = ote_receiver
+            .run_phase1(&session_id, &receiver_choice_bits)
+            .expect("OTE receiver phase1 should succeed");
 
         let mut malformed = data_to_sender.clone();
         malformed.u.pop();
@@ -1197,7 +1324,9 @@ mod tests {
         for _ in 0..BATCH_SIZE {
             receiver_choice_bits.push(rng::get_rng().random());
         }
-        let (extended_seeds, _) = ote_receiver.run_phase1(&session_id, &receiver_choice_bits);
+        let (extended_seeds, _) = ote_receiver
+            .run_phase1(&session_id, &receiver_choice_bits)
+            .expect("OTE receiver phase1 should succeed");
 
         // Phase 2 - Receiver with malformed sender data.
         let malformed_tau = vec![vec![Scalar::ZERO; (BATCH_SIZE as usize) - 1]];

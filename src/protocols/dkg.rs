@@ -689,52 +689,119 @@ pub fn phase4(
     }
 
     // Initialization - Zero shares.
+    let mut zero_received_phase2_by_sender: BTreeMap<u8, &TransmitInitZeroSharePhase2to4> =
+        BTreeMap::new();
+    for message in zero_received_phase2 {
+        if message.parties.receiver != data.party_index {
+            return Err(Abort::new(
+                data.party_index,
+                "Received a zero-share phase-2 message not meant for me!",
+            ));
+        }
+        if !zero_kept.contains_key(&message.parties.sender) {
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Unexpected zero-share phase-2 sender {}",
+                    message.parties.sender
+                ),
+            ));
+        }
+        if zero_received_phase2_by_sender
+            .insert(message.parties.sender, message)
+            .is_some()
+        {
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Duplicate zero-share phase-2 message from Party {}",
+                    message.parties.sender
+                ),
+            ));
+        }
+    }
+    let mut zero_received_phase3_by_sender: BTreeMap<u8, &TransmitInitZeroSharePhase3to4> =
+        BTreeMap::new();
+    for message in zero_received_phase3 {
+        if message.parties.receiver != data.party_index {
+            return Err(Abort::new(
+                data.party_index,
+                "Received a zero-share phase-3 message not meant for me!",
+            ));
+        }
+        if !zero_kept.contains_key(&message.parties.sender) {
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Unexpected zero-share phase-3 sender {}",
+                    message.parties.sender
+                ),
+            ));
+        }
+        if zero_received_phase3_by_sender
+            .insert(message.parties.sender, message)
+            .is_some()
+        {
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Duplicate zero-share phase-3 message from Party {}",
+                    message.parties.sender
+                ),
+            ));
+        }
+    }
+    if zero_received_phase2_by_sender.len() != zero_kept.len()
+        || zero_received_phase3_by_sender.len() != zero_kept.len()
+    {
+        return Err(Abort::new(
+            data.party_index,
+            "Missing zero-share initialization messages from one or more parties",
+        ));
+    }
+
     let mut seeds: Vec<zero_shares::SeedPair> =
         Vec::with_capacity((data.parameters.share_count - 1) as usize);
     for (target_party, message_kept) in zero_kept {
-        for message_received_2 in zero_received_phase2 {
-            for message_received_3 in zero_received_phase3 {
-                let my_index = message_received_2.parties.receiver;
-                let their_index = message_received_2.parties.sender;
+        let message_received_2 = zero_received_phase2_by_sender
+            .get(target_party)
+            .ok_or_else(|| {
+                Abort::new(
+                    data.party_index,
+                    &format!("Missing zero-share phase-2 message from Party {target_party}"),
+                )
+            })?;
+        let message_received_3 = zero_received_phase3_by_sender
+            .get(target_party)
+            .ok_or_else(|| {
+                Abort::new(
+                    data.party_index,
+                    &format!("Missing zero-share phase-3 message from Party {target_party}"),
+                )
+            })?;
 
-                // Confirm that the message is for us.
-                if my_index != data.party_index {
-                    return Err(Abort::new(
-                        data.party_index,
-                        "Received a message not meant for me!",
-                    ));
-                }
-
-                // We first check if the messages relate to the same party.
-                if *target_party != their_index || message_received_3.parties.sender != their_index
-                {
-                    continue;
-                }
-
-                // We verify the commitment.
-                let verification = ZeroShare::verify_seed(
-                    &message_received_3.seed,
-                    &message_received_2.commitment,
-                    &message_received_3.salt,
-                );
-                if !verification {
-                    return Err(Abort::new(
-                        data.party_index,
-                        &format!(
-                            "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
-                        ),
-                    ));
-                }
-
-                // We form the final seed pairs.
-                seeds.push(ZeroShare::generate_seed_pair(
-                    my_index,
-                    their_index,
-                    &message_kept.seed,
-                    &message_received_3.seed,
-                ));
-            }
+        // We verify the commitment.
+        let verification = ZeroShare::verify_seed(
+            &message_received_3.seed,
+            &message_received_2.commitment,
+            &message_received_3.salt,
+        );
+        if !verification {
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
+                ),
+            ));
         }
+
+        // We form the final seed pairs.
+        seeds.push(ZeroShare::generate_seed_pair(
+            data.party_index,
+            *target_party,
+            &message_kept.seed,
+            &message_received_3.seed,
+        ));
     }
 
     // This finishes the initialization.
@@ -743,89 +810,127 @@ pub fn phase4(
     // Initialization - Two-party multiplication.
     let mut mul_receivers: BTreeMap<u8, MulReceiver> = BTreeMap::new();
     let mut mul_senders: BTreeMap<u8, MulSender> = BTreeMap::new();
-    for (target_party, message_kept) in mul_kept {
-        for message_received in mul_received {
-            let my_index = message_received.parties.receiver;
-            let their_index = message_received.parties.sender;
+    let mut mul_received_by_sender: BTreeMap<u8, &TransmitInitMulPhase3to4> = BTreeMap::new();
+    for message in mul_received {
+        if message.parties.receiver != data.party_index {
+            return Err(Abort::new(
+                data.party_index,
+                "Received a multiplication-init message not meant for me!",
+            ));
+        }
+        if !mul_kept.contains_key(&message.parties.sender) {
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Unexpected multiplication-init sender {}",
+                    message.parties.sender
+                ),
+            ));
+        }
+        if mul_received_by_sender
+            .insert(message.parties.sender, message)
+            .is_some()
+        {
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Duplicate multiplication-init message from Party {}",
+                    message.parties.sender
+                ),
+            ));
+        }
+    }
+    if mul_received_by_sender.len() != mul_kept.len() {
+        return Err(Abort::new(
+            data.party_index,
+            "Missing multiplication initialization messages from one or more parties",
+        ));
+    }
 
-            // Confirm that the message is for us.
-            if my_index != data.party_index {
+    for (target_party, message_kept) in mul_kept {
+        let message_received = mul_received_by_sender.get(target_party).ok_or_else(|| {
+            Abort::new(
+                data.party_index,
+                &format!("Missing multiplication-init message from Party {target_party}"),
+            )
+        })?;
+
+        // RECEIVER
+        // We are the receiver and target_party = sender.
+
+        // We retrieve the id used for multiplication. Note that the first party
+        // is the receiver and the second, the sender.
+        let mul_sid_receiver = [
+            "Multiplication protocol".as_bytes(),
+            &data.party_index.to_be_bytes(),
+            &target_party.to_be_bytes(),
+            &data.session_id[..],
+        ]
+        .concat();
+
+        let receiver_result = MulReceiver::init_phase2(
+            &message_kept.ot_sender,
+            &mul_sid_receiver,
+            &message_received.seed,
+            &message_received.enc_proofs,
+            &message_kept.nonce,
+        );
+
+        let mul_receiver: MulReceiver = match receiver_result {
+            Ok(r) => r,
+            Err(error) => {
+                // In DKG this failed run does not produce reusable OT state,
+                // so we keep abort classification recoverable.
                 return Err(Abort::new(
                     data.party_index,
-                    "Received a message not meant for me!",
+                    &format!(
+                        "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                        target_party, error.description
+                    ),
                 ));
             }
+        };
 
-            // We first check if the messages relate to the same party.
-            if their_index != *target_party {
-                continue;
+        // SENDER
+        // We are the sender and target_party = receiver.
+
+        // We retrieve the id used for multiplication. Note that the first party
+        // is the receiver and the second, the sender.
+        let mul_sid_sender = [
+            "Multiplication protocol".as_bytes(),
+            &target_party.to_be_bytes(),
+            &data.party_index.to_be_bytes(),
+            &data.session_id[..],
+        ]
+        .concat();
+
+        let sender_result = MulSender::init_phase2(
+            &message_kept.ot_receiver,
+            &mul_sid_sender,
+            message_kept.correlation.clone(),
+            &message_kept.vec_r,
+            &message_received.dlog_proof,
+            &message_received.nonce,
+        );
+
+        let mul_sender: MulSender = match sender_result {
+            Ok(s) => s,
+            Err(error) => {
+                // In DKG this failed run does not produce reusable OT state,
+                // so we keep abort classification recoverable.
+                return Err(Abort::new(
+                    data.party_index,
+                    &format!(
+                        "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                        target_party, error.description
+                    ),
+                ));
             }
+        };
 
-            // RECEIVER
-            // We are the receiver and target_party = sender.
-
-            // We retrieve the id used for multiplication. Note that the first party
-            // is the receiver and the second, the sender.
-            let mul_sid_receiver = [
-                "Multiplication protocol".as_bytes(),
-                &my_index.to_be_bytes(),
-                &their_index.to_be_bytes(),
-                &data.session_id[..],
-            ]
-            .concat();
-
-            let receiver_result = MulReceiver::init_phase2(
-                &message_kept.ot_sender,
-                &mul_sid_receiver,
-                &message_received.seed,
-                &message_received.enc_proofs,
-                &message_kept.nonce,
-            );
-
-            let mul_receiver: MulReceiver = match receiver_result {
-                Ok(r) => r,
-                Err(error) => {
-                    // In DKG this failed run does not produce reusable OT state,
-                    // so we keep abort classification recoverable.
-                    return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
-                }
-            };
-
-            // SENDER
-            // We are the sender and target_party = receiver.
-
-            // We retrieve the id used for multiplication. Note that the first party
-            // is the receiver and the second, the sender.
-            let mul_sid_sender = [
-                "Multiplication protocol".as_bytes(),
-                &their_index.to_be_bytes(),
-                &my_index.to_be_bytes(),
-                &data.session_id[..],
-            ]
-            .concat();
-
-            let sender_result = MulSender::init_phase2(
-                &message_kept.ot_receiver,
-                &mul_sid_sender,
-                message_kept.correlation.clone(),
-                &message_kept.vec_r,
-                &message_received.dlog_proof,
-                &message_received.nonce,
-            );
-
-            let mul_sender: MulSender = match sender_result {
-                Ok(s) => s,
-                Err(error) => {
-                    // In DKG this failed run does not produce reusable OT state,
-                    // so we keep abort classification recoverable.
-                    return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
-                }
-            };
-
-            // We finish the initialization.
-            mul_receivers.insert(their_index, mul_receiver);
-            mul_senders.insert(their_index, mul_sender.clone());
-        }
+        // We finish the initialization.
+        mul_receivers.insert(*target_party, mul_receiver);
+        mul_senders.insert(*target_party, mul_sender.clone());
     }
 
     // Initialization - BIP-32.
@@ -852,7 +957,12 @@ pub fn phase4(
             &phase3_msg.cc_salt,
         );
         if !verification {
-            return Err(Abort::new(data.party_index, &format!("Initialization for key derivation failed because Party {} cheated when sending the auxiliary chain code!", i+1)));
+            return Err(Abort::new(
+                data.party_index,
+                &format!(
+                    "Initialization for key derivation failed because Party {i} cheated when sending the auxiliary chain code!"
+                ),
+            ));
         }
 
         // We XOR this auxiliary chain code to the final result.
@@ -939,6 +1049,184 @@ mod tests {
     use k256::elliptic_curve::ops::Reduce;
     use k256::U256;
     use rand::RngExt;
+
+    struct DkgPhase4Inputs {
+        all_data: Vec<SessionData>,
+        poly_points: Vec<Scalar>,
+        proofs_commitments: Vec<ProofCommitment>,
+        zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>>,
+        zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>>,
+        zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>>,
+        mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>>,
+        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>>,
+        bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4>,
+        bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4>,
+    }
+
+    fn setup_two_party_dkg_phase4_inputs() -> DkgPhase4Inputs {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+
+        // Each party prepares their data for this DKG.
+        let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            all_data.push(SessionData {
+                parameters: parameters.clone(),
+                party_index: i + 1,
+                session_id: session_id.to_vec(),
+            });
+        }
+
+        // Phase 1
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            let out1 = phase1(&all_data[i as usize]);
+            dkg_1.push(out1);
+        }
+
+        // Communication round 1
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
+            parameters.share_count as usize
+        ];
+        for row_i in dkg_1 {
+            for j in 0..parameters.share_count {
+                poly_fragments[j as usize].push(row_i[j as usize]);
+            }
+        }
+
+        // Phase 2
+        let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
+        let mut proofs_commitments: Vec<ProofCommitment> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_2to4: BTreeMap<u8, BroadcastDerivationPhase2to4> = BTreeMap::new();
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4, out5, out6) =
+                phase2(&all_data[i as usize], &poly_fragments[i as usize]);
+
+            poly_points.push(out1);
+            proofs_commitments.push(out2);
+            zero_kept_2to3.push(out3);
+            zero_transmit_2to4.push(out4);
+            bip_kept_2to3.push(out5);
+            bip_broadcast_2to4.insert(i + 1, out6);
+        }
+
+        // Communication round 2
+        let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_2to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_2to4.push(new_row);
+        }
+
+        // Phase 3
+        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut bip_broadcast_3to4: BTreeMap<u8, BroadcastDerivationPhase3to4> = BTreeMap::new();
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4, out5) = phase3(
+                &all_data[i as usize],
+                &zero_kept_2to3[i as usize],
+                &bip_kept_2to3[i as usize],
+            );
+
+            zero_kept_3to4.push(out1);
+            zero_transmit_3to4.push(out2);
+            mul_kept_3to4.push(out3);
+            mul_transmit_3to4.push(out4);
+            bip_broadcast_3to4.insert(i + 1, out5);
+        }
+
+        // Communication round 3
+        let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut zero_row: Vec<TransmitInitZeroSharePhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        zero_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_3to4.push(zero_row);
+
+            let mut mul_row: Vec<TransmitInitMulPhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &mul_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        mul_row.push(message.clone());
+                    }
+                }
+            }
+            mul_received_3to4.push(mul_row);
+        }
+
+        DkgPhase4Inputs {
+            all_data,
+            poly_points,
+            proofs_commitments,
+            zero_kept_3to4,
+            zero_received_2to4,
+            zero_received_3to4,
+            mul_kept_3to4,
+            mul_received_3to4,
+            bip_broadcast_2to4,
+            bip_broadcast_3to4,
+        }
+    }
+
+    /// Tests if phase 4 aborts when multiplication-init messages are missing.
+    #[test]
+    fn test_dkg_phase4_rejects_missing_mul_init_messages() {
+        let mut data = setup_two_party_dkg_phase4_inputs();
+        data.mul_received_3to4[0].clear();
+
+        let result = phase4(
+            &data.all_data[0],
+            &data.poly_points[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+            &data.bip_broadcast_2to4,
+            &data.bip_broadcast_3to4,
+        );
+        let abort = result.expect_err("missing multiplication-init message should be rejected");
+        assert!(abort
+            .description
+            .contains("Missing multiplication initialization messages"));
+    }
 
     // DISTRIBUTED KEY GENERATION (without initializations)
 

@@ -13,7 +13,7 @@ jobs:
         steps:
             - uses: actions/checkout@v4
             - name: check-spelling
-              uses: check-spelling/check-spelling@068774e3766c629d0d46819a253cfffcfff05eb5
+              uses: check-spelling/check-spelling@c635c2f3f714eec2fcf27b643a1919b9a811ef2e # v0.0.25
 
               with:
                   config: .github/actions/spelling
