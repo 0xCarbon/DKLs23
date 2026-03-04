@@ -10,6 +10,7 @@
 use k256::elliptic_curve::Field;
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
 use crate::utilities::proofs::{DLogProof, EncProof};
@@ -21,7 +22,7 @@ use crate::utilities::ot::extension::{
     OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
 };
 use crate::utilities::ot::ErrorOT;
-use rand::Rng;
+use rand::RngExt;
 
 /// Constant `L` from Functionality 3.5 in `DKLs23` used for signing in Protocol 3.6.
 pub const L: u8 = 2;
@@ -31,14 +32,14 @@ pub const L: u8 = 2;
 pub const OT_WIDTH: u8 = 2 * L;
 
 /// Sender's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct MulSender {
     pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
 /// Receiver's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct MulReceiver {
     pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
@@ -54,7 +55,7 @@ pub struct MulDataToReceiver {
 }
 
 /// Data kept by the receiver between phases.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct MulDataToKeepReceiver {
     pub b: Scalar,
     pub choice_bits: Vec<bool>,
@@ -170,8 +171,8 @@ impl MulSender {
         let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
-            a_tilde.push(Scalar::random(rng::get_rng()));
-            a_hat.push(Scalar::random(rng::get_rng()));
+            a_tilde.push(Scalar::random(&mut rng::get_rng()));
+            a_hat.push(Scalar::random(&mut rng::get_rng()));
         }
 
         // For the correlation, let us first explain the case L = 1.
@@ -346,7 +347,7 @@ impl MulReceiver {
         // For the choice of the public gadget vector, we will use the same approach
         // as in https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         // We sample a nonce that will be used by both parties to compute a common vector.
-        let nonce = Scalar::random(rng::get_rng());
+        let nonce = Scalar::random(&mut rng::get_rng());
 
         (ot_sender, proof, nonce)
     }
@@ -416,7 +417,7 @@ impl MulReceiver {
         let mut choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut b = Scalar::ZERO;
         for i in 0..BATCH_SIZE {
-            let current_bit: bool = rng::get_rng().gen();
+            let current_bit: bool = rng::get_rng().random();
             if current_bit {
                 b += &self.public_gadget[i as usize];
             }
@@ -481,14 +482,21 @@ impl MulReceiver {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the consistency check using the sender values fails
-    /// or if the underlying OT extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
+    /// Will return `Err` if received vectors have incorrect dimensions, if the
+    /// consistency check using the sender values fails or if the underlying OT
+    /// extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
     pub fn run_phase2(
         &self,
         session_id: &[u8],
         data_kept: &MulDataToKeepReceiver,
         data_received: &MulDataToReceiver,
     ) -> Result<Vec<Scalar>, ErrorMul> {
+        if data_received.verify_u.len() != L as usize
+            || data_received.gamma_sender.len() != L as usize
+        {
+            return Err(ErrorMul::new("Received data has incorrect dimensions"));
+        }
+
         // Step 3 (Conclusion) - We conclude the OT protocol.
 
         // The sender applied the protocol 2*L times with our data,
@@ -583,13 +591,60 @@ impl MulReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
+    use rand::RngExt;
+
+    fn prepare_mul_receiver_inputs(
+        session_id: &[u8; 32],
+    ) -> (MulReceiver, MulDataToKeepReceiver, MulDataToReceiver) {
+        // INITIALIZATION
+        let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(session_id);
+        let seed = ot_receiver.seed;
+
+        let mul_receiver =
+            match MulReceiver::init_phase2(&ot_sender, session_id, &seed, &enc_proofs, &nonce) {
+                Ok(r) => r,
+                Err(error) => {
+                    panic!("Two-party multiplication error: {:?}", error.description);
+                }
+            };
+        let mul_sender = match MulSender::init_phase2(
+            &ot_receiver,
+            session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+            &nonce,
+        ) {
+            Ok(s) => s,
+            Err(error) => {
+                panic!("Two-party multiplication error: {:?}", error.description);
+            }
+        };
+
+        // PROTOCOL
+        let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
+        for _ in 0..L {
+            sender_input.push(Scalar::random(&mut rng::get_rng()));
+        }
+
+        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(session_id);
+        let (_, data_to_receiver) = match mul_sender.run(session_id, &sender_input, &data_to_sender)
+        {
+            Ok(result) => result,
+            Err(error) => {
+                panic!("Two-party multiplication error: {:?}", error.description);
+            }
+        };
+
+        (mul_receiver, data_to_keep, data_to_receiver)
+    }
 
     /// Tests if the outputs for the multiplication protocol
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_multiplication() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // INITIALIZATION
 
@@ -635,7 +690,7 @@ mod tests {
         // Sampling the choices.
         let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
         for _ in 0..L {
-            sender_input.push(Scalar::random(rng::get_rng()));
+            sender_input.push(Scalar::random(&mut rng::get_rng()));
         }
 
         // Phase 1 - Receiver
@@ -680,6 +735,121 @@ mod tests {
             // sender's chosen scalar and the receiver's random scalar.
             let sum = sender_output[i as usize] + receiver_output[i as usize];
             assert_eq!(sum, sender_input[i as usize] * receiver_random);
+        }
+    }
+
+    /// Tests if receiver-side multiplication rejects malformed vector lengths.
+    #[test]
+    fn test_multiplication_receiver_rejects_wrong_verify_vector_lengths() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+
+        // INITIALIZATION
+        let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(&session_id);
+        let seed = ot_receiver.seed;
+
+        let mul_receiver =
+            MulReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs, &nonce)
+                .expect("mul receiver init should succeed");
+        let mul_sender = MulSender::init_phase2(
+            &ot_receiver,
+            &session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+            &nonce,
+        )
+        .expect("mul sender init should succeed");
+
+        // PROTOCOL
+        let mut sender_input: Vec<Scalar> = Vec::with_capacity(L as usize);
+        for _ in 0..L {
+            sender_input.push(Scalar::random(&mut rng::get_rng()));
+        }
+
+        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
+        let (_, mut data_to_receiver) =
+            match mul_sender.run(&session_id, &sender_input, &data_to_sender) {
+                Ok(result) => result,
+                Err(error) => {
+                    panic!("Two-party multiplication error: {:?}", error.description);
+                }
+            };
+
+        data_to_receiver.verify_u.pop();
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        let error = result.expect_err("wrong verify_u length should fail");
+        assert!(error.description.contains("incorrect dimensions"));
+    }
+
+    /// Tests if the receiver rejects a tampered verify_r hash.
+    #[test]
+    fn test_multiplication_rejects_tampered_verify_r() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, mut data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
+
+        data_to_receiver.verify_r[0] ^= 1;
+
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        let error = result.expect_err("tampered verify_r should fail");
+        assert!(error.description.contains("Consistency check failed"));
+    }
+
+    /// Tests if the receiver rejects tampered verify_u entries.
+    #[test]
+    fn test_multiplication_rejects_tampered_verify_u() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, mut data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
+
+        data_to_receiver.verify_u[0] += Scalar::ONE;
+
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        let error = result.expect_err("tampered verify_u should fail");
+        assert!(error.description.contains("Consistency check failed"));
+    }
+
+    /// Tests that tampering tau vectors is either rejected or changes receiver output.
+    ///
+    /// The protocol does not authenticate tau values directly, so some tampering
+    /// patterns can propagate as incorrect outputs instead of immediate rejection.
+    #[test]
+    fn test_multiplication_rejects_tampered_tau_vectors() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, mut data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
+
+        let honest_output =
+            match mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver) {
+                Ok(output) => output,
+                Err(error) => {
+                    panic!("Two-party multiplication error: {:?}", error.description);
+                }
+            };
+
+        for tau_row in &mut data_to_receiver.vector_of_tau {
+            for value in tau_row {
+                *value += Scalar::ONE;
+            }
+        }
+
+        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
+        match result {
+            Err(error) => {
+                assert!(
+                    error
+                        .description
+                        .contains("OTE error during multiplication")
+                        || error.description.contains("Consistency check failed")
+                );
+            }
+            Ok(tampered_output) => {
+                assert_ne!(
+                    tampered_output, honest_output,
+                    "tampered tau vectors should not preserve honest receiver output"
+                );
+            }
         }
     }
 }

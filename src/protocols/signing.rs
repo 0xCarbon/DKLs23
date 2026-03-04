@@ -27,12 +27,12 @@
 
 use k256::ecdsa::RecoveryId;
 use k256::elliptic_curve::scalar::IsHigh;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
-use k256::elliptic_curve::ScalarPrimitive;
+use k256::elliptic_curve::sec1::ToSec1Point;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use hex;
 
@@ -95,7 +95,7 @@ pub struct Broadcast3to4 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct KeepPhase1to2 {
     pub salt: Vec<u8>,
     pub chi: Scalar,
@@ -105,7 +105,7 @@ pub struct KeepPhase1to2 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct KeepPhase2to3 {
     pub c_u: Scalar,
     pub c_v: Scalar,
@@ -117,9 +117,10 @@ pub struct KeepPhase2to3 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct UniqueKeep1to2 {
     pub instance_key: Scalar,
+    #[zeroize(skip)]
     pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub zeta: Scalar,
@@ -128,12 +129,14 @@ pub struct UniqueKeep1to2 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct UniqueKeep2to3 {
     pub instance_key: Scalar,
+    #[zeroize(skip)]
     pub instance_point: AffinePoint,
     pub inversion_mask: Scalar,
     pub key_share: Scalar,
+    #[zeroize(skip)]
     pub public_share: AffinePoint,
 }
 
@@ -148,28 +151,61 @@ impl Party {
     /// The outputs should be kept or transmitted according to the conventions
     /// [here](self).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Will panic if the number of counterparties in `data` is incompatible.
-    #[must_use]
+    /// Will return `Err` if the number of counterparties is wrong, if any
+    /// party index is out of range, or if the counterparty list contains our
+    /// own index.
     pub fn sign_phase1(
         &self,
         data: &SignData,
-    ) -> (
-        UniqueKeep1to2,
-        BTreeMap<u8, KeepPhase1to2>,
-        Vec<TransmitPhase1to2>,
-    ) {
+    ) -> Result<
+        (
+            UniqueKeep1to2,
+            BTreeMap<u8, KeepPhase1to2>,
+            Vec<TransmitPhase1to2>,
+        ),
+        Abort,
+    > {
         // Step 4 - We check if we have the correct number of counter parties.
-        assert_eq!(
-            data.counterparties.len(),
-            (self.parameters.threshold - 1) as usize,
-            "The number of signing parties is not right!"
-        );
+        if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
+            return Err(Abort::new(
+                self.party_index,
+                "The number of signing parties is not right!",
+            ));
+        }
+
+        // Validate party index ranges and uniqueness.
+        if self.party_index < 1 || self.party_index > self.parameters.share_count {
+            return Err(Abort::new(
+                self.party_index,
+                &format!(
+                    "Own party index {} is out of range [1, {}]",
+                    self.party_index, self.parameters.share_count
+                ),
+            ));
+        }
+        for counterparty in &data.counterparties {
+            if *counterparty < 1 || *counterparty > self.parameters.share_count {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Counterparty index {} is out of range [1, {}]",
+                        counterparty, self.parameters.share_count
+                    ),
+                ));
+            }
+            if *counterparty == self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Counterparty list must not contain our own index",
+                ));
+            }
+        }
 
         // Step 5 - We sample our secret data.
-        let instance_key = Scalar::random(rng::get_rng());
-        let inversion_mask = Scalar::random(rng::get_rng());
+        let instance_key = Scalar::random(&mut rng::get_rng());
+        let inversion_mask = Scalar::random(&mut rng::get_rng());
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
 
@@ -188,12 +224,14 @@ impl Party {
             // First, let us compute a session id for it.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             // We also use both the sign id and the DKG id.
+            // The chain code binds the signing session to the derived key path.
             let mul_sid = [
                 "Multiplication protocol".as_bytes(),
                 &self.party_index.to_be_bytes(),
                 &counterparty.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -234,6 +272,7 @@ impl Party {
             "Zero shares protocol".as_bytes(),
             &self.session_id,
             &data.sign_id,
+            &self.derivation_data.chain_code,
         ]
         .concat();
 
@@ -248,7 +287,7 @@ impl Party {
         };
 
         // We now return all these values.
-        (unique_keep, keep, transmit)
+        Ok((unique_keep, keep, transmit))
     }
 
     // Communication round 1
@@ -312,8 +351,23 @@ impl Party {
         let mut transmit: Vec<TransmitPhase2to3> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for message in received {
-            // Index for the counterparty.
+            // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
+            if !data.counterparties.contains(&counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Received message from unknown sender {counterparty}"),
+                ));
+            }
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Received message addressed to {}, but we are {}",
+                        message.parties.receiver, self.party_index
+                    ),
+                ));
+            }
             let current_kept = kept.get(&counterparty).unwrap();
 
             // We continue the multiplication protocol to get the values
@@ -327,6 +381,7 @@ impl Party {
                 &self.party_index.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -341,8 +396,9 @@ impl Party {
             let mul_transmit: MulDataToReceiver;
             match mul_result {
                 Err(error) => {
-                    return Err(Abort::new(
+                    return Err(Abort::ban(
                         self.party_index,
+                        counterparty,
                         &format!(
                             "Two-party multiplication protocol failed because of Party {}: {:?}",
                             counterparty, error.description
@@ -444,8 +500,29 @@ impl Party {
         let mut second_sum_v = Scalar::ZERO;
 
         for message in received {
-            // Index for the counterparty.
+            // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
+            if !data.counterparties.contains(&counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Received message from unknown sender {counterparty}"),
+                ));
+            }
+            if message.parties.receiver != self.party_index {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!(
+                        "Received message addressed to {}, but we are {}",
+                        message.parties.receiver, self.party_index
+                    ),
+                ));
+            }
+            if message.instance_point == AffinePoint::IDENTITY {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Party {counterparty} sent identity as instance point"),
+                ));
+            }
             let current_kept = kept.get(&counterparty).unwrap();
 
             // Checking the committed value.
@@ -472,6 +549,7 @@ impl Party {
                 &counterparty.to_be_bytes(),
                 &self.session_id,
                 &data.sign_id,
+                &self.derivation_data.chain_code,
             ]
             .concat();
 
@@ -485,8 +563,9 @@ impl Party {
             let d_v: Scalar;
             match mul_result {
                 Err(error) => {
-                    return Err(Abort::new(
+                    return Err(Abort::ban(
                         self.party_index,
+                        counterparty,
                         &format!(
                             "Two-party multiplication protocol failed because of Party {}: {:?}",
                             counterparty, error.description
@@ -504,8 +583,9 @@ impl Party {
 
             if (message.instance_point * current_kept.chi) != ((generator * d_u) + message.gamma_u)
             {
-                return Err(Abort::new(
+                return Err(Abort::ban(
                     self.party_index,
+                    counterparty,
                     &format!("Consistency check with u-variables failed for Party {counterparty}!"),
                 ));
             }
@@ -515,8 +595,9 @@ impl Party {
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.
             if (message.public_share * current_kept.chi) != ((generator * d_v) + message.gamma_v) {
-                return Err(Abort::new(
+                return Err(Abort::ban(
                     self.party_index,
+                    counterparty,
                     &format!("Consistency check with v-variables failed for Party {counterparty}!"),
                 ));
             }
@@ -556,11 +637,11 @@ impl Party {
         let u = (unique_kept.instance_key * first_sum_u_v) + second_sum_u;
         let v = (unique_kept.key_share * first_sum_u_v) + second_sum_v;
 
-        let x_coord = hex::encode(total_instance_point.x().as_slice());
+        let x_coord = hex::encode(total_instance_point.x());
         // There is no salt because the hash function here is always the same.
-        let w = (Scalar::reduce(U256::from_be_bytes(data.message_hash))
+        let w = (Scalar::reduce(&U256::from_be_bytes(data.message_hash.into()))
             * unique_kept.inversion_mask)
-            + (v * Scalar::reduce(U256::from_be_hex(&x_coord)));
+            + (v * Scalar::reduce(&U256::from_be_hex(&x_coord)));
 
         let broadcast = Broadcast3to4 { u, w };
 
@@ -589,7 +670,8 @@ impl Party {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the final ECDSA signature is invalid.
+    /// Will return `Err` if the final ECDSA signature is invalid
+    /// or if the denominator in signature assembly is zero.
     pub fn sign_phase4(
         &self,
         data: &SignData,
@@ -606,15 +688,24 @@ impl Party {
             denominator += &message.u;
         }
 
-        let mut s = numerator * (denominator.invert().unwrap());
+        let denominator_inverse = match Option::<Scalar>::from(denominator.invert()) {
+            Some(inv) => inv,
+            None => {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Zero denominator in signature assembly — possible adversarial u-values",
+                ));
+            }
+        };
+        let mut s = numerator * denominator_inverse;
 
         // Normalize signature into "low S" form as described in
         // BIP-0062 Dealing with Malleability: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
         if normalize && s.is_high().into() {
-            s = ScalarPrimitive::from(-s).into();
+            s = -s;
         }
 
-        let signature = hex::encode(s.to_bytes().as_slice());
+        let signature = hex::encode(s.to_bytes());
 
         let verification =
             verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
@@ -629,21 +720,25 @@ impl Party {
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
-        let rx_as_scalar = Scalar::reduce(U256::from_be_hex(x_coord));
-        let hashed_msg_as_scalar = Scalar::reduce(U256::from_be_bytes(data.message_hash));
+        let rx_as_scalar = Scalar::reduce(&U256::from_be_hex(x_coord));
+        let hashed_msg_as_scalar = Scalar::reduce(&U256::from_be_bytes(data.message_hash.into()));
         let first = AffinePoint::GENERATOR * hashed_msg_as_scalar;
         let second = self.pk * rx_as_scalar;
         let s_inverse = s.invert().unwrap();
         let signature_point = ((first + second) * s_inverse).to_affine();
 
         // Now the recovery id can be calculated using the following conditions:
-        // - If R.y is even and R.x is less than the curve order n: recovery_id = 0
-        // - If R.y is odd and R.x is less than the curve order n: recovery_id = 1
-        // - If R.y is even and R.x is greater than the curve order n: recovery_id = 2
-        // - If R.y is odd and R.x is greater than the curve order n: recovery_id = 3
-        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
-        let is_x_reduced = s > half_order;
-        let is_y_odd = signature_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        // - If R.y is even and R.x < n (curve order): recovery_id = 0
+        // - If R.y is odd  and R.x < n:               recovery_id = 1
+        // - If R.y is even and R.x >= n:               recovery_id = 2
+        // - If R.y is odd  and R.x >= n:               recovery_id = 3
+        //
+        // is_x_reduced is true when R.x (as a field element) >= the curve order n,
+        // meaning Scalar::reduce(&R.x) lost information. For secp256k1, n < p, so
+        // this can happen in the range [n, p-1] with negligible probability.
+        let x_as_int = U256::from_be_hex(x_coord);
+        let is_x_reduced = x_as_int >= Secp256k1::ORDER;
+        let is_y_odd = signature_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         Ok((signature, rec_id.into()))
@@ -672,12 +767,12 @@ pub fn verify_ecdsa_signature(
         return false;
     }
 
-    let rx_as_scalar = Scalar::reduce(rx_as_int);
-    let s_as_scalar = Scalar::reduce(s_as_int);
+    let rx_as_scalar = Scalar::reduce(&rx_as_int);
+    let s_as_scalar = Scalar::reduce(&s_as_int);
 
     let inverse_s = s_as_scalar.invert().unwrap();
 
-    let first = Scalar::reduce(U256::from_be_bytes(*msg)) * inverse_s;
+    let first = Scalar::reduce(&U256::from_be_bytes((*msg).into())) * inverse_s;
     let second = rx_as_scalar * inverse_s;
 
     let point_to_check = ((AffinePoint::GENERATOR * first) + (*pk * second)).to_affine();
@@ -685,7 +780,7 @@ pub fn verify_ecdsa_signature(
         return false;
     }
 
-    let x_check = Scalar::reduce(U256::from_be_slice(point_to_check.x().as_slice()));
+    let x_check = Scalar::reduce(&U256::from_be_slice(point_to_check.x().as_ref()));
 
     x_check == rx_as_scalar
 }
@@ -697,7 +792,7 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
     use crate::utilities::hashes::hash;
-    use rand::Rng;
+    use rand::RngExt;
 
     /// Tests if the signing protocol generates a valid ECDSA signature.
     ///
@@ -709,8 +804,8 @@ mod tests {
         // parties are being simulated one after the other, but they
         // should actually execute the protocol simultaneously.
 
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -718,13 +813,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -753,7 +848,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -864,8 +960,8 @@ mod tests {
     /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_signing_against_ecdsa() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -873,13 +969,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -908,7 +1004,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -1024,14 +1121,14 @@ mod tests {
 
         // We compare the total "instance point" with the parties' calculations.
         let total_instance_point = (AffinePoint::GENERATOR * total_instance_key).to_affine();
-        let expected_x_coord = hex::encode(total_instance_point.x().as_slice());
+        let expected_x_coord = hex::encode(total_instance_point.x());
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:
-        let hashed_message = Scalar::reduce(U256::from_be_bytes(message_to_sign));
+        let hashed_message = Scalar::reduce(&U256::from_be_bytes(message_to_sign.into()));
         assert_eq!(
             hashed_message,
-            Scalar::reduce(U256::from_be_hex(
+            Scalar::reduce(&U256::from_be_hex(
                 "ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d"
             ))
         );
@@ -1039,13 +1136,13 @@ mod tests {
         // Now we can find the signature in the usual way.
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
-                + (secret_key * Scalar::reduce(U256::from_be_hex(&expected_x_coord))));
-        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes().as_slice());
+                + (secret_key * Scalar::reduce(&U256::from_be_hex(&expected_x_coord))));
+        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes());
 
         // Calculate the expected recovery id
-        let half_order = Scalar::reduce(Secp256k1::ORDER >> 1);
-        let is_x_reduced = expected_signature_as_scalar > half_order;
-        let is_y_odd = total_instance_point.to_encoded_point(false).y().unwrap()[31] & 1 == 1;
+        let x_as_int = U256::from_be_hex(&expected_x_coord);
+        let is_x_reduced = x_as_int >= Secp256k1::ORDER;
+        let is_y_odd = total_instance_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
         let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         // We compare the results.
@@ -1061,14 +1158,14 @@ mod tests {
     fn test_dkg_and_signing() {
         // DKG (as in test_dkg_initialization)
 
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1242,7 +1339,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1271,7 +1368,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -1373,5 +1471,317 @@ mod tests {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
+    }
+
+    /// Tests if sign_phase4 handles zero denominator without panicking.
+    #[test]
+    fn test_sign_phase4_zero_denominator_returns_abort() {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        let data = SignData {
+            sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
+            counterparties: vec![2],
+            message_hash: hash("Message to sign!".as_bytes(), &[]),
+        };
+
+        let received = vec![Broadcast3to4 {
+            u: Scalar::ZERO,
+            w: Scalar::ONE,
+        }];
+        let result = parties[0].sign_phase4(&data, "01", &received, true);
+        let abort = result.expect_err("zero denominator should return abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Zero denominator in signature assembly"));
+    }
+
+    fn setup_two_party_signing_phase1() -> (
+        Vec<Party>,
+        BTreeMap<u8, SignData>,
+        BTreeMap<u8, UniqueKeep1to2>,
+        BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>>,
+        BTreeMap<u8, Vec<TransmitPhase1to2>>,
+    ) {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+
+        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+        all_data.insert(
+            1,
+            SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties: vec![2],
+                message_hash: message_to_sign,
+            },
+        );
+        all_data.insert(
+            2,
+            SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties: vec![1],
+                message_hash: message_to_sign,
+            },
+        );
+
+        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let (unique_keep, keep, transmit) = match parties[(party_index - 1) as usize]
+                .sign_phase1(all_data.get(&party_index).unwrap())
+            {
+                Ok(result) => result,
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                }
+            };
+
+            unique_kept_1to2.insert(party_index, unique_keep);
+            kept_1to2.insert(party_index, keep);
+            transmit_1to2.insert(party_index, transmit);
+        }
+
+        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+            received_1to2.insert(party_index, messages_for_party);
+        }
+
+        (
+            parties,
+            all_data,
+            unique_kept_1to2,
+            kept_1to2,
+            received_1to2,
+        )
+    }
+
+    fn run_two_party_phase2(
+        parties: &[Party],
+        all_data: &BTreeMap<u8, SignData>,
+        unique_kept_1to2: &BTreeMap<u8, UniqueKeep1to2>,
+        kept_1to2: &BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>>,
+        received_1to2: &BTreeMap<u8, Vec<TransmitPhase1to2>>,
+    ) -> (
+        BTreeMap<u8, UniqueKeep2to3>,
+        BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>>,
+        BTreeMap<u8, Vec<TransmitPhase2to3>>,
+    ) {
+        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let result = parties[(party_index - 1) as usize].sign_phase2(
+                all_data.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap(),
+                kept_1to2.get(&party_index).unwrap(),
+                received_1to2.get(&party_index).unwrap(),
+            );
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                }
+                Ok((unique_keep, keep, transmit)) => {
+                    unique_kept_2to3.insert(party_index, unique_keep);
+                    kept_2to3.insert(party_index, keep);
+                    transmit_2to3.insert(party_index, transmit);
+                }
+            }
+        }
+
+        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        for party_index in [1u8, 2u8] {
+            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+                .values()
+                .flatten()
+                .filter(|message| message.parties.receiver == party_index)
+                .cloned()
+                .collect();
+            received_2to3.insert(party_index, messages_for_party);
+        }
+
+        (unique_kept_2to3, kept_2to3, received_2to3)
+    }
+
+    fn run_two_party_phase3(
+        parties: &[Party],
+        all_data: &BTreeMap<u8, SignData>,
+        unique_kept_2to3: &BTreeMap<u8, UniqueKeep2to3>,
+        kept_2to3: &BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>>,
+        received_2to3: &BTreeMap<u8, Vec<TransmitPhase2to3>>,
+    ) -> (String, Vec<Broadcast3to4>) {
+        let mut x_coords: Vec<String> = Vec::with_capacity(2);
+        let mut broadcasts: Vec<Broadcast3to4> = Vec::with_capacity(2);
+        for party_index in [1u8, 2u8] {
+            let result = parties[(party_index - 1) as usize].sign_phase3(
+                all_data.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap(),
+                kept_2to3.get(&party_index).unwrap(),
+                received_2to3.get(&party_index).unwrap(),
+            );
+            match result {
+                Err(abort) => {
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                }
+                Ok((x_coord, broadcast)) => {
+                    x_coords.push(x_coord);
+                    broadcasts.push(broadcast);
+                }
+            }
+        }
+
+        assert_eq!(x_coords[0], x_coords[1]);
+        (x_coords[0].clone(), broadcasts)
+    }
+
+    /// Tests if phase 2 rejects messages from unknown senders.
+    #[test]
+    fn test_sign_phase2_rejects_unknown_sender() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+
+        let mut tampered = received_1to2.get(&1).unwrap().clone();
+        tampered[0].parties.sender = 3;
+
+        let result = parties[0].sign_phase2(
+            all_data.get(&1).unwrap(),
+            unique_kept_1to2.get(&1).unwrap(),
+            kept_1to2.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("unknown sender should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Received message from unknown sender"));
+    }
+
+    /// Tests if phase 2 rejects messages addressed to a different receiver.
+    #[test]
+    fn test_sign_phase2_rejects_wrong_receiver() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+
+        let mut tampered = received_1to2.get(&1).unwrap().clone();
+        tampered[0].parties.receiver = 2;
+
+        let result = parties[0].sign_phase2(
+            all_data.get(&1).unwrap(),
+            unique_kept_1to2.get(&1).unwrap(),
+            kept_1to2.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("wrong receiver should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort.description.contains("Received message addressed to"));
+    }
+
+    /// Tests if phase 3 rejects invalid decommitment data.
+    #[test]
+    fn test_sign_phase3_rejects_invalid_commitment_decommit() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+
+        let mut tampered = received_2to3.get(&1).unwrap().clone();
+        assert!(
+            !tampered[0].salt.is_empty(),
+            "phase-3 decommit salt should be non-empty"
+        );
+        tampered[0].salt[0] ^= 1;
+
+        let result = parties[0].sign_phase3(
+            all_data.get(&1).unwrap(),
+            unique_kept_2to3.get(&1).unwrap(),
+            kept_2to3.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("invalid decommit should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort.description.contains("Failed to verify commitment"));
+    }
+
+    /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
+    #[test]
+    fn test_sign_phase3_bans_on_inconsistent_gamma_u() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+
+        let mut tampered = received_2to3.get(&1).unwrap().clone();
+        tampered[0].gamma_u =
+            (ProjectivePoint::from(tampered[0].gamma_u) + ProjectivePoint::GENERATOR).to_affine();
+
+        let result = parties[0].sign_phase3(
+            all_data.get(&1).unwrap(),
+            unique_kept_2to3.get(&1).unwrap(),
+            kept_2to3.get(&1).unwrap(),
+            &tampered,
+        );
+        let abort = result.expect_err("inconsistent gamma_u should be rejected");
+        assert_eq!(abort.kind, AbortKind::BanCounterparty(2));
+        assert!(abort
+            .description
+            .contains("Consistency check with u-variables failed"));
+    }
+
+    /// Tests if phase 4 rejects tampered broadcast values that invalidate signature assembly.
+    #[test]
+    fn test_sign_phase4_rejects_tampered_broadcast() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+        let (x_coord, mut broadcasts) = run_two_party_phase3(
+            &parties,
+            &all_data,
+            &unique_kept_2to3,
+            &kept_2to3,
+            &received_2to3,
+        );
+
+        broadcasts[0].w += Scalar::ONE;
+
+        let result = parties[0].sign_phase4(all_data.get(&1).unwrap(), &x_coord, &broadcasts, true);
+        let abort = result.expect_err("tampered broadcast should fail signature validation");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort.description.contains("Invalid ECDSA signature"));
     }
 }

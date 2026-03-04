@@ -4,7 +4,7 @@
 Thank you for helping us keep our project secure. This document outlines our security policy and provides instructions for reporting vulnerabilities.
 
 ## Reporting a Vulnerability
-If you discover a security vulnerability, please report it to us in a responsible manner. To report a vulnerability, please email us at [security@0xcarbon.org]. Include the following details in your report:
+If you discover a security vulnerability, please report it to us in a responsible manner. To report a vulnerability, please email us at [fabio@bealore.com]. Include the following details in your report:
 - A description of the vulnerability
 - Steps to reproduce the vulnerability
 - Any potential impact of the vulnerability

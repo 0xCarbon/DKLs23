@@ -18,7 +18,7 @@
 
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{hash, hash_as_scalar, point_to_bytes, HashOutput};
@@ -58,7 +58,7 @@ impl OTSender {
         // We sample a nonzero random scalar.
         let mut s = Scalar::ZERO;
         while s == Scalar::ZERO {
-            s = Scalar::random(rng::get_rng());
+            s = Scalar::random(&mut rng::get_rng());
         }
 
         // In the paper, different protocols use different random oracles.
@@ -174,7 +174,7 @@ impl OTReceiver {
     /// Initializes the protocol.
     #[must_use]
     pub fn init() -> OTReceiver {
-        let seed = rng::get_rng().gen::<Seed>();
+        let seed = rng::get_rng().random::<Seed>();
 
         OTReceiver { seed }
     }
@@ -186,7 +186,7 @@ impl OTReceiver {
     #[must_use]
     pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
         // We sample the secret scalar r.
-        let r = Scalar::random(rng::get_rng());
+        let r = Scalar::random(&mut rng::get_rng());
 
         // We compute h as in the paper.
         // Instead of using a real identifier for the receiver,
@@ -322,11 +322,50 @@ impl OTReceiver {
 mod tests {
     use super::*;
 
+    /// Ensures receiver rejects a tampered DLogProof from sender.
+    #[test]
+    fn test_ot_base_rejects_tampered_dlog_proof() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+
+        let sender = OTSender::init(&session_id);
+        let receiver = OTReceiver::init();
+
+        let mut dlog_proof = sender.run_phase1();
+        dlog_proof.proofs[0].challenge_response += Scalar::ONE;
+
+        let result = receiver.run_phase2_step1(&session_id, &dlog_proof);
+        let error = result.expect_err("tampered DLogProof should be rejected");
+        assert!(error
+            .description
+            .contains("Sender cheated in OT: Proof of discrete logarithm failed!"));
+    }
+
+    /// Ensures sender rejects a tampered encryption proof from receiver.
+    #[test]
+    fn test_ot_base_rejects_tampered_enc_proof() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+
+        let sender = OTSender::init(&session_id);
+        let receiver = OTReceiver::init();
+
+        let bit = rng::get_rng().random();
+        let (_, mut enc_proof) = receiver.run_phase1(&session_id, bit);
+        let seed = receiver.seed;
+
+        enc_proof.challenge0 += Scalar::ONE;
+
+        let result = sender.run_phase2(&session_id, &seed, &enc_proof);
+        let error = result.expect_err("tampered EncProof should be rejected");
+        assert!(error
+            .description
+            .contains("Receiver cheated in OT: Encryption proof failed!"));
+    }
+
     /// Tests if the outputs for the OT base protocol
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_base() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Initialization
         let sender = OTSender::init(&session_id);
@@ -336,7 +375,7 @@ mod tests {
         let dlog_proof = sender.run_phase1();
 
         // Phase 1 - Receiver
-        let bit = rng::get_rng().gen();
+        let bit = rng::get_rng().random();
         let (r, enc_proof) = receiver.run_phase1(&session_id, bit);
 
         // Communication round - The parties exchange the proofs.
@@ -374,7 +413,7 @@ mod tests {
     /// Batch version for [`test_ot_base`].
     #[test]
     fn test_ot_base_batch() {
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Initialization (unique)
         let sender = OTSender::init(&session_id);
@@ -388,7 +427,7 @@ mod tests {
         // Phase 1 - Receiver
         let mut bits: Vec<bool> = Vec::with_capacity(batch_size);
         for _ in 0..batch_size {
-            bits.push(rng::get_rng().gen());
+            bits.push(rng::get_rng().random());
         }
 
         let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits);

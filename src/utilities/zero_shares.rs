@@ -10,8 +10,9 @@ use crate::utilities::hashes::{hash_as_scalar, HashOutput};
 
 use crate::utilities::rng;
 use k256::Scalar;
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
@@ -19,7 +20,7 @@ use crate::SECURITY;
 pub type Seed = [u8; SECURITY as usize];
 
 /// Represents the common seed a pair of parties shares.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct SeedPair {
     /// Verifies if the party that owns this data has the lowest index in the pair.
     pub lowest_index: bool,
@@ -28,7 +29,7 @@ pub struct SeedPair {
 }
 
 /// Used to run the protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct ZeroShare {
     pub seeds: Vec<SeedPair>,
 }
@@ -44,7 +45,7 @@ impl ZeroShare {
     /// At the time of de-commitment, these secret values are revealed.
     #[must_use]
     pub fn generate_seed_with_commitment() -> (Seed, HashOutput, Vec<u8>) {
-        let seed = rng::get_rng().gen::<Seed>();
+        let seed = rng::get_rng().random::<Seed>();
         let (commitment, salt) = commits::commit(&seed);
         (seed, commitment, salt)
     }
@@ -175,7 +176,7 @@ mod tests {
         }
 
         //We can finally execute the functionality.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
         let executing_parties: Vec<u8> = vec![1, 3, 5, 7, 8]; //These are the parties running the protocol.
         let mut shares: Vec<Scalar> = Vec::with_capacity(executing_parties.len());
         for party in executing_parties.clone() {

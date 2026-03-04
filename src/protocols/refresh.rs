@@ -163,7 +163,7 @@ impl Party {
             Vec::with_capacity(self.parameters.threshold as usize);
         secret_polynomial.push(Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
-            secret_polynomial.push(Scalar::random(rng::get_rng()));
+            secret_polynomial.push(Scalar::random(&mut rng::get_rng()));
         }
 
         step2(&self.parameters, &secret_polynomial)
@@ -418,7 +418,12 @@ impl Party {
                         &message_received_3.salt,
                     );
                     if !verification {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
+                        return Err(Abort::new(
+                            self.party_index,
+                            &format!(
+                                "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
+                            ),
+                        ));
                     }
 
                     // We form the final seed pairs.
@@ -480,7 +485,15 @@ impl Party {
                 let mul_receiver: MulReceiver = match receiver_result {
                     Ok(r) => r,
                     Err(error) => {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
+                        // Complete refresh builds fresh OT from scratch (no reused COTe state),
+                        // so init failures are recoverable, matching DKG classification.
+                        return Err(Abort::new(
+                            self.party_index,
+                            &format!(
+                                "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                                their_index, error.description
+                            ),
+                        ));
                     }
                 };
 
@@ -509,7 +522,15 @@ impl Party {
                 let mul_sender: MulSender = match sender_result {
                     Ok(s) => s,
                     Err(error) => {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
+                        // Complete refresh builds fresh OT from scratch (no reused COTe state),
+                        // so init failures are recoverable, matching DKG classification.
+                        return Err(Abort::new(
+                            self.party_index,
+                            &format!(
+                                "Initialization for multiplication protocol failed because of Party {}: {:?}",
+                                their_index, error.description
+                            ),
+                        ));
                     }
                 };
 
@@ -565,7 +586,7 @@ impl Party {
             Vec::with_capacity(self.parameters.threshold as usize);
         secret_polynomial.push(Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
-            secret_polynomial.push(Scalar::random(rng::get_rng()));
+            secret_polynomial.push(Scalar::random(&mut rng::get_rng()));
         }
 
         step2(&self.parameters, &secret_polynomial)
@@ -743,7 +764,12 @@ impl Party {
                         &message_received_3.salt,
                     );
                     if !verification {
-                        return Err(Abort::new(self.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
+                        return Err(Abort::new(
+                            self.party_index,
+                            &format!(
+                                "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
+                            ),
+                        ));
                     }
 
                     // We form the final seed pairs.
@@ -940,9 +966,209 @@ mod tests {
 
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
-    use crate::protocols::Parameters;
+    use crate::protocols::{AbortKind, Parameters};
 
-    use rand::Rng;
+    use rand::RngExt;
+
+    struct CompleteRefreshPhase4Inputs {
+        parties: Vec<Party>,
+        refresh_sid: [u8; 32],
+        correction_values: Vec<Scalar>,
+        proofs_commitments: Vec<ProofCommitment>,
+        zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>>,
+        zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>>,
+        zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>>,
+        mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>>,
+        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>>,
+    }
+
+    fn setup_two_party_complete_refresh_phase4_inputs() -> CompleteRefreshPhase4Inputs {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 2,
+        };
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let parties = re_key(&parameters, &session_id, &secret_key, None);
+
+        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+
+        // Phase 1
+        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            dkg_1.push(parties[i as usize].refresh_complete_phase1());
+        }
+
+        // Communication round 1
+        let mut poly_fragments = vec![
+            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
+            parameters.share_count as usize
+        ];
+        for row_i in dkg_1 {
+            for j in 0..parameters.share_count {
+                poly_fragments[j as usize].push(row_i[j as usize]);
+            }
+        }
+
+        // Phase 2
+        let mut correction_values: Vec<Scalar> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut proofs_commitments: Vec<ProofCommitment> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4) = parties[i as usize]
+                .refresh_complete_phase2(&refresh_sid, &poly_fragments[i as usize]);
+
+            correction_values.push(out1);
+            proofs_commitments.push(out2);
+            zero_kept_2to3.push(out3);
+            zero_transmit_2to4.push(out4);
+        }
+
+        // Communication round 2
+        let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_2to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        new_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_2to4.push(new_row);
+        }
+
+        // Phase 3
+        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 0..parameters.share_count {
+            let (out1, out2, out3, out4) = parties[i as usize]
+                .refresh_complete_phase3(&refresh_sid, &zero_kept_2to3[i as usize]);
+
+            zero_kept_3to4.push(out1);
+            zero_transmit_3to4.push(out2);
+            mul_kept_3to4.push(out3);
+            mul_transmit_3to4.push(out4);
+        }
+
+        // Communication round 3
+        let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+            Vec::with_capacity(parameters.share_count as usize);
+        for i in 1..=parameters.share_count {
+            let mut zero_row: Vec<TransmitInitZeroSharePhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &zero_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        zero_row.push(message.clone());
+                    }
+                }
+            }
+            zero_received_3to4.push(zero_row);
+
+            let mut mul_row: Vec<TransmitInitMulPhase3to4> =
+                Vec::with_capacity((parameters.share_count - 1) as usize);
+            for party in &mul_transmit_3to4 {
+                for message in party {
+                    if message.parties.receiver == i {
+                        mul_row.push(message.clone());
+                    }
+                }
+            }
+            mul_received_3to4.push(mul_row);
+        }
+
+        CompleteRefreshPhase4Inputs {
+            parties,
+            refresh_sid,
+            correction_values,
+            proofs_commitments,
+            zero_kept_3to4,
+            zero_received_2to4,
+            zero_received_3to4,
+            mul_kept_3to4,
+            mul_received_3to4,
+        }
+    }
+
+    /// Tests that complete refresh phase 4 aborts (recoverably) on tampered OT encryption proofs.
+    #[test]
+    fn test_refresh_complete_phase4_aborts_on_tampered_enc_proof() {
+        let mut data = setup_two_party_complete_refresh_phase4_inputs();
+
+        let tampered = data.mul_received_3to4[0]
+            .iter_mut()
+            .find(|message| message.parties.sender == 2 && message.parties.receiver == 1)
+            .expect("expected party-2 message for party 1 in complete refresh");
+        assert!(
+            !tampered.enc_proofs.is_empty(),
+            "expected non-empty enc_proofs in complete refresh test setup"
+        );
+        tampered.enc_proofs[0].challenge0 += Scalar::ONE;
+
+        let result = data.parties[0].refresh_complete_phase4(
+            &data.refresh_sid,
+            &data.correction_values[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+        );
+        let abort = result.expect_err("tampered complete-refresh enc proof should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Initialization for multiplication protocol failed because of Party 2"));
+    }
+
+    /// Tests that complete refresh phase 4 aborts (recoverably) on tampered OT DLog proofs.
+    #[test]
+    fn test_refresh_complete_phase4_aborts_on_tampered_dlog_proof() {
+        let mut data = setup_two_party_complete_refresh_phase4_inputs();
+
+        let tampered = data.mul_received_3to4[0]
+            .iter_mut()
+            .find(|message| message.parties.sender == 2 && message.parties.receiver == 1)
+            .expect("expected party-2 message for party 1 in complete refresh");
+        assert!(
+            !tampered.dlog_proof.proofs.is_empty(),
+            "expected non-empty DLog proof vector in complete refresh test setup"
+        );
+        tampered.dlog_proof.proofs[0].challenge_response += Scalar::ONE;
+
+        let result = data.parties[0].refresh_complete_phase4(
+            &data.refresh_sid,
+            &data.correction_values[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+        );
+        let abort = result.expect_err("tampered complete-refresh DLog proof should be rejected");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(abort
+            .description
+            .contains("Initialization for multiplication protocol failed because of Party 2"));
+    }
 
     /// Tests if the complete refresh protocol generates parties
     /// still capable of running the signing protocol.
@@ -950,8 +1176,8 @@ mod tests {
     /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_refresh_complete() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -959,13 +1185,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
-        let refresh_sid = rng::get_rng().gen::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1106,7 +1332,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1135,7 +1361,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);
@@ -1242,8 +1469,8 @@ mod tests {
     /// In this case, parties are sampled via the [`re_key`] function.
     #[test]
     fn test_refresh() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
@@ -1251,13 +1478,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
-        let secret_key = Scalar::random(rng::get_rng());
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
 
-        let refresh_sid = rng::get_rng().gen::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1375,7 +1602,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().gen::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1404,7 +1631,8 @@ mod tests {
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
-                .sign_phase1(all_data.get(&party_index).unwrap());
+                .sign_phase1(all_data.get(&party_index).unwrap())
+                .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
             kept_1to2.insert(party_index, keep);

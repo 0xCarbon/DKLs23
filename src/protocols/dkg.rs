@@ -51,9 +51,9 @@ use std::collections::BTreeMap;
 
 use hex;
 use k256::elliptic_curve::Field;
-use k256::{elliptic_curve::sec1::ToEncodedPoint, AffinePoint, Scalar};
+use k256::{elliptic_curve::sec1::ToSec1Point, AffinePoint, Scalar};
 
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -330,7 +330,13 @@ pub fn step5(
             }
 
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
-            let lj_times_point = *committed_points.get(&j).unwrap() * lj;
+            let point_j = committed_points.get(&j).ok_or_else(|| {
+                Abort::new(
+                    party_index,
+                    &format!("Missing committed point for party {j}"),
+                )
+            })?;
+            let lj_times_point = *point_j * lj;
 
             current_pk = (lj_times_point + current_pk).to_affine();
         }
@@ -435,7 +441,7 @@ pub fn phase2(
     // Initialization - BIP-32.
 
     // Each party samples a random auxiliary chain code.
-    let aux_chain_code: ChainCode = rng::get_rng().gen();
+    let aux_chain_code: ChainCode = rng::get_rng().random();
     let (cc_commitment, cc_salt) = commits::commit(&aux_chain_code);
 
     let bip_keep = UniqueKeepDerivationPhase2to3 {
@@ -712,7 +718,12 @@ pub fn phase4(
                     &message_received_3.salt,
                 );
                 if !verification {
-                    return Err(Abort::new(data.party_index, &format!("Initialization for zero shares protocol failed because Party {their_index} cheated when sending the seed!")));
+                    return Err(Abort::new(
+                        data.party_index,
+                        &format!(
+                            "Initialization for zero shares protocol failed: invalid seed decommitment from Party {their_index}."
+                        ),
+                    ));
                 }
 
                 // We form the final seed pairs.
@@ -774,6 +785,8 @@ pub fn phase4(
             let mul_receiver: MulReceiver = match receiver_result {
                 Ok(r) => r,
                 Err(error) => {
+                    // In DKG this failed run does not produce reusable OT state,
+                    // so we keep abort classification recoverable.
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
             };
@@ -803,6 +816,8 @@ pub fn phase4(
             let mul_sender: MulSender = match sender_result {
                 Ok(s) => s,
                 Err(error) => {
+                    // In DKG this failed run does not produce reusable OT state,
+                    // so we keep abort classification recoverable.
                     return Err(Abort::new(data.party_index, &format!("Initialization for multiplication protocol failed because of Party {}: {:?}", their_index, error.description)));
                 }
             };
@@ -819,17 +834,29 @@ pub fn phase4(
     let mut chain_code: ChainCode = [0; 32];
     for i in 1..=data.parameters.share_count {
         // We take the messages in the correct order (that's why the BTreeMap).
+        let phase3_msg = bip_received_phase3.get(&i).ok_or_else(|| {
+            Abort::new(
+                data.party_index,
+                &format!("Missing BIP phase 3 message from party {i}"),
+            )
+        })?;
+        let phase2_msg = bip_received_phase2.get(&i).ok_or_else(|| {
+            Abort::new(
+                data.party_index,
+                &format!("Missing BIP phase 2 message from party {i}"),
+            )
+        })?;
         let verification = commits::verify_commitment(
-            &bip_received_phase3.get(&i).unwrap().aux_chain_code,
-            &bip_received_phase2.get(&i).unwrap().cc_commitment,
-            &bip_received_phase3.get(&i).unwrap().cc_salt,
+            &phase3_msg.aux_chain_code,
+            &phase2_msg.cc_commitment,
+            &phase3_msg.cc_salt,
         );
         if !verification {
             return Err(Abort::new(data.party_index, &format!("Initialization for key derivation failed because Party {} cheated when sending the auxiliary chain code!", i+1)));
         }
 
         // We XOR this auxiliary chain code to the final result.
-        let current_aux_chain_code = bip_received_phase3.get(&i).unwrap().aux_chain_code;
+        let current_aux_chain_code = phase3_msg.aux_chain_code;
         for j in 0..32 {
             chain_code[j] ^= current_aux_chain_code[j];
         }
@@ -873,7 +900,7 @@ pub fn phase4(
 #[must_use]
 pub fn compute_eth_address(pk: &AffinePoint) -> String {
     // Serialize the public key in uncompressed form
-    let uncompressed_pk = pk.to_encoded_point(false);
+    let uncompressed_pk = pk.to_sec1_point(false);
 
     // Compute the Keccak256 hash of the serialized public key
     // Skip the "04" SEC-1 prefix, see: https://www.secg.org/sec1-v2.pdf sec 3.3.3 page 11
@@ -911,7 +938,7 @@ mod tests {
     use super::*;
     use k256::elliptic_curve::ops::Reduce;
     use k256::U256;
-    use rand::Rng;
+    use rand::RngExt;
 
     // DISTRIBUTED KEY GENERATION (without initializations)
 
@@ -928,7 +955,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Phase 1 (Steps 1 and 2)
         let p1_phase1 = step2(&parameters, &step1(&parameters)); //p1 = Party 1
@@ -965,14 +992,14 @@ mod tests {
     /// t and n are small random values.
     #[test]
     fn test_dkg_random() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
@@ -1029,7 +1056,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(1u32), Scalar::from(3u32)];
@@ -1073,7 +1100,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(12u32), Scalar::from(2u32)];
@@ -1118,7 +1145,7 @@ mod tests {
             threshold: 3,
             share_count: 5,
         };
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // We will define the fragments directly
         let poly_fragments = vec![
@@ -1216,14 +1243,14 @@ mod tests {
     /// The correctness of the protocol is verified on `test_dkg_and_signing`.
     #[test]
     fn test_dkg_initialization() {
-        let threshold = rng::get_rng().gen_range(2..=5); // You can change the ranges here.
-        let offset = rng::get_rng().gen_range(0..=5);
+        let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.
+        let offset = rng::get_rng().random_range(0..=5);
 
         let parameters = Parameters {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().gen::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1402,7 +1429,7 @@ mod tests {
     fn test_compute_eth_address() {
         // You should test different values using, for example,
         // https://www.rfctools.com/ethereum-address-test-tool/.
-        let sk = Scalar::reduce(U256::from_be_hex(
+        let sk = Scalar::reduce(&U256::from_be_hex(
             "0249815B0D7E186DB61E7A6AAD6226608BB1C48B309EA8903CAB7A7283DA64A5",
         ));
         let pk = (AffinePoint::GENERATOR * sk).to_affine();
