@@ -6,7 +6,8 @@
 //! The implementation follows the suggestion they give using the commitment functionality.
 
 use crate::utilities::commits;
-use crate::utilities::hashes::{hash_as_scalar, HashOutput};
+use crate::utilities::hashes::{tagged_hash_as_scalar, HashOutput};
+use crate::utilities::oracle_tags::TAG_ZERO_SHARE_FRAGMENT;
 
 use crate::utilities::rng;
 use k256::Scalar;
@@ -108,7 +109,8 @@ impl ZeroShare {
             }
 
             // Seeds generate fragments that add up to the share that will be returned.
-            let fragment = hash_as_scalar(&seed_pair.seed, session_id);
+            let fragment =
+                tagged_hash_as_scalar(TAG_ZERO_SHARE_FRAGMENT, &[session_id, &seed_pair.seed]);
 
             // This sign guarantees that the shares from different parties add up to zero.
             if seed_pair.lowest_index {

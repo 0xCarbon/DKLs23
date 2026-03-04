@@ -89,8 +89,9 @@ use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
 use serde::{Deserialize, Serialize};
 
-use crate::utilities::hashes::{hash, HashOutput};
+use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
+use crate::utilities::oracle_tags::{TAG_REFRESH_FAST_B, TAG_REFRESH_FAST_R0, TAG_REFRESH_FAST_R1};
 use crate::utilities::ot;
 use crate::utilities::rng;
 use crate::utilities::zero_shares::{self, ZeroShare};
@@ -810,34 +811,23 @@ impl Party {
                 // Then, we apply the trick described in the paper.
 
                 // Sender
-                let salt_r0 = [
-                    &(0u16).to_be_bytes(),
-                    &i.to_be_bytes(),
-                    &u16::from(self.party_index).to_be_bytes(),
-                    &u16::from(their_index).to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
-                let salt_r1 = [
-                    &(1u16).to_be_bytes(),
-                    &i.to_be_bytes(),
-                    &u16::from(self.party_index).to_be_bytes(),
-                    &u16::from(their_index).to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
-                let salt_b = [
-                    &(2u16).to_be_bytes(),
-                    &i.to_be_bytes(),
-                    &u16::from(self.party_index).to_be_bytes(),
-                    &u16::from(their_index).to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
+                let i_bytes = i.to_be_bytes();
+                let sender_bytes = u16::from(self.party_index).to_be_bytes();
+                let receiver_bytes = u16::from(their_index).to_be_bytes();
 
-                let r0_prime = hash(&seed, &salt_r0);
-                let r1_prime = hash(&seed, &salt_r1);
-                let b_prime = (hash(&seed, &salt_b)[0] % 2) == 1; // We take the first digit.
+                let r0_prime = tagged_hash(
+                    TAG_REFRESH_FAST_R0,
+                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                );
+                let r1_prime = tagged_hash(
+                    TAG_REFRESH_FAST_R1,
+                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                );
+                let b_prime = (tagged_hash(
+                    TAG_REFRESH_FAST_B,
+                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                )[0] % 2)
+                    == 1; // We take the first digit.
 
                 let b_double_prime = new_ote_sender.correlation[i as usize] ^ b_prime;
                 let r_prime_b_double_prime = if b_double_prime { r1_prime } else { r0_prime };
@@ -853,34 +843,23 @@ impl Party {
                 new_ote_sender.seeds[i as usize] = r_double_prime;
 
                 // Receiver
-                let salt_r0 = [
-                    &(0u16).to_be_bytes(),
-                    &i.to_be_bytes(),
-                    &u16::from(their_index).to_be_bytes(),
-                    &u16::from(self.party_index).to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
-                let salt_r1 = [
-                    &(1u16).to_be_bytes(),
-                    &i.to_be_bytes(),
-                    &u16::from(their_index).to_be_bytes(),
-                    &u16::from(self.party_index).to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
-                let salt_b = [
-                    &(2u16).to_be_bytes(),
-                    &i.to_be_bytes(),
-                    &u16::from(their_index).to_be_bytes(),
-                    &u16::from(self.party_index).to_be_bytes(),
-                    refresh_sid,
-                ]
-                .concat();
+                let i_bytes = i.to_be_bytes();
+                let sender_bytes = u16::from(their_index).to_be_bytes();
+                let receiver_bytes = u16::from(self.party_index).to_be_bytes();
 
-                let r0_prime = hash(&seed, &salt_r0);
-                let r1_prime = hash(&seed, &salt_r1);
-                let b_prime = (hash(&seed, &salt_b)[0] % 2) == 1; // We take the first digit.
+                let r0_prime = tagged_hash(
+                    TAG_REFRESH_FAST_R0,
+                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                );
+                let r1_prime = tagged_hash(
+                    TAG_REFRESH_FAST_R1,
+                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                );
+                let b_prime = (tagged_hash(
+                    TAG_REFRESH_FAST_B,
+                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                )[0] % 2)
+                    == 1; // We take the first digit.
 
                 let r_b_prime = if b_prime {
                     new_ote_receiver.seeds1[i as usize]
@@ -960,6 +939,7 @@ impl Party {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
 
     use super::*;
@@ -967,6 +947,7 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
     use crate::protocols::{AbortKind, Parameters};
+    use crate::utilities::hashes::hash;
 
     use rand::RngExt;
 

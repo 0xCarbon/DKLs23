@@ -12,7 +12,10 @@ use k256::Scalar;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::utilities::hashes::{hash, hash_as_scalar, scalar_to_bytes, HashOutput};
+use crate::utilities::hashes::{scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
+use crate::utilities::oracle_tags::{
+    TAG_MUL_CHI_HAT, TAG_MUL_CHI_TILDE, TAG_MUL_GADGET, TAG_MUL_VERIFY,
+};
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
@@ -126,7 +129,11 @@ impl MulSender {
         let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
             counter += Scalar::ONE;
-            public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
+            let counter_bytes = scalar_to_bytes(&counter);
+            public_gadget.push(tagged_hash_as_scalar(
+                TAG_MUL_GADGET,
+                &[session_id, &counter_bytes],
+            ));
         }
 
         let mul_sender = MulSender {
@@ -248,12 +255,14 @@ impl MulSender {
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            // We compute the salts according to i and the variable.
-            let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-            let salt_hat = [&(2u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-
-            chi_tilde.push(hash_as_scalar(&transcript, &salt_tilde));
-            chi_hat.push(hash_as_scalar(&transcript, &salt_hat));
+            chi_tilde.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_TILDE,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
+            chi_hat.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_HAT,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
         }
 
         // Step 5 - We compute the verification value.
@@ -286,7 +295,7 @@ impl MulSender {
         let r_as_bytes = rows_r_as_bytes.concat();
 
         // We transform r into a hash.
-        let verify_r: HashOutput = hash(&r_as_bytes, session_id);
+        let verify_r: HashOutput = tagged_hash(TAG_MUL_VERIFY, &[session_id, &r_as_bytes]);
 
         // Step 6 - No action for the sender.
 
@@ -375,7 +384,11 @@ impl MulReceiver {
         let mut counter = *nonce;
         for _ in 0..BATCH_SIZE {
             counter += Scalar::ONE;
-            public_gadget.push(hash_as_scalar(&scalar_to_bytes(&counter), session_id));
+            let counter_bytes = scalar_to_bytes(&counter);
+            public_gadget.push(tagged_hash_as_scalar(
+                TAG_MUL_GADGET,
+                &[session_id, &counter_bytes],
+            ));
         }
 
         let mul_receiver = MulReceiver {
@@ -451,12 +464,14 @@ impl MulReceiver {
         let mut chi_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut chi_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            // We compute the salts according to i and the variable.
-            let salt_tilde = [&(1u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-            let salt_hat = [&(2u8).to_be_bytes(), &i.to_be_bytes(), session_id].concat();
-
-            chi_tilde.push(hash_as_scalar(&transcript, &salt_tilde));
-            chi_hat.push(hash_as_scalar(&transcript, &salt_hat));
+            chi_tilde.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_TILDE,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
+            chi_hat.push(tagged_hash_as_scalar(
+                TAG_MUL_CHI_HAT,
+                &[session_id, &i.to_be_bytes(), &transcript],
+            ));
         }
 
         // Step 5 - No action for the receiver, but he will receive
@@ -557,7 +572,7 @@ impl MulReceiver {
         let r_as_bytes = rows_r_as_bytes.concat();
 
         // We transform r into a hash.
-        let expected_verify_r: HashOutput = hash(&r_as_bytes, session_id);
+        let expected_verify_r: HashOutput = tagged_hash(TAG_MUL_VERIFY, &[session_id, &r_as_bytes]);
 
         // We compare the values.
         if data_received.verify_r != expected_verify_r {

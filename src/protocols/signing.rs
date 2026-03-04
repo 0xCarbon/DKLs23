@@ -786,6 +786,7 @@ pub fn verify_ecdsa_signature(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::protocols::dkg::*;
