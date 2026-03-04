@@ -72,6 +72,7 @@ pub struct MulDataToKeepReceiver {
 }
 
 /// Represents an error during the multiplication protocol.
+#[derive(Debug)]
 pub struct ErrorMul {
     pub description: String,
 }
@@ -414,11 +415,14 @@ impl MulReceiver {
     /// The random factor coming from the protocol is already returned here.
     /// There are two other outputs: one to be kept for the next phase
     /// and one to be sent to the sender (related to the OT extension).
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the underlying OTE receiver phase 1 fails.
     pub fn run_phase1(
         &self,
         session_id: &[u8],
-    ) -> (Scalar, MulDataToKeepReceiver, OTEDataToSender) {
+    ) -> Result<(Scalar, MulDataToKeepReceiver, OTEDataToSender), ErrorMul> {
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - We sample the choice bits and compute the pad b_tilde.
@@ -447,7 +451,16 @@ impl MulReceiver {
 
         let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
 
-        let (extended_seeds, data_to_sender) = self.ote_receiver.run_phase1(&ote_sid, &choice_bits);
+        let (extended_seeds, data_to_sender) =
+            match self.ote_receiver.run_phase1(&ote_sid, &choice_bits) {
+                Ok(values) => values,
+                Err(error) => {
+                    return Err(ErrorMul::new(&format!(
+                        "OTE error during multiplication: {:?}",
+                        error.description
+                    )));
+                }
+            };
 
         // Step 4 - We compute the shared random values.
 
@@ -487,7 +500,7 @@ impl MulReceiver {
             chi_hat,
         };
 
-        (b, data_to_keep, data_to_sender)
+        Ok((b, data_to_keep, data_to_sender))
     }
 
     /// Finishes the receiver's protocol and gives his output.
@@ -643,7 +656,9 @@ mod tests {
             sender_input.push(Scalar::random(&mut rng::get_rng()));
         }
 
-        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(session_id);
+        let (_, data_to_keep, data_to_sender) = mul_receiver
+            .run_phase1(session_id)
+            .expect("mul receiver phase1 should succeed");
         let (_, data_to_receiver) = match mul_sender.run(session_id, &sender_input, &data_to_sender)
         {
             Ok(result) => result,
@@ -709,7 +724,9 @@ mod tests {
         }
 
         // Phase 1 - Receiver
-        let (receiver_random, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
+        let (receiver_random, data_to_keep, data_to_sender) = mul_receiver
+            .run_phase1(&session_id)
+            .expect("mul receiver phase1 should succeed");
 
         // Communication round 1
         // Receiver keeps receiver_random (part of the output)
@@ -782,7 +799,9 @@ mod tests {
             sender_input.push(Scalar::random(&mut rng::get_rng()));
         }
 
-        let (_, data_to_keep, data_to_sender) = mul_receiver.run_phase1(&session_id);
+        let (_, data_to_keep, data_to_sender) = mul_receiver
+            .run_phase1(&session_id)
+            .expect("mul receiver phase1 should succeed");
         let (_, mut data_to_receiver) =
             match mul_sender.run(&session_id, &sender_input, &data_to_sender) {
                 Ok(result) => result,

@@ -31,7 +31,7 @@ use k256::elliptic_curve::sec1::ToSec1Point;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use hex;
@@ -185,6 +185,7 @@ impl Party {
                 ),
             ));
         }
+        let mut seen_counterparties: BTreeSet<u8> = BTreeSet::new();
         for counterparty in &data.counterparties {
             if *counterparty < 1 || *counterparty > self.parameters.share_count {
                 return Err(Abort::new(
@@ -195,10 +196,24 @@ impl Party {
                     ),
                 ));
             }
+            if !seen_counterparties.insert(*counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Counterparty index {counterparty} appears more than once"),
+                ));
+            }
             if *counterparty == self.party_index {
                 return Err(Abort::new(
                     self.party_index,
                     "Counterparty list must not contain our own index",
+                ));
+            }
+            if !self.mul_senders.contains_key(counterparty)
+                || !self.mul_receivers.contains_key(counterparty)
+            {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Missing multiplication state for counterparty {counterparty}"),
                 ));
             }
         }
@@ -236,11 +251,24 @@ impl Party {
             .concat();
 
             // We run the first phase.
-            let (chi, mul_keep, mul_transmit) = self
-                .mul_receivers
-                .get(counterparty)
-                .unwrap()
-                .run_phase1(&mul_sid);
+            let mul_receiver = self.mul_receivers.get(counterparty).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing multiplication receiver state for party {counterparty}"),
+                )
+            })?;
+            let (chi, mul_keep, mul_transmit) = match mul_receiver.run_phase1(&mul_sid) {
+                Ok(values) => values,
+                Err(error) => {
+                    return Err(Abort::new(
+                        self.party_index,
+                        &format!(
+                            "Two-party multiplication setup failed with Party {counterparty}: {}",
+                            error.description
+                        ),
+                    ));
+                }
+            };
 
             // We gather the messages.
             keep.insert(
@@ -337,7 +365,16 @@ impl Party {
             l_denominator *=
                 Scalar::from(u32::from(*counterparty)) - Scalar::from(u32::from(self.party_index));
         }
-        let l = l_numerator * (l_denominator.invert().unwrap());
+        let l_denominator_inverse = match Option::<Scalar>::from(l_denominator.invert()) {
+            Some(inv) => inv,
+            None => {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Failed to compute Lagrange coefficient (duplicate/invalid counterparties)",
+                ));
+            }
+        };
+        let l = l_numerator * l_denominator_inverse;
 
         // These are sk_i and pk_i from the paper.
         let key_share = (self.poly_point * l) + unique_kept.zeta;
@@ -350,6 +387,13 @@ impl Party {
         let mut keep: BTreeMap<u8, KeepPhase2to3> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase2to3> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
+        if received.len() != data.counterparties.len() {
+            return Err(Abort::new(
+                self.party_index,
+                "Received an unexpected number of round-1 messages",
+            ));
+        }
+        let mut seen_senders: BTreeSet<u8> = BTreeSet::new();
         for message in received {
             // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
@@ -368,7 +412,18 @@ impl Party {
                     ),
                 ));
             }
-            let current_kept = kept.get(&counterparty).unwrap();
+            if !seen_senders.insert(counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Duplicate round-1 message from sender {counterparty}"),
+                ));
+            }
+            let current_kept = kept.get(&counterparty).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing local kept state for counterparty {counterparty}"),
+                )
+            })?;
 
             // We continue the multiplication protocol to get the values
             // c^u and c^v from the paper. We are now the sender.
@@ -385,11 +440,13 @@ impl Party {
             ]
             .concat();
 
-            let mul_result = self.mul_senders.get(&counterparty).unwrap().run(
-                &mul_sid,
-                &input,
-                &message.mul_transmit,
-            );
+            let mul_sender = self.mul_senders.get(&counterparty).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing multiplication sender state for party {counterparty}"),
+                )
+            })?;
+            let mul_result = mul_sender.run(&mul_sid, &input, &message.mul_transmit);
 
             let c_u: Scalar;
             let c_v: Scalar;
@@ -499,6 +556,13 @@ impl Party {
         let mut second_sum_u = Scalar::ZERO;
         let mut second_sum_v = Scalar::ZERO;
 
+        if received.len() != data.counterparties.len() {
+            return Err(Abort::new(
+                self.party_index,
+                "Received an unexpected number of round-2 messages",
+            ));
+        }
+        let mut seen_senders: BTreeSet<u8> = BTreeSet::new();
         for message in received {
             // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
@@ -523,7 +587,18 @@ impl Party {
                     &format!("Party {counterparty} sent identity as instance point"),
                 ));
             }
-            let current_kept = kept.get(&counterparty).unwrap();
+            if !seen_senders.insert(counterparty) {
+                return Err(Abort::new(
+                    self.party_index,
+                    &format!("Duplicate round-2 message from sender {counterparty}"),
+                ));
+            }
+            let current_kept = kept.get(&counterparty).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing local kept state for counterparty {counterparty}"),
+                )
+            })?;
 
             // Checking the committed value.
             let verification = verify_commitment_point(
@@ -553,11 +628,14 @@ impl Party {
             ]
             .concat();
 
-            let mul_result = self.mul_receivers.get(&counterparty).unwrap().run_phase2(
-                &mul_sid,
-                &current_kept.mul_keep,
-                &message.mul_transmit,
-            );
+            let mul_receiver = self.mul_receivers.get(&counterparty).ok_or_else(|| {
+                Abort::new(
+                    self.party_index,
+                    &format!("Missing multiplication receiver state for party {counterparty}"),
+                )
+            })?;
+            let mul_result =
+                mul_receiver.run_phase2(&mul_sid, &current_kept.mul_keep, &message.mul_transmit);
 
             let d_u: Scalar;
             let d_v: Scalar;
@@ -720,7 +798,16 @@ impl Party {
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
-        let rx_as_scalar = Scalar::reduce(&U256::from_be_hex(x_coord));
+        let x_as_int = match parse_u256_from_hex_32bytes(x_coord) {
+            Some(value) => value,
+            None => {
+                return Err(Abort::new(
+                    self.party_index,
+                    "Invalid x-coordinate hex while assembling signature",
+                ));
+            }
+        };
+        let rx_as_scalar = Scalar::reduce(&x_as_int);
         let hashed_msg_as_scalar = Scalar::reduce(&U256::from_be_bytes(data.message_hash.into()));
         let first = AffinePoint::GENERATOR * hashed_msg_as_scalar;
         let second = self.pk * rx_as_scalar;
@@ -736,13 +823,21 @@ impl Party {
         // is_x_reduced is true when R.x (as a field element) >= the curve order n,
         // meaning Scalar::reduce(&R.x) lost information. For secp256k1, n < p, so
         // this can happen in the range [n, p-1] with negligible probability.
-        let x_as_int = U256::from_be_hex(x_coord);
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
         let is_y_odd = signature_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         Ok((signature, rec_id.into()))
     }
+}
+
+/// Parses a 32-byte hex string (64 hex chars) as `U256`.
+fn parse_u256_from_hex_32bytes(hex_value: &str) -> Option<U256> {
+    let mut bytes = [0u8; 32];
+    if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
+        return None;
+    }
+    Some(U256::from_be_bytes(bytes.into()))
 }
 
 /// Usual verifying function from ECDSA.
@@ -755,8 +850,14 @@ pub fn verify_ecdsa_signature(
     x_coord: &str,
     signature: &str,
 ) -> bool {
-    let rx_as_int = U256::from_be_hex(x_coord);
-    let s_as_int = U256::from_be_hex(signature);
+    let rx_as_int = match parse_u256_from_hex_32bytes(x_coord) {
+        Some(value) => value,
+        None => return false,
+    };
+    let s_as_int = match parse_u256_from_hex_32bytes(signature) {
+        Some(value) => value,
+        None => return false,
+    };
 
     // Verify if the numbers are in the correct range.
     if !(U256::ZERO < rx_as_int
@@ -1501,6 +1602,22 @@ mod tests {
         assert!(abort
             .description
             .contains("Zero denominator in signature assembly"));
+    }
+
+    /// Tests that malformed hex inputs are rejected without panicking.
+    #[test]
+    fn test_verify_ecdsa_signature_rejects_malformed_hex() {
+        let message = hash("Message to sign!".as_bytes(), &[]);
+        let pk = AffinePoint::GENERATOR;
+
+        assert!(!verify_ecdsa_signature(&message, &pk, "zz", "11"));
+        assert!(!verify_ecdsa_signature(&message, &pk, "", ""));
+        assert!(!verify_ecdsa_signature(
+            &message,
+            &pk,
+            "010203",
+            "not-a-hex-string"
+        ));
     }
 
     fn setup_two_party_signing_phase1() -> (
