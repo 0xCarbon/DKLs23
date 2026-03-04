@@ -45,6 +45,9 @@ pub const TAG_REFRESH_FAST_R1: &[u8] = b"dkls23/refresh/fast/r1/v1";
 pub const TAG_REFRESH_FAST_B: &[u8] = b"dkls23/refresh/fast/b/v1";
 
 /// Registry of all internal tags.
+///
+/// IMPORTANT: whenever a new tag constant is added, include it here to keep
+/// `test_oracle_tags_are_unique` effective.
 pub const ALL_TAGS: &[&[u8]] = &[
     TAG_COMMITMENT,
     TAG_DLOG_PROOF_FISCHLIN,

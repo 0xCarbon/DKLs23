@@ -31,26 +31,52 @@ fn append_len_prefixed(encoded: &mut Vec<u8>, component: &[u8]) {
     encoded.extend_from_slice(component);
 }
 
-/// Hash with result in bytes.
-#[must_use]
-pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
+fn legacy_salted_hash(msg: &[u8], salt: &[u8]) -> HashOutput {
     let concatenation = [salt, msg].concat();
     hash_bytes(&concatenation)
 }
 
+/// Legacy salted hash API.
+///
+/// Deprecated for protocol-internal use. Prefer [`tagged_hash`] with a
+/// dedicated oracle tag from `utilities::oracle_tags`.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use tagged_hash/tagged_hash_as_int/tagged_hash_as_scalar for protocol oracles."
+)]
+/// Hash with result in bytes.
+#[must_use]
+pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
+    legacy_salted_hash(msg, salt)
+}
+
+/// Legacy salted hash API returning an integer.
+///
+/// Deprecated for protocol-internal use. Prefer [`tagged_hash_as_int`].
+#[deprecated(
+    since = "0.2.0",
+    note = "Use tagged_hash/tagged_hash_as_int/tagged_hash_as_scalar for protocol oracles."
+)]
 /// Hash with result as an integer.
 #[must_use]
 pub fn hash_as_int(msg: &[u8], salt: &[u8]) -> U256 {
-    let as_bytes = hash(msg, salt);
+    let as_bytes = legacy_salted_hash(msg, salt);
     U256::from_be_bytes(as_bytes.into())
 }
 
+/// Legacy salted hash API returning a scalar.
+///
+/// Deprecated for protocol-internal use. Prefer [`tagged_hash_as_scalar`].
+#[deprecated(
+    since = "0.2.0",
+    note = "Use tagged_hash/tagged_hash_as_int/tagged_hash_as_scalar for protocol oracles."
+)]
 /// Hash with result as a scalar.
 ///
 /// It takes the integer from [`hash_as_int`] and reduces it modulo the order of the curve secp256k1.
 #[must_use]
 pub fn hash_as_scalar(msg: &[u8], salt: &[u8]) -> Scalar {
-    let as_int = hash_as_int(msg, salt);
+    let as_int = U256::from_be_bytes(legacy_salted_hash(msg, salt).into());
     Scalar::reduce(&as_int)
 }
 
@@ -102,6 +128,7 @@ pub fn point_to_bytes(point: &AffinePoint) -> Vec<u8> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
 
     use super::*;
