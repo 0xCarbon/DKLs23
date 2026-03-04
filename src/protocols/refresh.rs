@@ -485,9 +485,10 @@ impl Party {
                 let mul_receiver: MulReceiver = match receiver_result {
                     Ok(r) => r,
                     Err(error) => {
-                        return Err(Abort::ban(
+                        // Complete refresh builds fresh OT from scratch (no reused COTe state),
+                        // so init failures are recoverable, matching DKG classification.
+                        return Err(Abort::new(
                             self.party_index,
-                            their_index,
                             &format!(
                                 "Initialization for multiplication protocol failed because of Party {}: {:?}",
                                 their_index, error.description
@@ -521,9 +522,10 @@ impl Party {
                 let mul_sender: MulSender = match sender_result {
                     Ok(s) => s,
                     Err(error) => {
-                        return Err(Abort::ban(
+                        // Complete refresh builds fresh OT from scratch (no reused COTe state),
+                        // so init failures are recoverable, matching DKG classification.
+                        return Err(Abort::new(
                             self.party_index,
-                            their_index,
                             &format!(
                                 "Initialization for multiplication protocol failed because of Party {}: {:?}",
                                 their_index, error.description
@@ -1104,9 +1106,9 @@ mod tests {
         }
     }
 
-    /// Tests that complete refresh phase 4 bans on tampered OT encryption proofs.
+    /// Tests that complete refresh phase 4 aborts (recoverably) on tampered OT encryption proofs.
     #[test]
-    fn test_refresh_complete_phase4_bans_on_tampered_enc_proof() {
+    fn test_refresh_complete_phase4_aborts_on_tampered_enc_proof() {
         let mut data = setup_two_party_complete_refresh_phase4_inputs();
 
         let tampered = data.mul_received_3to4[0]
@@ -1130,15 +1132,15 @@ mod tests {
             &data.mul_received_3to4[0],
         );
         let abort = result.expect_err("tampered complete-refresh enc proof should be rejected");
-        assert_eq!(abort.kind, AbortKind::BanCounterparty(2));
+        assert_eq!(abort.kind, AbortKind::Recoverable);
         assert!(abort
             .description
             .contains("Initialization for multiplication protocol failed because of Party 2"));
     }
 
-    /// Tests that complete refresh phase 4 bans on tampered OT DLog proofs.
+    /// Tests that complete refresh phase 4 aborts (recoverably) on tampered OT DLog proofs.
     #[test]
-    fn test_refresh_complete_phase4_bans_on_tampered_dlog_proof() {
+    fn test_refresh_complete_phase4_aborts_on_tampered_dlog_proof() {
         let mut data = setup_two_party_complete_refresh_phase4_inputs();
 
         let tampered = data.mul_received_3to4[0]
@@ -1162,7 +1164,7 @@ mod tests {
             &data.mul_received_3to4[0],
         );
         let abort = result.expect_err("tampered complete-refresh DLog proof should be rejected");
-        assert_eq!(abort.kind, AbortKind::BanCounterparty(2));
+        assert_eq!(abort.kind, AbortKind::Recoverable);
         assert!(abort
             .description
             .contains("Initialization for multiplication protocol failed because of Party 2"));
