@@ -12,7 +12,6 @@ use crate::utilities::oracle_tags::TAG_ZERO_SHARE_FRAGMENT;
 use crate::utilities::rng;
 use k256::Scalar;
 use rand::RngExt;
-use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
@@ -21,7 +20,8 @@ use crate::SECURITY;
 pub type Seed = [u8; SECURITY as usize];
 
 /// Represents the common seed a pair of parties shares.
-#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SeedPair {
     /// Verifies if the party that owns this data has the lowest index in the pair.
     pub lowest_index: bool,
@@ -30,14 +30,13 @@ pub struct SeedPair {
 }
 
 /// Used to run the protocol.
-#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ZeroShare {
     pub seeds: Vec<SeedPair>,
 }
 
 impl ZeroShare {
-    // We implement the functions in the order they should be applied during the protocol.
-
     // INITIALIZATION
 
     /// Generates and commits a seed to another party using the commitment functionality.
@@ -71,7 +70,6 @@ impl ZeroShare {
             seed[i as usize] = seed_party[i as usize] ^ seed_counterparty[i as usize];
         }
 
-        // We save if we are the party with lowest index.
         // The case where index_party == index_counterparty shouldn't occur in practice.
         let lowest_index = index_party <= index_counterparty;
 
@@ -103,7 +101,6 @@ impl ZeroShare {
         let mut share = Scalar::ZERO;
         let seeds = self.seeds.clone();
         for seed_pair in seeds {
-            // We ignore if this seed pair comes from a counterparty not in the current list of counterparties
             if !counterparties.contains(&seed_pair.index_counterparty) {
                 continue;
             }
@@ -166,7 +163,6 @@ mod tests {
                 } //Now each party skip his iteration.
                 let (seed_party, _, _) = step1[i as usize][j as usize];
                 let (seed_counterparty, _, _) = step1[j as usize][i as usize];
-                //We add 1 below because indexes for parties start at 1 and not 0.
                 seeds.push(ZeroShare::generate_seed_pair(
                     i + 1,
                     j + 1,
@@ -177,8 +173,8 @@ mod tests {
             zero_shares.push(ZeroShare::initialize(seeds));
         }
 
-        //We can finally execute the functionality.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let executing_parties: Vec<u8> = vec![1, 3, 5, 7, 8]; //These are the parties running the protocol.
         let mut shares: Vec<Scalar> = Vec::with_capacity(executing_parties.len());
         for party in executing_parties.clone() {

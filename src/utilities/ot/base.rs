@@ -19,7 +19,6 @@
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::RngExt;
-use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
 use crate::utilities::oracle_tags::{TAG_OT_BASE_H, TAG_OT_BASE_MSG};
@@ -31,7 +30,8 @@ use crate::SECURITY;
 // SENDER DATA
 
 /// Sender's data and methods for the base OT protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTSender {
     pub s: Scalar,
     pub proof: DLogProof,
@@ -43,7 +43,8 @@ pub struct OTSender {
 pub type Seed = [u8; SECURITY as usize];
 
 /// Receiver's data and methods for the base OT protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTReceiver {
     pub seed: Seed,
 }
@@ -56,7 +57,6 @@ impl OTSender {
     /// Initializes the protocol for a given session id.
     #[must_use]
     pub fn init(session_id: &[u8]) -> OTSender {
-        // We sample a nonzero random scalar.
         let mut s = Scalar::ZERO;
         while s == Scalar::ZERO {
             s = Scalar::random(&mut rng::get_rng());
@@ -96,12 +96,10 @@ impl OTSender {
         seed: &Seed,
         enc_proof: &EncProof,
     ) -> Result<(HashOutput, HashOutput), ErrorOT> {
-        // We reconstruct h from the seed (as in the paper).
         let h = (AffinePoint::GENERATOR
             * tagged_hash_as_scalar(TAG_OT_BASE_H, &[session_id, seed]))
         .to_affine();
 
-        // We verify the proof.
         let verification = enc_proof.verify(session_id);
 
         // h is already in enc_proof, but we check if the values agree.
@@ -110,8 +108,6 @@ impl OTSender {
                 "Receiver cheated in OT: Encryption proof failed!",
             ));
         }
-
-        // We compute the messages.
 
         let (_, v) = enc_proof.get_u_and_v();
 
@@ -146,7 +142,6 @@ impl OTSender {
         let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
-            // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
             let (m0, m1) = self.run_phase2(&current_sid, seed, &enc_proofs[i as usize])?;
@@ -178,15 +173,12 @@ impl OTReceiver {
     /// and an encryption proof (to be sent to the sender).
     #[must_use]
     pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
-        // We sample the secret scalar r.
         let r = Scalar::random(&mut rng::get_rng());
 
-        // We compute h as in the paper.
         let h = (AffinePoint::GENERATOR
             * tagged_hash_as_scalar(TAG_OT_BASE_H, &[session_id, &self.seed]))
         .to_affine();
 
-        // We prove our data.
         let proof = EncProof::prove(session_id, &h, &r, bit);
 
         // r should be kept and proof should be sent.
@@ -208,7 +200,6 @@ impl OTReceiver {
         let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size as usize);
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
-            // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
             let (r, proof) = self.run_phase1(&current_sid, bits[i as usize]);
@@ -258,12 +249,9 @@ impl OTReceiver {
     /// from the previous step, the output message is computed.
     #[must_use]
     pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
-        // We compute the message.
-
         let value_for_mb = (*z * r).to_affine();
         let value_for_mb_bytes = point_to_bytes(&value_for_mb);
 
-        // We could return the bit as in the paper, but the receiver has this information.
         tagged_hash(TAG_OT_BASE_MSG, &[session_id, &value_for_mb_bytes])
     }
 
@@ -281,16 +269,13 @@ impl OTReceiver {
         vec_r: &[Scalar],
         dlog_proof: &DLogProof,
     ) -> Result<Vec<HashOutput>, ErrorOT> {
-        // Step 1
         let z = self.run_phase2_step1(session_id, dlog_proof)?;
 
-        // Step 2
         let batch_size =
             u16::try_from(vec_r.len()).expect("The batch sizes used always fit into an u16!");
 
         let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
-            // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
             let mb = self.run_phase2_step2(&current_sid, &vec_r[i as usize], &z);
@@ -309,7 +294,8 @@ mod tests {
     /// Ensures receiver rejects a tampered DLogProof from sender.
     #[test]
     fn test_ot_base_rejects_tampered_dlog_proof() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         let sender = OTSender::init(&session_id);
         let receiver = OTReceiver::init();
@@ -327,7 +313,8 @@ mod tests {
     /// Ensures sender rejects a tampered encryption proof from receiver.
     #[test]
     fn test_ot_base_rejects_tampered_enc_proof() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         let sender = OTSender::init(&session_id);
         let receiver = OTReceiver::init();
@@ -349,7 +336,8 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_base() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // Initialization
         let sender = OTSender::init(&session_id);
@@ -397,13 +385,15 @@ mod tests {
     /// Batch version for [`test_ot_base`].
     #[test]
     fn test_ot_base_batch() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // Initialization (unique)
         let sender = OTSender::init(&session_id);
         let receiver = OTReceiver::init();
 
-        let batch_size = 256;
+        const BATCH_SIZE: usize = 256;
+        let batch_size = BATCH_SIZE;
 
         // Phase 1 - Sender (unique)
         let dlog_proof = sender.run_phase1();

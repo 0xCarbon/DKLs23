@@ -16,7 +16,6 @@ use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacE
 
 use k256::elliptic_curve::{ops::Reduce, Curve};
 use k256::{AffinePoint, Scalar, Secp256k1, U256};
-use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::protocols::Party;
@@ -31,10 +30,12 @@ pub type Fingerprint = [u8; 4];
 /// Chaincode of a key as in BIP-32.
 ///
 /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
-pub type ChainCode = [u8; 32];
+pub const CHAIN_CODE_LEN: usize = 32;
+pub type ChainCode = [u8; CHAIN_CODE_LEN];
 
 /// Represents an error during the derivation protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ErrorDeriv {
     pub description: String,
 }
@@ -56,7 +57,8 @@ impl ErrorDeriv {
 /// if someone wants to retrieve the full extended public key
 /// as in BIP-32. The only field missing is the one for the
 /// network, but it can be easily inferred from context.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DerivData {
     /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,
@@ -74,11 +76,11 @@ pub struct DerivData {
 }
 
 /// Maximum depth.
-pub const MAX_DEPTH: u8 = 255;
+pub const MAX_DEPTH: u8 = u8::MAX;
 /// Maximum child number.
 ///
 /// This is the limit since we are not implementing hardened derivation.
-pub const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
+pub const MAX_CHILD_NUMBER: u32 = (1 << 31) - 1;
 
 impl DerivData {
     /// Computes the "tweak" needed to derive a secret key. In the process,
@@ -103,7 +105,7 @@ impl DerivData {
         let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
         let hmac_bytes = hmac_result.to_byte_array();
 
-        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..32]);
+        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..CHAIN_CODE_LEN]);
         if number_for_tweak.ge(&Secp256k1::ORDER) {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
@@ -111,11 +113,10 @@ impl DerivData {
         }
 
         let tweak = Scalar::reduce(&number_for_tweak);
-        let chain_code: ChainCode = hmac_bytes[32..]
+        let chain_code: ChainCode = hmac_bytes[CHAIN_CODE_LEN..]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
 
-        // We also calculate the fingerprint here for convenience.
         let mut engine = hash160::Hash::engine();
         engine.input(&pk_as_bytes);
         let hash_result = hash160::Hash::from_engine(engine);
@@ -148,7 +149,6 @@ impl DerivData {
 
         // If every party shifts their poly_point by the same tweak,
         // the resulting secret key also shifts by the same amount.
-        // Note that the tweak depends only on public data.
         let new_poly_point = self.poly_point + tweak;
         let new_pk = ((AffinePoint::GENERATOR * tweak) + self.pk).to_affine();
 
@@ -190,8 +190,6 @@ impl DerivData {
     }
 }
 
-// We implement the derivation functions for Party as well.
-
 /// Implementations related to BIP-32 derivation ([read more](self)).
 impl Party {
     /// Derives an instance of `Party` given a child number.
@@ -202,7 +200,6 @@ impl Party {
     pub fn derive_child(&self, child_number: u32) -> Result<Party, ErrorDeriv> {
         let new_derivation_data = self.derivation_data.derive_child(child_number)?;
 
-        // We don't change information relating other parties,
         // we only update our key share, our public key and the address.
         let new_address = compute_eth_address(&new_derivation_data.pk);
 
@@ -238,7 +235,6 @@ impl Party {
     pub fn derive_from_path(&self, path: &str) -> Result<Party, ErrorDeriv> {
         let new_derivation_data = self.derivation_data.derive_from_path(path)?;
 
-        // We don't change information relating other parties,
         // we only update our key share, our public key and the address.
         let new_address = compute_eth_address(&new_derivation_data.pk);
 
@@ -381,7 +377,6 @@ mod tests {
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
 
-        // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
@@ -525,7 +520,6 @@ mod tests {
             }
         }
 
-        // We verify all parties got the same x coordinate.
         let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
             assert_eq!(x_coord, x_coords[i as usize]);
