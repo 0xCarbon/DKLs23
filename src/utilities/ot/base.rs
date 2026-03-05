@@ -19,7 +19,6 @@
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::RngExt;
-use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
 use crate::utilities::oracle_tags::{TAG_OT_BASE_H, TAG_OT_BASE_MSG};
@@ -31,7 +30,8 @@ use crate::SECURITY;
 // SENDER DATA
 
 /// Sender's data and methods for the base OT protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTSender {
     pub s: Scalar,
     pub proof: DLogProof,
@@ -43,7 +43,8 @@ pub struct OTSender {
 pub type Seed = [u8; SECURITY as usize];
 
 /// Receiver's data and methods for the base OT protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTReceiver {
     pub seed: Seed,
 }

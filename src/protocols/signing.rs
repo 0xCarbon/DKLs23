@@ -30,7 +30,6 @@ use k256::elliptic_curve::scalar::IsHigh;
 use k256::elliptic_curve::sec1::ToSec1Point;
 use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -45,7 +44,8 @@ use crate::utilities::ot::extension::OTEDataToSender;
 use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignData {
     pub sign_id: Vec<u8>,
     /// Vector containing the indices of the parties participating in the protocol (without us).
@@ -59,7 +59,8 @@ pub struct SignData {
 /// Transmit - Signing.
 ///
 /// The message is produced/sent during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
@@ -69,7 +70,8 @@ pub struct TransmitPhase1to2 {
 /// Transmit - Signing.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
     pub gamma_u: AffinePoint,
@@ -84,7 +86,8 @@ pub struct TransmitPhase2to3 {
 /// Broadcast - Signing.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Broadcast3to4 {
     pub u: Scalar,
     pub w: Scalar,
@@ -95,7 +98,8 @@ pub struct Broadcast3to4 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KeepPhase1to2 {
     pub salt: Vec<u8>,
     pub chi: Scalar,
@@ -105,7 +109,8 @@ pub struct KeepPhase1to2 {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KeepPhase2to3 {
     pub c_u: Scalar,
     pub c_v: Scalar,
@@ -117,7 +122,8 @@ pub struct KeepPhase2to3 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UniqueKeep1to2 {
     pub instance_key: Scalar,
     #[zeroize(skip)]
@@ -129,7 +135,8 @@ pub struct UniqueKeep1to2 {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UniqueKeep2to3 {
     pub instance_key: Scalar,
     #[zeroize(skip)]
