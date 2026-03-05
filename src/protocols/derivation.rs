@@ -622,7 +622,8 @@ mod tests {
         let (parties, pkg) = re_key(&parameters, &session_id, &secret_key, None);
 
         let chain_code = parties[0].derivation_data.chain_code;
-        let child_number = 42u32;
+        const TEST_CHILD_NUMBER: u32 = 42;
+        let child_number = TEST_CHILD_NUMBER;
 
         let derived_pkg = pkg.derive_child(&chain_code, child_number).unwrap();
 
