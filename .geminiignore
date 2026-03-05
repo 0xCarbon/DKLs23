@@ -1,0 +1,9 @@
+# coder workflow artifacts must remain readable
+!.coder/
+!.coder/artifacts/
+!.coder/artifacts/ISSUE.md
+!.coder/artifacts/PLAN.md
+!.coder/artifacts/PLANREVIEW.md
+!.coder/artifacts/REVIEW_FINDINGS.md
+!.coder/scratchpad/
+!.coder/scratchpad/**
