@@ -74,7 +74,7 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 ///
 /// The `proof` is broadcasted after Phase 3.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ProofCommitment {
+pub(crate) struct ProofCommitment {
     pub index: u8,
     pub proof: DLogProof,
     pub commitment: HashOutput,
@@ -94,7 +94,7 @@ pub struct SessionData {
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TransmitInitZeroSharePhase2to4 {
+pub(crate) struct TransmitInitZeroSharePhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
@@ -103,7 +103,7 @@ pub struct TransmitInitZeroSharePhase2to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TransmitInitZeroSharePhase3to4 {
+pub(crate) struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -113,7 +113,7 @@ pub struct TransmitInitZeroSharePhase3to4 {
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct KeepInitZeroSharePhase2to3 {
+pub(crate) struct KeepInitZeroSharePhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
@@ -122,7 +122,7 @@ pub struct KeepInitZeroSharePhase2to3 {
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct KeepInitZeroSharePhase3to4 {
+pub(crate) struct KeepInitZeroSharePhase3to4 {
     pub seed: zero_shares::Seed,
 }
 
@@ -132,7 +132,7 @@ pub struct KeepInitZeroSharePhase3to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TransmitInitMulPhase3to4 {
+pub(crate) struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
 
     pub dlog_proof: DLogProof,
@@ -146,7 +146,7 @@ pub struct TransmitInitMulPhase3to4 {
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct KeepInitMulPhase3to4 {
+pub(crate) struct KeepInitMulPhase3to4 {
     pub ot_sender: ot::base::OTSender,
     pub nonce: Scalar,
 
@@ -161,7 +161,7 @@ pub struct KeepInitMulPhase3to4 {
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BroadcastDerivationPhase2to4 {
+pub(crate) struct BroadcastDerivationPhase2to4 {
     pub sender_index: u8,
     pub cc_commitment: HashOutput,
 }
@@ -170,7 +170,7 @@ pub struct BroadcastDerivationPhase2to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BroadcastDerivationPhase3to4 {
+pub(crate) struct BroadcastDerivationPhase3to4 {
     pub sender_index: u8,
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
@@ -180,9 +180,31 @@ pub struct BroadcastDerivationPhase3to4 {
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UniqueKeepDerivationPhase2to3 {
+pub(crate) struct UniqueKeepDerivationPhase2to3 {
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
+}
+
+// MessageTag implementations.
+use crate::protocols::messages::MessageTag;
+
+impl MessageTag for ProofCommitment {
+    const TAG: u8 = 0x01;
+}
+impl MessageTag for TransmitInitZeroSharePhase2to4 {
+    const TAG: u8 = 0x02;
+}
+impl MessageTag for TransmitInitZeroSharePhase3to4 {
+    const TAG: u8 = 0x03;
+}
+impl MessageTag for TransmitInitMulPhase3to4 {
+    const TAG: u8 = 0x04;
+}
+impl MessageTag for BroadcastDerivationPhase2to4 {
+    const TAG: u8 = 0x05;
+}
+impl MessageTag for BroadcastDerivationPhase3to4 {
+    const TAG: u8 = 0x06;
 }
 
 // DISTRIBUTED KEY GENERATION (DKG)
@@ -194,7 +216,7 @@ pub struct UniqueKeepDerivationPhase2to3 {
 ///
 /// This is Step 1 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
-pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
+pub(crate) fn step1(parameters: &Parameters) -> Vec<Scalar> {
     // We represent the polynomial by its coefficients.
     let mut rng = rng::get_rng(); // Reuse RNG
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
@@ -214,7 +236,7 @@ pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
 ///
 /// This is Step 2 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
-pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
+pub(crate) fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
     let mut points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
     let last_index = (parameters.threshold - 1) as usize;
 
@@ -247,7 +269,7 @@ pub fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
 /// The Step 4 of the protocol is broadcasting the rest of [`ProofCommitment`] after
 /// having received all commitments.
 #[must_use]
-pub fn step3(
+pub(crate) fn step3(
     party_index: u8,
     session_id: &[u8],
     poly_fragments: &[Scalar],
@@ -283,7 +305,7 @@ pub fn step3(
 ///
 /// Will panic if the list of indices in `proofs_commitments`
 /// are not the numbers from 1 to `parameters.share_count`.
-pub fn step5(
+pub(crate) fn step5(
     parameters: &Parameters,
     party_index: u8,
     session_id: &[u8],
@@ -371,7 +393,7 @@ pub fn step5(
 /// ATTENTION: In particular, we keep the coordinate corresponding
 /// to our party index for the next phase.
 #[must_use]
-pub fn phase1(data: &SessionData) -> Vec<Scalar> {
+pub(crate) fn phase1(data: &SessionData) -> Vec<Scalar> {
     // DKG
     let secret_polynomial = step1(&data.parameters);
 
@@ -399,7 +421,7 @@ pub fn phase1(data: &SessionData) -> Vec<Scalar> {
 /// There is also some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
-pub fn phase2(
+pub(crate) fn phase2(
     data: &SessionData,
     poly_fragments: &[Scalar],
 ) -> (
@@ -482,7 +504,7 @@ pub fn phase2(
 /// Some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
-pub fn phase3(
+pub(crate) fn phase3(
     data: &SessionData,
     zero_kept: &BTreeMap<u8, KeepInitZeroSharePhase2to3>,
     bip_kept: &UniqueKeepDerivationPhase2to3,
@@ -647,7 +669,7 @@ pub fn phase3(
 ///
 /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
 /// with the party indices in the received vectors.
-pub fn phase4(
+pub(crate) fn phase4(
     data: &SessionData,
     poly_point: &Scalar,
     proofs_commitments: &[ProofCommitment],
