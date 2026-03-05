@@ -60,7 +60,7 @@ pub struct SignData {
 ///
 /// The message is produced/sent during Phase 1 and used in Phase 2.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TransmitPhase1to2 {
+pub(crate) struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
     pub mul_transmit: OTEDataToSender,
@@ -70,7 +70,7 @@ pub struct TransmitPhase1to2 {
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TransmitPhase2to3 {
+pub(crate) struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
     pub gamma_u: AffinePoint,
     pub gamma_v: AffinePoint,
@@ -85,7 +85,7 @@ pub struct TransmitPhase2to3 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Broadcast3to4 {
+pub(crate) struct Broadcast3to4 {
     pub u: Scalar,
     pub w: Scalar,
 }
@@ -96,7 +96,7 @@ pub struct Broadcast3to4 {
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct KeepPhase1to2 {
+pub(crate) struct KeepPhase1to2 {
     pub salt: Vec<u8>,
     pub chi: Scalar,
     pub mul_keep: MulDataToKeepReceiver,
@@ -106,7 +106,7 @@ pub struct KeepPhase1to2 {
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct KeepPhase2to3 {
+pub(crate) struct KeepPhase2to3 {
     pub c_u: Scalar,
     pub c_v: Scalar,
     pub commitment: HashOutput,
@@ -118,7 +118,7 @@ pub struct KeepPhase2to3 {
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct UniqueKeep1to2 {
+pub(crate) struct UniqueKeep1to2 {
     pub instance_key: Scalar,
     #[zeroize(skip)]
     pub instance_point: AffinePoint,
@@ -130,7 +130,7 @@ pub struct UniqueKeep1to2 {
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct UniqueKeep2to3 {
+pub(crate) struct UniqueKeep2to3 {
     pub instance_key: Scalar,
     #[zeroize(skip)]
     pub instance_point: AffinePoint,
@@ -138,6 +138,19 @@ pub struct UniqueKeep2to3 {
     pub key_share: Scalar,
     #[zeroize(skip)]
     pub public_share: AffinePoint,
+}
+
+// MessageTag implementations.
+use crate::protocols::messages::MessageTag;
+
+impl MessageTag for TransmitPhase1to2 {
+    const TAG: u8 = 0x10;
+}
+impl MessageTag for TransmitPhase2to3 {
+    const TAG: u8 = 0x11;
+}
+impl MessageTag for Broadcast3to4 {
+    const TAG: u8 = 0x12;
 }
 
 // SIGNING PROTOCOL
@@ -157,7 +170,7 @@ impl Party {
     /// party index is out of range, or if the counterparty list contains our
     /// own index.
     #[allow(clippy::type_complexity)]
-    pub fn sign_phase1(
+    pub(crate) fn sign_phase1(
         &self,
         data: &SignData,
     ) -> Result<
@@ -340,7 +353,7 @@ impl Party {
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
     #[allow(clippy::type_complexity)]
-    pub fn sign_phase2(
+    pub(crate) fn sign_phase2(
         &self,
         data: &SignData,
         unique_kept: &UniqueKeep1to2,
@@ -540,7 +553,7 @@ impl Party {
     ///
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
-    pub fn sign_phase3(
+    pub(crate) fn sign_phase3(
         &self,
         data: &SignData,
         unique_kept: &UniqueKeep2to3,
@@ -752,7 +765,7 @@ impl Party {
     ///
     /// Will return `Err` if the final ECDSA signature is invalid
     /// or if the denominator in signature assembly is zero.
-    pub fn sign_phase4(
+    pub(crate) fn sign_phase4(
         &self,
         data: &SignData,
         x_coord: &str,

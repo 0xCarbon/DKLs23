@@ -113,7 +113,7 @@ use crate::protocols::{Abort, PartiesMessage, Party, PartyIndex};
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TransmitRefreshPhase2to4 {
+pub(crate) struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
@@ -122,7 +122,7 @@ pub struct TransmitRefreshPhase2to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TransmitRefreshPhase3to4 {
+pub(crate) struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -134,7 +134,7 @@ pub struct TransmitRefreshPhase3to4 {
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct KeepRefreshPhase2to3 {
+pub(crate) struct KeepRefreshPhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
@@ -143,8 +143,18 @@ pub struct KeepRefreshPhase2to3 {
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct KeepRefreshPhase3to4 {
+pub(crate) struct KeepRefreshPhase3to4 {
     pub seed: zero_shares::Seed,
+}
+
+// MessageTag implementations.
+use crate::protocols::messages::MessageTag;
+
+impl MessageTag for TransmitRefreshPhase2to4 {
+    const TAG: u8 = 0x20;
+}
+impl MessageTag for TransmitRefreshPhase3to4 {
+    const TAG: u8 = 0x21;
 }
 
 /// Implementations related to refresh protocols ([read more](self)).
@@ -156,7 +166,7 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_complete_phase1(&self) -> Vec<Scalar> {
+    pub(crate) fn refresh_complete_phase1(&self) -> Vec<Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
@@ -177,7 +187,7 @@ impl Party {
     /// difference is that we will refer to the scalar`poly_point`
     /// as `correction_value`.
     #[must_use]
-    pub fn refresh_complete_phase2(
+    pub(crate) fn refresh_complete_phase2(
         &self,
         refresh_sid: &[u8],
         poly_fragments: &[Scalar],
@@ -233,7 +243,7 @@ impl Party {
     /// The output should be dealt in the same way.
     #[must_use]
     #[allow(clippy::type_complexity)]
-    pub fn refresh_complete_phase3(
+    pub(crate) fn refresh_complete_phase3(
         &self,
         refresh_sid: &[u8],
         zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
@@ -360,7 +370,7 @@ impl Party {
     /// protocol fails when verifying the seeds or if the multiplication
     /// protocol fails.
     #[allow(clippy::too_many_arguments)]
-    pub fn refresh_complete_phase4(
+    pub(crate) fn refresh_complete_phase4(
         &self,
         refresh_sid: &[u8],
         correction_value: &Scalar,
@@ -680,7 +690,7 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_phase1(&self) -> Vec<Scalar> {
+    pub(crate) fn refresh_phase1(&self) -> Vec<Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
@@ -701,7 +711,7 @@ impl Party {
     /// difference is that we will refer to the scalar`poly_point`
     /// as `correction_value`.
     #[must_use]
-    pub fn refresh_phase2(
+    pub(crate) fn refresh_phase2(
         &self,
         refresh_sid: &[u8],
         poly_fragments: &[Scalar],
@@ -753,7 +763,7 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_phase3(
+    pub(crate) fn refresh_phase3(
         &self,
         kept: &BTreeMap<PartyIndex, KeepRefreshPhase2to3>,
     ) -> (
@@ -806,7 +816,7 @@ impl Party {
     ///
     /// Will panic if the indices of the parties are different
     /// from the ones used in DKG.
-    pub fn refresh_phase4(
+    pub(crate) fn refresh_phase4(
         &self,
         refresh_sid: &[u8],
         correction_value: &Scalar,
