@@ -31,7 +31,8 @@ pub type Fingerprint = [u8; 4];
 /// Chaincode of a key as in BIP-32.
 ///
 /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
-pub type ChainCode = [u8; 32];
+pub const CHAIN_CODE_LEN: usize = 32;
+pub type ChainCode = [u8; CHAIN_CODE_LEN];
 
 /// Represents an error during the derivation protocol.
 #[derive(Clone, Serialize, Deserialize, Debug)]

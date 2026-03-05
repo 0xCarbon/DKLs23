@@ -57,7 +57,7 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-use crate::protocols::derivation::{ChainCode, DerivData};
+use crate::protocols::derivation::{ChainCode, DerivData, CHAIN_CODE_LEN};
 use crate::protocols::{Abort, Parameters, PartiesMessage, Party};
 
 use crate::utilities::commits;
@@ -958,7 +958,7 @@ pub(crate) fn phase4(
     // Initialization - BIP-32.
     // We check the commitments and create the final chain code.
     // It will be given by the XOR of the auxiliary chain codes.
-    let mut chain_code: ChainCode = [0; 32];
+    let mut chain_code: ChainCode = [0; CHAIN_CODE_LEN];
     for i in 1..=data.parameters.share_count {
         // We take the messages in the correct order (that's why the BTreeMap).
         let phase3_msg = bip_received_phase3.get(&i).ok_or_else(|| {
@@ -989,7 +989,7 @@ pub(crate) fn phase4(
 
         // We XOR this auxiliary chain code to the final result.
         let current_aux_chain_code = phase3_msg.aux_chain_code;
-        for j in 0..32 {
+        for j in 0..CHAIN_CODE_LEN {
             chain_code[j] ^= current_aux_chain_code[j];
         }
     }
@@ -1041,7 +1041,8 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
 
     // Take the last 20 bytes of the hash and convert to a hex string
     let full_hash = hasher.finalize_reset();
-    let address = hex::encode(&full_hash[12..]);
+    const ETH_ADDR_OFFSET: usize = 12;
+    let address = hex::encode(&full_hash[ETH_ADDR_OFFSET..]);
 
     // Compute the Keccak256 hash of the lowercase hexadecimal address
     hasher.update(address.to_lowercase().as_bytes());
@@ -1090,7 +1091,8 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1265,7 +1267,8 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1 (Steps 1 and 2)
         let p1_phase1 = step2(&parameters, &step1(&parameters)); //p1 = Party 1
@@ -1309,7 +1312,8 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
@@ -1366,7 +1370,8 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(1u32), Scalar::from(3u32)];
@@ -1410,7 +1415,8 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(12u32), Scalar::from(2u32)];
@@ -1455,7 +1461,8 @@ mod tests {
             threshold: 3,
             share_count: 5,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // We will define the fragments directly
         let poly_fragments = vec![
@@ -1560,7 +1567,8 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
