@@ -1271,10 +1271,8 @@ mod tests {
             panic!("Very improbable/unexpected: The receiver got two identic outputs!");
         }
 
-        //TODO - We included this last check because an old implementation was wrong
-        //       and was generating repeated outputs for the sender. A more appropriate
-        //       test would be to run this test many times and attest that there is no
-        //       noticeable correlation between the outputs.
+        // This check guards against a past bug where an old implementation
+        // generated repeated outputs for the sender.
     }
 
     /// Tests if sender-side OTE rejects malformed dimensions from deserialized input.
