@@ -20,7 +20,10 @@ impl std::fmt::Display for MessageError {
             Self::Serialization(s) => write!(f, "serialization error: {s}"),
             Self::Deserialization(s) => write!(f, "deserialization error: {s}"),
             Self::TagMismatch { expected, found } => {
-                write!(f, "tag mismatch: expected {expected:#04x}, found {found:#04x}")
+                write!(
+                    f,
+                    "tag mismatch: expected {expected:#04x}, found {found:#04x}"
+                )
             }
             Self::NotFound { sender } => write!(f, "message not found for sender {sender}"),
             Self::InvalidFrame(s) => write!(f, "invalid frame: {s}"),
@@ -92,10 +95,7 @@ impl PhaseOutput {
         }
     }
 
-    pub fn add_broadcast<T: MessageTag>(
-        &mut self,
-        message: &T,
-    ) -> Result<(), MessageError> {
+    pub fn add_broadcast<T: MessageTag>(&mut self, message: &T) -> Result<(), MessageError> {
         self.broadcasts.push(encode_frame(message)?);
         Ok(())
     }
@@ -146,8 +146,9 @@ mod tests {
         value: u32,
     }
 
+    const MSG_A_TAG: u8 = 0xA0;
     impl MessageTag for MsgA {
-        const TAG: u8 = 0xA0;
+        const TAG: u8 = MSG_A_TAG;
     }
 
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -155,13 +156,17 @@ mod tests {
         name: String,
     }
 
+    const MSG_B_TAG: u8 = 0xB0;
     impl MessageTag for MsgB {
-        const TAG: u8 = 0xB0;
+        const TAG: u8 = MSG_B_TAG;
     }
 
     #[test]
     fn test_broadcast_round_trip() {
-        let msg = MsgA { value: 42 };
+        const TEST_VALUE_A: u32 = 42;
+        let msg = MsgA {
+            value: TEST_VALUE_A,
+        };
         let mut output = PhaseOutput::new();
         output.add_broadcast(&msg).unwrap();
 
@@ -184,7 +189,10 @@ mod tests {
 
     #[test]
     fn test_p2p_round_trip() {
-        let msg = MsgA { value: 99 };
+        const TEST_VALUE_B: u32 = 99;
+        let msg = MsgA {
+            value: TEST_VALUE_B,
+        };
         let mut output = PhaseOutput::new();
         output.add_p2p(2, &msg).unwrap();
 
@@ -220,7 +228,10 @@ mod tests {
         // Try to decode as MsgB — should fail with NotFound
         let result = input.get_broadcast::<MsgB>(1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), MessageError::NotFound { sender: 1 }));
+        assert!(matches!(
+            result.unwrap_err(),
+            MessageError::NotFound { sender: 1 }
+        ));
     }
 
     #[test]
@@ -284,11 +295,14 @@ mod tests {
             p2p: BTreeMap::new(),
         };
 
-        let result = input.get_broadcast::<MsgA>(99);
+        const UNKNOWN_SENDER: u8 = 99;
+        let result = input.get_broadcast::<MsgA>(UNKNOWN_SENDER);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            MessageError::NotFound { sender: 99 }
+            MessageError::NotFound {
+                sender: UNKNOWN_SENDER
+            }
         ));
     }
 
@@ -303,10 +317,7 @@ mod tests {
 
         let result = input.get_broadcast::<MsgA>(1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            MessageError::InvalidFrame(_)
-        ));
+        assert!(matches!(result.unwrap_err(), MessageError::InvalidFrame(_)));
     }
 
     #[test]
@@ -323,9 +334,6 @@ mod tests {
 
         let result = input.get_broadcast::<MsgA>(1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            MessageError::InvalidFrame(_)
-        ));
+        assert!(matches!(result.unwrap_err(), MessageError::InvalidFrame(_)));
     }
 }

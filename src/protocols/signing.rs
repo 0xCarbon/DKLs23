@@ -143,14 +143,17 @@ pub(crate) struct UniqueKeep2to3 {
 // MessageTag implementations.
 use crate::protocols::messages::MessageTag;
 
+const TRANSMIT_PHASE_1_TO_2_TAG: u8 = 0x10;
 impl MessageTag for TransmitPhase1to2 {
-    const TAG: u8 = 0x10;
+    const TAG: u8 = TRANSMIT_PHASE_1_TO_2_TAG;
 }
+const TRANSMIT_PHASE_2_TO_3_TAG: u8 = 0x11;
 impl MessageTag for TransmitPhase2to3 {
-    const TAG: u8 = 0x11;
+    const TAG: u8 = TRANSMIT_PHASE_2_TO_3_TAG;
 }
+const BROADCAST_3_TO_4_TAG: u8 = 0x12;
 impl MessageTag for Broadcast3to4 {
-    const TAG: u8 = 0x12;
+    const TAG: u8 = BROADCAST_3_TO_4_TAG;
 }
 
 // SIGNING PROTOCOL
@@ -181,7 +184,7 @@ impl Party {
         ),
         Abort,
     > {
-        // Step 4 - We check if we have the correct number of counter parties.
+        // Step 4 - Check if we have the correct number of counter parties.
         if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
             return Err(Abort::new(
                 self.party_index,
@@ -232,13 +235,13 @@ impl Party {
             }
         }
 
-        // Step 5 - We sample our secret data.
+        // Step 5 - Sample secret data.
         let instance_key = Scalar::random(&mut rng::get_rng());
         let inversion_mask = Scalar::random(&mut rng::get_rng());
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
 
-        // Step 6 - We prepare the messages to keep and to send.
+        // Step 6 - Prepare the messages to keep and to send.
 
         let mut keep: BTreeMap<PartyIndex, KeepPhase1to2> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase1to2> =
@@ -369,7 +372,7 @@ impl Party {
     > {
         // Step 7
 
-        // We first compute the values that only depend on us.
+        // Compute the values that only depend on us.
 
         // We find the Lagrange coefficient associated to us.
         // It is the same as the one calculated during DKG.
@@ -726,7 +729,7 @@ impl Party {
             ));
         }
 
-        // We compute u_i, v_i and w_i from the paper.
+        // Compute u_i, v_i and w_i from the paper.
         let u = (unique_kept.instance_key * first_sum_u_v) + second_sum_u;
         let v = (unique_kept.key_share * first_sum_u_v) + second_sum_v;
 
@@ -809,7 +812,7 @@ impl Party {
             ));
         }
 
-        // First we need to calculate R (signature point) in order to retrieve its y coordinate.
+        // First calculate R (signature point) in order to retrieve its y coordinate.
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
@@ -839,8 +842,9 @@ impl Party {
         // meaning Scalar::reduce(&R.x) lost information. For secp256k1, n < p, so
         // this can happen in the range [n, p-1] with negligible probability.
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
+        const SEC1_Y_COORD_LAST_BYTE_INDEX: usize = 31;
         let is_y_odd =
-            signature_point.to_sec1_point(false).y().unwrap()[crate::utilities::ID_LEN - 1] & 1
+            signature_point.to_sec1_point(false).y().unwrap()[SEC1_Y_COORD_LAST_BYTE_INDEX] & 1
                 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
@@ -850,7 +854,8 @@ impl Party {
 
 /// Parses a 32-byte hex string (64 hex chars) as `U256`.
 fn parse_u256_from_hex_32bytes(hex_value: &str) -> Option<U256> {
-    let mut bytes = [0u8; crate::utilities::ID_LEN];
+    const HASH_BYTES_LEN: usize = 32;
+    let mut bytes = [0u8; HASH_BYTES_LEN];
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
         return None;
     }
@@ -1246,7 +1251,7 @@ mod tests {
             total_instance_key += kept.instance_key;
         }
 
-        // We compare the total "instance point" with the parties' calculations.
+        // Compare the total "instance point" with the parties' calculations.
         let total_instance_point = (AffinePoint::GENERATOR * total_instance_key).to_affine();
         let expected_x_coord = hex::encode(total_instance_point.x());
         assert_eq!(x_coord, expected_x_coord);

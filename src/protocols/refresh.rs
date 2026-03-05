@@ -150,11 +150,13 @@ pub(crate) struct KeepRefreshPhase3to4 {
 // MessageTag implementations.
 use crate::protocols::messages::MessageTag;
 
+const TRANSMIT_REFRESH_PHASE_2_TO_4_TAG: u8 = 0x20;
 impl MessageTag for TransmitRefreshPhase2to4 {
-    const TAG: u8 = 0x20;
+    const TAG: u8 = TRANSMIT_REFRESH_PHASE_2_TO_4_TAG;
 }
+const TRANSMIT_REFRESH_PHASE_3_TO_4_TAG: u8 = 0x21;
 impl MessageTag for TransmitRefreshPhase3to4 {
-    const TAG: u8 = 0x21;
+    const TAG: u8 = TRANSMIT_REFRESH_PHASE_3_TO_4_TAG;
 }
 
 /// Implementations related to refresh protocols ([read more](self)).
@@ -1137,9 +1139,11 @@ mod tests {
 
     use rand::RngExt;
 
+    const SESSION_ID_LEN: usize = 32;
+
     struct CompleteRefreshPhase4Inputs {
         parties: Vec<Party>,
-        refresh_sid: [u8; crate::utilities::ID_LEN],
+        refresh_sid: [u8; SESSION_ID_LEN],
         correction_values: Vec<Scalar>,
         proofs_commitments: Vec<ProofCommitment>,
         zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>>,
@@ -1154,11 +1158,11 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
-        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1388,13 +1392,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
-        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1537,7 +1541,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1687,13 +1691,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
 
-        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1813,7 +1817,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
