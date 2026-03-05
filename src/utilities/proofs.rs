@@ -36,7 +36,6 @@
 use k256::elliptic_curve::{ops::Reduce, Field};
 use k256::{AffinePoint, ProjectivePoint, Scalar, U256};
 use rand::{Rng, RngExt};
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::utilities::hashes::{
@@ -55,7 +54,8 @@ pub const T: u16 = 32;
 // DISCRETE LOGARITHM PROOF.
 
 /// Schnorr's protocol (interactive).
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InteractiveDLogProof {
     pub challenge: Vec<u8>,
     pub challenge_response: Scalar,
@@ -156,7 +156,8 @@ impl InteractiveDLogProof {
 ///
 /// With `lambda = 256`, we chose `r = 64` and `l = 4` (higher values of `l` were too slow).
 /// In this case, the constant `t` from the paper is equal to 32.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DLogProof {
     pub point: AffinePoint,
     pub rand_commitments: Vec<AffinePoint>,
@@ -472,14 +473,16 @@ impl DLogProof {
 // ENCRYPTION PROOF
 
 /// Represents the random commitments for the Chaum-Pedersen protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RandomCommitments {
     pub rc_g: AffinePoint,
     pub rc_h: AffinePoint,
 }
 
 /// Chaum-Pedersen protocol (interactive version).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CPProof {
     pub base_g: AffinePoint, // Parameters for the proof.
     pub base_h: AffinePoint, // In the encryption proof, base_g = generator.
@@ -609,7 +612,8 @@ impl CPProof {
 /// Encryption proof used during the Endemic OT protocol of Zhou et al.
 ///
 /// See page 17 of <https://eprint.iacr.org/2022/1525.pdf>.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EncProof {
     /// EncProof is a proof that `proof0` or `proof1` really proves what it says.
     pub proof0: CPProof,

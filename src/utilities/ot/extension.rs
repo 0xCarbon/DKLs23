@@ -38,8 +38,10 @@
 
 use k256::Scalar;
 use rand::RngExt;
+#[cfg(feature = "serde")]
 use serde::de::Error;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+#[cfg(feature = "serde")]
+use serde::{Deserializer, Serializer};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{RAW_SECURITY, STAT_SECURITY};
@@ -78,8 +80,13 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
+<<<<<<< HEAD
 const PRG_DATA_SIZE: usize = 78;
 pub fn serialize_vec_prg<S>(data: &[[u8; PRG_DATA_SIZE]], serializer: S) -> Result<S::Ok, S::Error>
+=======
+#[cfg(feature = "serde")]
+pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S::Error>
+>>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
 where
     S: Serializer,
 {
@@ -87,7 +94,12 @@ where
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
 
+<<<<<<< HEAD
 pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; PRG_DATA_SIZE]>, D::Error>
+=======
+#[cfg(feature = "serde")]
+pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 78]>, D::Error>
+>>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
 where
     D: Deserializer<'de>,
 {
@@ -103,25 +115,31 @@ where
 }
 
 /// Sender's data and methods for the OTE protocol.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTESender {
     pub correlation: Vec<bool>, // We will deal with bits separately
     pub seeds: Vec<HashOutput>,
 }
 
 /// Receiver's data and methods for the OTE protocol.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTEReceiver {
     pub seeds0: Vec<HashOutput>,
     pub seeds1: Vec<HashOutput>,
 }
 
 /// Data transmitted by the receiver to the sender after his first phase.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTEDataToSender {
-    #[serde(
-        serialize_with = "serialize_vec_prg",
-        deserialize_with = "deserialize_vec_prg"
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            serialize_with = "serialize_vec_prg",
+            deserialize_with = "deserialize_vec_prg"
+        )
     )]
     pub u: Vec<PRGOutput>,
     pub verify_x: FieldElement,

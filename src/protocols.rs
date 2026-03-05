@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use k256::{AffinePoint, Scalar};
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use crate::protocols::derivation::DerivData;
@@ -14,6 +13,7 @@ use crate::utilities::zero_shares::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
+#[cfg(feature = "serde")]
 pub mod messages;
 pub mod re_key;
 pub mod refresh;
@@ -74,14 +74,16 @@ impl fmt::Display for PartyIndex {
 }
 
 /// Contains the values `t` and  `n` from `DKLs23`.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Parameters {
     pub threshold: u8,   //t
     pub share_count: u8, //n
 }
 
 /// Represents a party after key generation ready to sign a message.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Party {
     pub parameters: Parameters,
     pub party_index: PartyIndex,
@@ -140,7 +142,8 @@ impl Drop for Party {
 /// is leaked. The paper mandates that the offending counterparty must be
 /// **permanently banned** from all future sessions. Failure to do so
 /// enables a key extraction attack over multiple sessions.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AbortKind {
     /// The protocol failed but can be retried safely.
     /// No long-term state was compromised.
@@ -152,7 +155,8 @@ pub enum AbortKind {
     BanCounterparty(PartyIndex),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Abort {
     /// Index of the party generating the abort message.
     pub index: PartyIndex,
@@ -189,7 +193,8 @@ impl Abort {
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PartiesMessage {
     pub sender: PartyIndex,
     pub receiver: PartyIndex,
