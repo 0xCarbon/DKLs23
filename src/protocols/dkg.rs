@@ -483,6 +483,7 @@ pub fn phase2(
 /// Some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
+#[allow(clippy::type_complexity)]
 pub fn phase3(
     data: &SessionData,
     zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
@@ -649,6 +650,7 @@ pub fn phase3(
 ///
 /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
 /// with the party indices in the received vectors.
+#[allow(clippy::too_many_arguments)]
 pub fn phase4(
     data: &SessionData,
     poly_point: &Scalar,
@@ -1441,7 +1443,7 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // We will define the fragments directly
-        let poly_fragments = vec![
+        let poly_fragments = [
             vec![
                 Scalar::from(5u32),
                 Scalar::from(1u32),

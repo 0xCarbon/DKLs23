@@ -156,6 +156,7 @@ impl Party {
     /// Will return `Err` if the number of counterparties is wrong, if any
     /// party index is out of range, or if the counterparty list contains our
     /// own index.
+    #[allow(clippy::type_complexity)]
     pub fn sign_phase1(
         &self,
         data: &SignData,
@@ -338,6 +339,7 @@ impl Party {
     ///
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
+    #[allow(clippy::type_complexity)]
     pub fn sign_phase2(
         &self,
         data: &SignData,
@@ -1668,6 +1670,7 @@ mod tests {
             .contains("Missing multiplication state for counterparty 2"));
     }
 
+    #[allow(clippy::type_complexity)]
     fn setup_two_party_signing_phase1() -> (
         Vec<Party>,
         BTreeMap<PartyIndex, SignData>,
@@ -1742,6 +1745,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::type_complexity)]
     fn run_two_party_phase2(
         parties: &[Party],
         all_data: &BTreeMap<PartyIndex, SignData>,

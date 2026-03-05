@@ -232,6 +232,7 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
+    #[allow(clippy::type_complexity)]
     pub fn refresh_complete_phase3(
         &self,
         refresh_sid: &[u8],
@@ -358,6 +359,7 @@ impl Party {
     /// if a message is not meant for the party, if the zero shares
     /// protocol fails when verifying the seeds or if the multiplication
     /// protocol fails.
+    #[allow(clippy::too_many_arguments)]
     pub fn refresh_complete_phase4(
         &self,
         refresh_sid: &[u8],
@@ -1518,17 +1520,16 @@ mod tests {
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
-        let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
+        let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
+            .map(|i| PartyIndex::new(i).unwrap())
+            .collect();
 
         // Each party prepares their data for this signing session.
-        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+        let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
-            let counterparties: Vec<PartyIndex> = executing_parties
-                .iter()
-                .filter(|&&index| index != party_index)
-                .map(|&index| PartyIndex::new(index).unwrap())
-                .collect();
+            let mut counterparties = executing_parties.clone();
+            counterparties.retain(|index| *index != party_index);
 
             all_data.insert(
                 party_index,
@@ -1541,28 +1542,26 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
         let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
-        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let pi = PartyIndex::new(party_index).unwrap();
-            let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
+            let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap())
                 .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
-            kept_1to2.insert(pi, keep);
+            kept_1to2.insert(party_index, keep);
             transmit_1to2.insert(party_index, transmit);
         }
 
         // Communication round 1
-        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut received_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for &party_index in &executing_parties {
-            let pi = PartyIndex::new(party_index).unwrap();
             let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
                 .values()
                 .flatten()
-                .filter(|message| message.parties.receiver == pi)
+                .filter(|message| message.parties.receiver == party_index)
                 .cloned()
                 .collect();
 
@@ -1570,15 +1569,14 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let pi = PartyIndex::new(party_index).unwrap();
-            let result = parties[(party_index - 1) as usize].sign_phase2(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&pi).unwrap(),
+                kept_1to2.get(&party_index).unwrap(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -1587,21 +1585,20 @@ mod tests {
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
-                    kept_2to3.insert(pi, keep);
+                    kept_2to3.insert(party_index, keep);
                     transmit_2to3.insert(party_index, transmit);
                 }
             }
         }
 
         // Communication round 2
-        let mut received_2to3 = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
 
         for &party_index in &executing_parties {
-            let pi = PartyIndex::new(party_index).unwrap();
             let filtered_messages: Vec<_> = transmit_2to3
                 .values()
                 .flatten()
-                .filter(|msg| msg.parties.receiver == pi)
+                .filter(|msg| msg.parties.receiver == party_index)
                 .cloned()
                 .collect();
 
@@ -1613,11 +1610,10 @@ mod tests {
         let mut broadcast_3to4: Vec<Broadcast3to4> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
-            let pi = PartyIndex::new(party_index).unwrap();
-            let result = parties[(party_index - 1) as usize].sign_phase3(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&pi).unwrap(),
+                kept_2to3.get(&party_index).unwrap(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -1642,7 +1638,7 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[(some_index - 1) as usize].sign_phase4(
+        let result = parties[(some_index.as_u8() - 1) as usize].sign_phase4(
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
@@ -1798,17 +1794,16 @@ mod tests {
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
-        let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
+        let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
+            .map(|i| PartyIndex::new(i).unwrap())
+            .collect();
 
         // Each party prepares their data for this signing session.
-        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+        let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
-            let counterparties: Vec<PartyIndex> = executing_parties
-                .iter()
-                .filter(|&&index| index != party_index)
-                .map(|&index| PartyIndex::new(index).unwrap())
-                .collect();
+            let mut counterparties = executing_parties.clone();
+            counterparties.retain(|index| *index != party_index);
 
             all_data.insert(
                 party_index,
@@ -1821,29 +1816,27 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
         let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
-        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let pi = PartyIndex::new(party_index).unwrap();
-            let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
+            let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap())
                 .unwrap();
 
             unique_kept_1to2.insert(party_index, unique_keep);
-            kept_1to2.insert(pi, keep);
+            kept_1to2.insert(party_index, keep);
             transmit_1to2.insert(party_index, transmit);
         }
 
         // Communication round 1
-        let mut received_1to2 = BTreeMap::new();
+        let mut received_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
 
         for &party_index in &executing_parties {
-            let pi = PartyIndex::new(party_index).unwrap();
             let filtered_messages: Vec<_> = transmit_1to2
                 .values()
                 .flatten()
-                .filter(|msg| msg.parties.receiver == pi)
+                .filter(|msg| msg.parties.receiver == party_index)
                 .cloned()
                 .collect();
 
@@ -1851,15 +1844,14 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let pi = PartyIndex::new(party_index).unwrap();
-            let result = parties[(party_index - 1) as usize].sign_phase2(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&pi).unwrap(),
+                kept_1to2.get(&party_index).unwrap(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -1868,21 +1860,20 @@ mod tests {
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
-                    kept_2to3.insert(pi, keep);
+                    kept_2to3.insert(party_index, keep);
                     transmit_2to3.insert(party_index, transmit);
                 }
             }
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
 
         for &party_index in &executing_parties {
-            let pi = PartyIndex::new(party_index).unwrap();
             let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
                 .values()
                 .flatten()
-                .filter(|message| message.parties.receiver == pi)
+                .filter(|message| message.parties.receiver == party_index)
                 .cloned()
                 .collect();
 
@@ -1894,11 +1885,10 @@ mod tests {
         let mut broadcast_3to4: Vec<Broadcast3to4> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
-            let pi = PartyIndex::new(party_index).unwrap();
-            let result = parties[(party_index - 1) as usize].sign_phase3(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&pi).unwrap(),
+                kept_2to3.get(&party_index).unwrap(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -1923,7 +1913,7 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[(some_index - 1) as usize].sign_phase4(
+        let result = parties[(some_index.as_u8() - 1) as usize].sign_phase4(
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,

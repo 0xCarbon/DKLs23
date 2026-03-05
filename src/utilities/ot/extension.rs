@@ -200,6 +200,7 @@ impl OTESender {
     /// Will return `Err` if `input_correlations` does not have the correct length,
     /// if the received data has incorrect dimensions, or if the consistency
     /// check using the receiver values fails.
+    #[allow(clippy::type_complexity)]
     pub fn run(
         &self,
         session_id: &[u8],
