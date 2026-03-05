@@ -74,7 +74,7 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 ///
 /// The `proof` is broadcasted after Phase 3.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct ProofCommitment {
+pub struct ProofCommitment {
     pub index: u8,
     pub proof: DLogProof,
     pub commitment: HashOutput,
@@ -94,7 +94,7 @@ pub struct SessionData {
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct TransmitInitZeroSharePhase2to4 {
+pub struct TransmitInitZeroSharePhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
@@ -103,7 +103,7 @@ pub(crate) struct TransmitInitZeroSharePhase2to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct TransmitInitZeroSharePhase3to4 {
+pub struct TransmitInitZeroSharePhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -132,7 +132,7 @@ pub(crate) struct KeepInitZeroSharePhase3to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct TransmitInitMulPhase3to4 {
+pub struct TransmitInitMulPhase3to4 {
     pub parties: PartiesMessage,
 
     pub dlog_proof: DLogProof,
@@ -161,7 +161,7 @@ pub(crate) struct KeepInitMulPhase3to4 {
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct BroadcastDerivationPhase2to4 {
+pub struct BroadcastDerivationPhase2to4 {
     pub sender_index: u8,
     pub cc_commitment: HashOutput,
 }
@@ -170,7 +170,7 @@ pub(crate) struct BroadcastDerivationPhase2to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct BroadcastDerivationPhase3to4 {
+pub struct BroadcastDerivationPhase3to4 {
     pub sender_index: u8,
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
