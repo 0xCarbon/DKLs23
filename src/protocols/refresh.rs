@@ -377,7 +377,7 @@ impl Party {
         // Again, the derivation part is omitted.
 
         // DKG
-        let verifying_pk = step5(
+        let (verifying_pk, _) = step5(
             &self.parameters,
             self.party_index,
             refresh_sid,
@@ -821,7 +821,7 @@ impl Party {
         // Again, the derivation part is omitted.
 
         // DKG
-        let verifying_pk = step5(
+        let (verifying_pk, _) = step5(
             &self.parameters,
             self.party_index,
             refresh_sid,
@@ -1146,7 +1146,7 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
@@ -1380,7 +1380,7 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
@@ -1679,7 +1679,7 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
 
