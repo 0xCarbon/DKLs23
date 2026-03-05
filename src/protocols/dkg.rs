@@ -198,14 +198,12 @@ pub struct UniqueKeepDerivationPhase2to3 {
 // DISTRIBUTED KEY GENERATION (DKG)
 
 // STEPS
-// We implement each step of the DKLs23 protocol.
 
 /// Generates a random polynomial of degree t-1.
 ///
 /// This is Step 1 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
 pub fn step1(parameters: &Parameters) -> Vec<Scalar> {
-    // We represent the polynomial by its coefficients.
     let mut rng = rng::get_rng(); // Reuse RNG
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
     for _ in 0..parameters.threshold {
@@ -325,7 +323,6 @@ pub fn step5(
     for i in 1..=(parameters.share_count - parameters.threshold + 1) {
         let mut current_pk = AffinePoint::IDENTITY;
         for j in i..(i + parameters.threshold) {
-            // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
             // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polynomial from Step 3.
             let j_scalar = Scalar::from(u32::from(j));
             let mut lj_numerator = Scalar::ONE;
@@ -425,7 +422,6 @@ pub fn phase2(
 
     // Initialization - Zero shares.
 
-    // We will use BTreeMap to keep messages: the key indicates the party to whom the message refers.
     let mut zero_keep = BTreeMap::new();
     let mut zero_transmit = Vec::with_capacity((data.parameters.share_count - 1) as usize);
 
@@ -437,7 +433,6 @@ pub fn phase2(
         // Generate initial seeds.
         let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
 
-        // We first send the commitments. We keep the rest to send later.
         zero_keep.insert(i, KeepInitZeroSharePhase2to3 { seed, salt });
         zero_transmit.push(TransmitInitZeroSharePhase2to4 {
             parties: PartiesMessage {
@@ -492,6 +487,7 @@ pub fn phase2(
 /// Some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
+#[allow(clippy::type_complexity)]
 pub fn phase3(
     data: &SessionData,
     zero_kept: &BTreeMap<u8, KeepInitZeroSharePhase2to3>,
@@ -511,7 +507,6 @@ pub fn phase3(
     for (&target_party, message_kept) in zero_kept.iter() {
         // The messages kept contain the seed and the salt.
         // They have to be transmitted to the target party.
-        // We keep the seed with us for the next phase.
         let keep = KeepInitZeroSharePhase3to4 {
             seed: message_kept.seed,
         };
@@ -541,10 +536,7 @@ pub fn phase3(
         }
 
         // RECEIVER
-        // We are the receiver and i = sender.
 
-        // We first compute a new session id.
-        // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
         let mul_sid_receiver = [
             "Multiplication protocol".as_bytes(),
             &data.party_index.to_be_bytes(),
@@ -556,10 +548,8 @@ pub fn phase3(
         let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&mul_sid_receiver);
 
         // SENDER
-        // We are the sender and i = receiver.
 
         // New session id as above.
-        // Note that the indexes are now in the opposite order.
         let mul_sid_sender = [
             "Multiplication protocol".as_bytes(),
             &i.to_be_bytes(),
@@ -569,8 +559,6 @@ pub fn phase3(
         .concat();
 
         let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(&mul_sid_sender);
-
-        // We gather these values.
 
         let transmit = TransmitInitMulPhase3to4 {
             parties: PartiesMessage {
@@ -657,6 +645,7 @@ pub fn phase3(
 ///
 /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
 /// with the party indices in the received vectors.
+#[allow(clippy::too_many_arguments)]
 pub fn phase4(
     data: &SessionData,
     poly_point: &Scalar,
@@ -679,7 +668,6 @@ pub fn phase4(
 
     // The public key cannot be the point at infinity.
     // This is practically impossible, but easy to check.
-    // We also verify that pk is not the generator point, because
     // otherwise it would be trivial to find the "total" secret key.
     if pk == AffinePoint::IDENTITY || pk == AffinePoint::GENERATOR {
         return Err(Abort::new(
@@ -689,7 +677,6 @@ pub fn phase4(
     }
 
     // Our key share (that is, poly_point), should not be trivial.
-    // Note that the other parties can deduce the triviality from
     // the corresponding proof in proofs_commitments.
     if *poly_point == Scalar::ZERO || *poly_point == Scalar::ONE {
         return Err(Abort::new(
@@ -790,7 +777,6 @@ pub fn phase4(
                 )
             })?;
 
-        // We verify the commitment.
         let verification = ZeroShare::verify_seed(
             &message_received_3.seed,
             &message_received_2.commitment,
@@ -805,7 +791,6 @@ pub fn phase4(
             ));
         }
 
-        // We form the final seed pairs.
         seeds.push(ZeroShare::generate_seed_pair(
             data.party_index,
             *target_party,
@@ -866,9 +851,7 @@ pub fn phase4(
         })?;
 
         // RECEIVER
-        // We are the receiver and target_party = sender.
 
-        // We retrieve the id used for multiplication. Note that the first party
         // is the receiver and the second, the sender.
         let mul_sid_receiver = [
             "Multiplication protocol".as_bytes(),
@@ -889,7 +872,6 @@ pub fn phase4(
         let mul_receiver: MulReceiver = match receiver_result {
             Ok(r) => r,
             Err(error) => {
-                // In DKG this failed run does not produce reusable OT state,
                 // so we keep abort classification recoverable.
                 return Err(Abort::new(
                     data.party_index,
@@ -902,9 +884,7 @@ pub fn phase4(
         };
 
         // SENDER
-        // We are the sender and target_party = receiver.
 
-        // We retrieve the id used for multiplication. Note that the first party
         // is the receiver and the second, the sender.
         let mul_sid_sender = [
             "Multiplication protocol".as_bytes(),
@@ -926,7 +906,6 @@ pub fn phase4(
         let mul_sender: MulSender = match sender_result {
             Ok(s) => s,
             Err(error) => {
-                // In DKG this failed run does not produce reusable OT state,
                 // so we keep abort classification recoverable.
                 return Err(Abort::new(
                     data.party_index,
@@ -938,17 +917,14 @@ pub fn phase4(
             }
         };
 
-        // We finish the initialization.
         mul_receivers.insert(*target_party, mul_receiver);
         mul_senders.insert(*target_party, mul_sender.clone());
     }
 
     // Initialization - BIP-32.
-    // We check the commitments and create the final chain code.
     // It will be given by the XOR of the auxiliary chain codes.
-    let mut chain_code: ChainCode = [0; 32];
+    let mut chain_code: ChainCode = [0; crate::protocols::derivation::CHAIN_CODE_LEN];
     for i in 1..=data.parameters.share_count {
-        // We take the messages in the correct order (that's why the BTreeMap).
         let phase3_msg = bip_received_phase3.get(&i).ok_or_else(|| {
             Abort::new(
                 data.party_index,
@@ -975,14 +951,11 @@ pub fn phase4(
             ));
         }
 
-        // We XOR this auxiliary chain code to the final result.
         let current_aux_chain_code = phase3_msg.aux_chain_code;
-        for j in 0..32 {
+        for j in 0..crate::protocols::derivation::CHAIN_CODE_LEN {
             chain_code[j] ^= current_aux_chain_code[j];
         }
     }
-
-    // We can finally finish key generation!
 
     let derivation_data = DerivData {
         depth: 0,
@@ -1029,7 +1002,8 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
 
     // Take the last 20 bytes of the hash and convert to a hex string
     let full_hash = hasher.finalize_reset();
-    let address = hex::encode(&full_hash[12..]);
+    const ETH_ADDRESS_OFFSET: usize = 12;
+    let address = hex::encode(&full_hash[ETH_ADDRESS_OFFSET..]);
 
     // Compute the Keccak256 hash of the lowercase hexadecimal address
     hasher.update(address.to_lowercase().as_bytes());
@@ -1053,6 +1027,7 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::type_complexity, clippy::useless_vec)]
 mod tests {
 
     use super::*;
@@ -1078,7 +1053,8 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1240,7 +1216,6 @@ mod tests {
 
     // DISTRIBUTED KEY GENERATION (without initializations)
 
-    // We are not testing in the moment the initializations for zero shares
     // and multiplication here because they are only used during signing.
 
     // The initializations are checked after these tests (see below).
@@ -1253,7 +1228,8 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // Phase 1 (Steps 1 and 2)
         let p1_phase1 = step2(&parameters, &step1(&parameters)); //p1 = Party 1
@@ -1297,7 +1273,8 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
@@ -1309,7 +1286,6 @@ mod tests {
         }
 
         // Communication round 1
-        // We transpose the matrix
         let mut poly_fragments = vec![
             Vec::<Scalar>::with_capacity(parameters.share_count as usize);
             parameters.share_count as usize
@@ -1354,14 +1330,12 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
-        // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(1u32), Scalar::from(3u32)];
         let p2_poly_fragments = vec![Scalar::from(2u32), Scalar::from(4u32)];
 
-        // In this case, the secret polynomial p is of degree 1 and satisfies p(1) = 1+3 = 4 and p(2) = 2+4 = 6
-        // In particular, we must have p(0) = 2, which is the "hypothetical" secret key.
         // For this reason, we should expect the public key to be 2 * generator.
 
         // Phase 2 (Step 3)
@@ -1398,14 +1372,12 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
-        // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(12u32), Scalar::from(2u32)];
         let p2_poly_fragments = vec![Scalar::from(2u32), Scalar::from(3u32)];
 
-        // In this case, the secret polynomial p is of degree 1 and satisfies p(1) = 12+2 = 14 and p(2) = 2+3 = 5
-        // In particular, we must have p(0) = 23, which is the "hypothetical" secret key.
         // For this reason, we should expect the public key to be 23 * generator.
 
         // Phase 2 (Step 3)
@@ -1443,9 +1415,9 @@ mod tests {
             threshold: 3,
             share_count: 5,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
-        // We will define the fragments directly
         let poly_fragments = vec![
             vec![
                 Scalar::from(5u32),
@@ -1484,10 +1456,8 @@ mod tests {
             ],
         ];
 
-        // In this case, the secret polynomial p is of degree 2 and satisfies:
         // p(1) = -4, p(2) = -4, p(3) = -2, p(4) = 2, p(5) = 8.
         // Hence we must have p(x) = x^2 - 3x - 2.
-        // In particular, we must have p(0) = -2, which is the "hypothetical" secret key.
         // For this reason, we should expect the public key to be (-2) * generator.
 
         // Phase 2 (Step 3) + Communication rounds 2 and 3
@@ -1527,7 +1497,6 @@ mod tests {
 
     // DISTRIBUTED KEY GENERATION (with initializations)
 
-    // We now test if the initialization procedures don't abort.
     // The verification that they really work is done in signing.rs.
 
     // Disclaimer: this implementation is not the most efficient,
@@ -1548,7 +1517,8 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1607,9 +1577,6 @@ mod tests {
         let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
-            // We don't need to transmit the commitments because proofs_commitments is already what we need.
-            // In practice, this should be done here.
-
             let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_2to4 {
@@ -1624,7 +1591,6 @@ mod tests {
         }
 
         // bip_transmit_2to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 3
         let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
@@ -1656,9 +1622,6 @@ mod tests {
         let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
-            // We don't need to transmit the proofs because proofs_commitments is already what we need.
-            // In practice, this should be done here.
-
             let mut new_row: Vec<TransmitInitZeroSharePhase3to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_3to4 {
@@ -1685,7 +1648,6 @@ mod tests {
         }
 
         // bip_transmit_3to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
         let mut parties: Vec<Party> = Vec::with_capacity((parameters.share_count) as usize);
@@ -1712,7 +1674,6 @@ mod tests {
             }
         }
 
-        // We check if the public keys and chain codes are the same.
         let expected_pk = parties[0].pk;
         let expected_chain_code = parties[0].derivation_data.chain_code;
         for party in &parties {

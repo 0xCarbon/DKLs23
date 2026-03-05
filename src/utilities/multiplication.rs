@@ -94,11 +94,9 @@ impl ErrorMul {
     }
 }
 
-// We implement the protocol.
 impl MulSender {
     // INITIALIZE
 
-    // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
     // multiplication protocol is the same as for our OT extension protocol.
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
@@ -131,7 +129,6 @@ impl MulSender {
         let ote_sender =
             OTESender::init_phase2(ot_receiver, session_id, correlation, vec_r, dlog_proof)?;
 
-        // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut counter = *nonce;
@@ -153,7 +150,6 @@ impl MulSender {
     }
 
     // PROTOCOL
-    // We now follow the steps of Protocol 1 in DKLs19, implementing
     // the suggestions of DKLs23 as well.
 
     // It is worth pointing out that the parameter l from DKLs19 is not
@@ -177,11 +173,6 @@ impl MulSender {
     ) -> Result<(Vec<Scalar>, MulDataToReceiver), ErrorMul> {
         // RANDOMIZED MULTIPLICATION
 
-        // Step 1 - No action for the sender.
-
-        // Step 2 - We sample the pads a_tilde and the check values a_hat.
-        // We also set the correlation for the OT protocol.
-
         // There are L pads and L check_values.
         let mut a_tilde: Vec<Scalar> = Vec::with_capacity(L as usize);
         let mut a_hat: Vec<Scalar> = Vec::with_capacity(L as usize);
@@ -191,7 +182,6 @@ impl MulSender {
         }
 
         // For the correlation, let us first explain the case L = 1.
-        // In this case, there are actually two correlations: one is
         // made with BATCH_SIZE copies of a_tilde and the other with
         // BATCH_SIZE copies of a_hat. We use two correlations in order
         // to get two outputs, as in DKLs19. Both of them will be used
@@ -199,7 +189,6 @@ impl MulSender {
         //
         // Now, by DKLs23, we hardcoded l = 1 in DKLs19. At the same time,
         // DKLs23 has its parameter L. To adapt the old protocol, we repeat
-        // Step 2 in DKLs19 L times, so in the end we get 2*L correlations.
         let mut correlation_tilde: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
         let mut correlation_hat: Vec<Vec<Scalar>> = Vec::with_capacity(L as usize);
         for i in 0..L {
@@ -210,10 +199,7 @@ impl MulSender {
             correlation_hat.push(correlation_hat_i);
         }
 
-        // We gather the correlations.
         let correlations = [correlation_tilde, correlation_hat].concat();
-
-        // Step 3 - We execute the OT protocol.
 
         // It is here that we use the "forced-reuse" technique that
         // DKLs23 mentions on page 8. As they say: "Alice performs the
@@ -248,9 +234,6 @@ impl MulSender {
         // This is the sender's output from the OT protocol with the notation from DKLs19.
         let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
-        // Step 4 - We compute the shared random values.
-
-        // We use data as a transcript from Step 3.
         let transcript = [
             data.u.concat(),
             data.verify_x.to_vec(),
@@ -273,18 +256,14 @@ impl MulSender {
             ));
         }
 
-        // Step 5 - We compute the verification value.
-        // We use Section 5.1 in DKLs23 for an optimization of the
         // protocol in DKLs19.
 
-        // We have to compute a matrix r and a vector u.
         // Only a hash of r will be sent to the receiver,
         // so we'll compute r directly in bytes.
         // The variable below saves each row of r in bytes.
         let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L as usize);
         let mut verify_u: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            // We compute the i-th row of the matrix r in bytes.
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 let entry = (chi_tilde[i as usize] * z_tilde[i as usize][j as usize])
@@ -295,21 +274,15 @@ impl MulSender {
             let row_i_as_bytes = entries_as_bytes.concat();
             rows_r_as_bytes.push(row_i_as_bytes);
 
-            // We compute the i-th entry of the vector u.
             let entry = (chi_tilde[i as usize] * a_tilde[i as usize])
                 + (chi_hat[i as usize] * a_hat[i as usize]);
             verify_u.push(entry);
         }
         let r_as_bytes = rows_r_as_bytes.concat();
 
-        // We transform r into a hash.
         let verify_r: HashOutput = tagged_hash(TAG_MUL_VERIFY, &[session_id, &r_as_bytes]);
 
-        // Step 6 - No action for the sender.
-
         // INPUT AND ADJUSTMENT
-
-        // Step 7 - We compute the difference gamma_A.
 
         let mut gamma: Vec<Scalar> = Vec::with_capacity(L as usize);
         for i in 0..L {
@@ -317,7 +290,6 @@ impl MulSender {
             gamma.push(difference);
         }
 
-        // Step 8 - Finally, we compute the protocol's output.
         // Recall that we hardcoded gamma_B = 0.
 
         let mut output: Vec<Scalar> = Vec::with_capacity(L as usize);
@@ -328,8 +300,6 @@ impl MulSender {
             }
             output.push(summation);
         }
-
-        // We now return all values.
 
         let data_to_receiver = MulDataToReceiver {
             vector_of_tau,
@@ -345,7 +315,6 @@ impl MulSender {
 impl MulReceiver {
     // INITIALIZE
 
-    // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
     // multiplication protocol is the same as for our OT extension protocol.
     // Thus, we repeat the phases from the file ot_extension.rs.
     // The only difference is that we include the sampling for the public gadget vector.
@@ -363,7 +332,6 @@ impl MulReceiver {
 
         // For the choice of the public gadget vector, we will use the same approach
         // as in https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
-        // We sample a nonce that will be used by both parties to compute a common vector.
         let nonce = Scalar::random(&mut rng::get_rng());
 
         (ot_sender, proof, nonce)
@@ -386,7 +354,6 @@ impl MulReceiver {
     ) -> Result<MulReceiver, ErrorOT> {
         let ote_receiver = OTEReceiver::init_phase2(ot_sender, session_id, seed, enc_proofs)?;
 
-        // We compute the public gadget vector from the nonce, in the same way as in
         // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/mul.rs.
         let mut public_gadget: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
         let mut counter = *nonce;
@@ -408,7 +375,6 @@ impl MulReceiver {
     }
 
     // PROTOCOL
-    // We now follow the steps of Protocol 1 in DKLs19, implementing
     // the suggestions of DKLs23 as well.
 
     // It is worth pointing out that the parameter l from DKLs19 is not
@@ -432,8 +398,6 @@ impl MulReceiver {
     ) -> Result<(Scalar, MulDataToKeepReceiver, OTEDataToSender), ErrorMul> {
         // RANDOMIZED MULTIPLICATION
 
-        // Step 1 - We sample the choice bits and compute the pad b_tilde.
-
         // Since we are hardcoding gamma_B = 0, b_tilde will serve as the
         // number b that the receiver inputs into the protocol. Hence, we
         // will denote b_tilde simply as b.
@@ -448,11 +412,6 @@ impl MulReceiver {
             choice_bits.push(current_bit);
         }
 
-        // Step 2 - No action for the receiver.
-
-        // Step 3 (Incomplete) - We start the OT extension protocol.
-
-        // Note that this protocol has one more round, so the receiver
         // cannot get the output immediately. This will only be computed
         // at the beginning of the next phase for the receiver.
 
@@ -469,9 +428,6 @@ impl MulReceiver {
                 }
             };
 
-        // Step 4 - We compute the shared random values.
-
-        // We use data_to_sender as a transcript from Step 3.
         let transcript = [
             data_to_sender.u.concat(),
             data_to_sender.verify_x.to_vec(),
@@ -494,10 +450,7 @@ impl MulReceiver {
             ));
         }
 
-        // Step 5 - No action for the receiver, but he will receive
         // some values for the next step, so we stop here.
-
-        // We now return all values.
 
         let data_to_keep = MulDataToKeepReceiver {
             b,
@@ -532,8 +485,6 @@ impl MulReceiver {
             return Err(ErrorMul::new("Received data has incorrect dimensions"));
         }
 
-        // Step 3 (Conclusion) - We conclude the OT protocol.
-
         // The sender applied the protocol 2*L times with our data,
         // so we will have 2*L outputs (we refer to this number as
         // the "OT width").
@@ -561,18 +512,13 @@ impl MulReceiver {
         // This is the receiver's output from the OT protocol with the notation from DKLs19.
         let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
-        // Step 6 - We verify if the data sent by the sender is consistent.
-
-        // We use Section 5.1 in DKLs23 for an optimization of the
         // protocol in DKLs19.
 
-        // We have to compute a matrix r and a vector u.
         // Only a hash of r will be sent to us so we'll
         // reconstruct r directly in bytes.
         // The variable below saves each row of r in bytes.
         let mut rows_r_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(L as usize);
         for i in 0..L {
-            // We compute the i-th row of the matrix r in bytes.
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 // The entry depends on the choice bits.
@@ -591,10 +537,8 @@ impl MulReceiver {
         }
         let r_as_bytes = rows_r_as_bytes.concat();
 
-        // We transform r into a hash.
         let expected_verify_r: HashOutput = tagged_hash(TAG_MUL_VERIFY, &[session_id, &r_as_bytes]);
 
-        // We compare the values.
         if data_received.verify_r != expected_verify_r {
             return Err(ErrorMul::new(
                 "Sender cheated in multiplication protocol: Consistency check failed!",
@@ -603,10 +547,8 @@ impl MulReceiver {
 
         // INPUT AND ADJUSTMENT
 
-        // Step 7 - No action for the receiver.
         // (Remember that we hardcoded gamma_B = 0.)
 
-        // Step 8 - Finally, we compute the protocol's output.
         // Recall that we hardcoded gamma_B = 0.
 
         let mut output: Vec<Scalar> = Vec::with_capacity(L as usize);
@@ -629,7 +571,7 @@ mod tests {
     use rand::RngExt;
 
     fn prepare_mul_receiver_inputs(
-        session_id: &[u8; 32],
+        session_id: &[u8; crate::protocols::derivation::CHAIN_CODE_LEN],
     ) -> (MulReceiver, MulDataToKeepReceiver, MulDataToReceiver) {
         // INITIALIZATION
         let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(session_id);
@@ -681,7 +623,8 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_multiplication() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // INITIALIZATION
 
@@ -780,7 +723,8 @@ mod tests {
     /// Tests if receiver-side multiplication rejects malformed vector lengths.
     #[test]
     fn test_multiplication_receiver_rejects_wrong_verify_vector_lengths() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // INITIALIZATION
         let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&session_id);
@@ -826,7 +770,8 @@ mod tests {
     /// Tests if the receiver rejects a tampered verify_r hash.
     #[test]
     fn test_multiplication_rejects_tampered_verify_r() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let (mul_receiver, data_to_keep, mut data_to_receiver) =
             prepare_mul_receiver_inputs(&session_id);
 
@@ -840,7 +785,8 @@ mod tests {
     /// Tests if the receiver rejects tampered verify_u entries.
     #[test]
     fn test_multiplication_rejects_tampered_verify_u() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let (mul_receiver, data_to_keep, mut data_to_receiver) =
             prepare_mul_receiver_inputs(&session_id);
 
@@ -857,7 +803,8 @@ mod tests {
     /// patterns can propagate as incorrect outputs instead of immediate rejection.
     #[test]
     fn test_multiplication_rejects_tampered_tau_vectors() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let (mul_receiver, data_to_keep, mut data_to_receiver) =
             prepare_mul_receiver_inputs(&session_id);
 

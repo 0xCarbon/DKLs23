@@ -148,7 +148,6 @@ pub struct UniqueKeep2to3 {
 }
 
 // SIGNING PROTOCOL
-// We now follow Protocol 3.6 of DKLs23.
 
 /// Implementations related to the `DKLs23` signing protocol ([read more](self)).
 impl Party {
@@ -163,6 +162,7 @@ impl Party {
     /// Will return `Err` if the number of counterparties is wrong, if any
     /// party index is out of range, or if the counterparty list contains our
     /// own index.
+    #[allow(clippy::type_complexity)]
     pub fn sign_phase1(
         &self,
         data: &SignData,
@@ -174,7 +174,6 @@ impl Party {
         ),
         Abort,
     > {
-        // Step 4 - We check if we have the correct number of counter parties.
         if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
             return Err(Abort::new(
                 self.party_index,
@@ -225,13 +224,10 @@ impl Party {
             }
         }
 
-        // Step 5 - We sample our secret data.
         let instance_key = Scalar::random(&mut rng::get_rng());
         let inversion_mask = Scalar::random(&mut rng::get_rng());
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
-
-        // Step 6 - We prepare the messages to keep and to send.
 
         let mut keep: BTreeMap<u8, KeepPhase1to2> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase1to2> =
@@ -241,11 +237,7 @@ impl Party {
             let (commitment, salt) = commit_point(&instance_point);
 
             // Two-party multiplication functionality.
-            // We start as the receiver.
 
-            // First, let us compute a session id for it.
-            // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
-            // We also use both the sign id and the DKG id.
             // The chain code binds the signing session to the derived key path.
             let mul_sid = [
                 "Multiplication protocol".as_bytes(),
@@ -257,7 +249,6 @@ impl Party {
             ]
             .concat();
 
-            // We run the first phase.
             let mul_receiver = self.mul_receivers.get(counterparty).ok_or_else(|| {
                 Abort::new(
                     self.party_index,
@@ -277,7 +268,6 @@ impl Party {
                 }
             };
 
-            // We gather the messages.
             keep.insert(
                 *counterparty,
                 KeepPhase1to2 {
@@ -297,9 +287,7 @@ impl Party {
         }
 
         // Zero-shares functionality.
-        // We put it here because it doesn't depend on counter parties.
 
-        // We first compute a session id.
         // Now, different to DKLs23, we won't put the indexes from the parties
         // because the sign id refers only to this set of parties, hence
         // it's simpler and almost equivalent to take just the following:
@@ -321,7 +309,6 @@ impl Party {
             zeta,
         };
 
-        // We now return all these values.
         Ok((unique_keep, keep, transmit))
     }
 
@@ -345,6 +332,7 @@ impl Party {
     ///
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
+    #[allow(clippy::type_complexity)]
     pub fn sign_phase2(
         &self,
         data: &SignData,
@@ -359,11 +347,6 @@ impl Party {
         ),
         Abort,
     > {
-        // Step 7
-
-        // We first compute the values that only depend on us.
-
-        // We find the Lagrange coefficient associated to us.
         // It is the same as the one calculated during DKG.
         let mut l_numerator = Scalar::ONE;
         let mut l_denominator = Scalar::ONE;
@@ -432,11 +415,9 @@ impl Party {
                 )
             })?;
 
-            // We continue the multiplication protocol to get the values
             // c^u and c^v from the paper. We are now the sender.
 
             // Let us retrieve the session id for multiplication.
-            // Note that the roles are now reversed.
             let mul_sid = [
                 "Multiplication protocol".as_bytes(),
                 &counterparty.to_be_bytes(),
@@ -476,7 +457,6 @@ impl Party {
                 }
             }
 
-            // We compute the remaining values.
             let gamma_u = (AffinePoint::GENERATOR * c_u).to_affine();
             let gamma_v = (AffinePoint::GENERATOR * c_v).to_affine();
 
@@ -621,10 +601,8 @@ impl Party {
             }
 
             // Finishing the multiplication protocol.
-            // We are now the receiver.
 
             // Let us retrieve the session id for multiplication.
-            // Note that we reverse the roles again.
             let mul_sid = [
                 "Multiplication protocol".as_bytes(),
                 &self.party_index.to_be_bytes(),
@@ -663,7 +641,6 @@ impl Party {
                 }
             }
 
-            // First consistency checks.
             let generator = AffinePoint::GENERATOR;
 
             if (message.instance_point * current_kept.chi) != ((generator * d_u) + message.gamma_u)
@@ -675,7 +652,6 @@ impl Party {
                 ));
             }
 
-            // In the paper, they write "Lagrange(P, j, 0) · P(j)". For the math
             // to be consistent, we believe it should be "pk_j" instead.
             // This agrees with the alternative computation of gamma_v at the
             // end of page 21 in the paper.
@@ -687,7 +663,6 @@ impl Party {
                 ));
             }
 
-            // We add the current summand to our sums.
             expected_public_key =
                 (ProjectivePoint::from(expected_public_key) + message.public_share).to_affine();
             total_instance_point =
@@ -707,7 +682,6 @@ impl Party {
             ));
         }
 
-        // We introduce another consistency check: the total instance point
         // should not be the point at infinity (this is not specified on
         // DKLs23 but actually on ECDSA itself). In any case, the probability
         // of this happening is very low.
@@ -718,7 +692,6 @@ impl Party {
             ));
         }
 
-        // We compute u_i, v_i and w_i from the paper.
         let u = (unique_kept.instance_key * first_sum_u_v) + second_sum_u;
         let v = (unique_kept.key_share * first_sum_u_v) + second_sum_v;
 
@@ -730,7 +703,6 @@ impl Party {
 
         let broadcast = Broadcast3to4 { u, w };
 
-        // We also return the x-coordinate of the instance point.
         // This is half of the final signature.
 
         Ok((x_coord, broadcast))
@@ -764,8 +736,6 @@ impl Party {
         received: &[Broadcast3to4],
         normalize: bool,
     ) -> Result<(String, u8), Abort> {
-        // Step 10
-
         let mut numerator = Scalar::ZERO;
         let mut denominator = Scalar::ZERO;
         for message in received {
@@ -801,7 +771,6 @@ impl Party {
             ));
         }
 
-        // First we need to calculate R (signature point) in order to retrieve its y coordinate.
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
@@ -821,7 +790,6 @@ impl Party {
         let s_inverse = s.invert().unwrap();
         let signature_point = ((first + second) * s_inverse).to_affine();
 
-        // Now the recovery id can be calculated using the following conditions:
         // - If R.y is even and R.x < n (curve order): recovery_id = 0
         // - If R.y is odd  and R.x < n:               recovery_id = 1
         // - If R.y is even and R.x >= n:               recovery_id = 2
@@ -831,7 +799,9 @@ impl Party {
         // meaning Scalar::reduce(&R.x) lost information. For secp256k1, n < p, so
         // this can happen in the range [n, p-1] with negligible probability.
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
-        let is_y_odd = signature_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
+        const Y_COORD_LAST_BYTE: usize = 31;
+        let is_y_odd =
+            signature_point.to_sec1_point(false).y().unwrap()[Y_COORD_LAST_BYTE] & 1 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         Ok((signature, rec_id.into()))
@@ -840,7 +810,8 @@ impl Party {
 
 /// Parses a 32-byte hex string (64 hex chars) as `U256`.
 fn parse_u256_from_hex_32bytes(hex_value: &str) -> Option<U256> {
-    let mut bytes = [0u8; 32];
+    const HEX_BYTES_LEN: usize = 32;
+    let mut bytes = [0u8; HEX_BYTES_LEN];
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
         return None;
     }
@@ -895,6 +866,7 @@ pub fn verify_ecdsa_signature(
 
 #[cfg(test)]
 #[allow(deprecated)]
+#[allow(clippy::type_complexity, clippy::useless_vec)]
 mod tests {
     use super::*;
     use crate::protocols::dkg::*;
@@ -921,14 +893,14 @@ mod tests {
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
 
-        // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1038,7 +1010,6 @@ mod tests {
             }
         }
 
-        // We verify all parties got the same x coordinate.
         let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
             assert_eq!(x_coord, x_coords[i as usize]);
@@ -1059,7 +1030,6 @@ mod tests {
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
-        // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
     }
 
     /// Tests if the signing protocol generates a valid ECDSA signature
@@ -1077,14 +1047,14 @@ mod tests {
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
 
-        // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1194,7 +1164,6 @@ mod tests {
             }
         }
 
-        // We verify all parties got the same x coordinate.
         let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
             assert_eq!(x_coord, x_coords[i as usize]);
@@ -1218,7 +1187,6 @@ mod tests {
             }
             Ok(s) => s,
         };
-        // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
 
         // ECDSA (computations that would be done if there were only one person)
 
@@ -1228,7 +1196,6 @@ mod tests {
             total_instance_key += kept.instance_key;
         }
 
-        // We compare the total "instance point" with the parties' calculations.
         let total_instance_point = (AffinePoint::GENERATOR * total_instance_key).to_affine();
         let expected_x_coord = hex::encode(total_instance_point.x());
         assert_eq!(x_coord, expected_x_coord);
@@ -1242,7 +1209,6 @@ mod tests {
             ))
         );
 
-        // Now we can find the signature in the usual way.
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
                 + (secret_key * Scalar::reduce(&U256::from_be_hex(&expected_x_coord))));
@@ -1251,10 +1217,11 @@ mod tests {
         // Calculate the expected recovery id
         let x_as_int = U256::from_be_hex(&expected_x_coord);
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
-        let is_y_odd = total_instance_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
+        const Y_COORD_LAST_BYTE: usize = 31;
+        let is_y_odd =
+            total_instance_point.to_sec1_point(false).y().unwrap()[Y_COORD_LAST_BYTE] & 1 == 1;
         let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
-        // We compare the results.
         assert_eq!(signature.0, expected_signature);
         assert_eq!(signature.1, expected_rec_id.into());
     }
@@ -1274,7 +1241,8 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1333,9 +1301,6 @@ mod tests {
         let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
-            // We don't need to transmit the commitments because proofs_commitments is already what we need.
-            // In practice, this should be done here.
-
             let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_2to4 {
@@ -1350,7 +1315,6 @@ mod tests {
         }
 
         // bip_transmit_2to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 3
         let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
@@ -1382,9 +1346,6 @@ mod tests {
         let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
-            // We don't need to transmit the proofs because proofs_commitments is already what we need.
-            // In practice, this should be done here.
-
             let mut new_row: Vec<TransmitInitZeroSharePhase3to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_3to4 {
@@ -1411,7 +1372,6 @@ mod tests {
         }
 
         // bip_transmit_3to4 is already in the format we need.
-        // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
         let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
@@ -1438,7 +1398,6 @@ mod tests {
             }
         }
 
-        // We check if the public keys and chain codes are the same.
         let expected_pk = parties[0].pk;
         let expected_chain_code = parties[0].derivation_data.chain_code;
         for party in &parties {
@@ -1448,7 +1407,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1558,7 +1517,6 @@ mod tests {
             }
         }
 
-        // We verify all parties got the same x coordinate.
         let x_coord = x_coords[0].clone(); // We take the first one as reference.
         for i in 1..parameters.threshold {
             assert_eq!(x_coord, x_coords[i as usize]);
@@ -1579,7 +1537,6 @@ mod tests {
         if let Err(abort) = result {
             panic!("Party {} aborted: {:?}", abort.index, abort.description);
         }
-        // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
     }
 
     /// Tests if sign_phase4 handles zero denominator without panicking.
@@ -1589,12 +1546,15 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
-            sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
+            sign_id: rng::get_rng()
+                .random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>()
+                .to_vec(),
             counterparties: vec![2],
             message_hash: hash("Message to sign!".as_bytes(), &[]),
         };
@@ -1634,12 +1594,15 @@ mod tests {
             threshold: 3,
             share_count: 3,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
-            sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
+            sign_id: rng::get_rng()
+                .random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>()
+                .to_vec(),
             counterparties: vec![2, 2],
             message_hash: hash("Message to sign!".as_bytes(), &[]),
         };
@@ -1678,11 +1641,12 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id =
+            rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::protocols::derivation::CHAIN_CODE_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
