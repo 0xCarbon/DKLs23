@@ -393,8 +393,10 @@ impl Party {
         }
 
         // Initialization - Zero shares.
-        let mut zero_received_phase2_by_sender: BTreeMap<PartyIndex, &TransmitInitZeroSharePhase2to4> =
-            BTreeMap::new();
+        let mut zero_received_phase2_by_sender: BTreeMap<
+            PartyIndex,
+            &TransmitInitZeroSharePhase2to4,
+        > = BTreeMap::new();
         for message in zero_received_phase2 {
             if message.parties.receiver != self.party_index {
                 return Err(Abort::new(
@@ -424,8 +426,10 @@ impl Party {
                 ));
             }
         }
-        let mut zero_received_phase3_by_sender: BTreeMap<PartyIndex, &TransmitInitZeroSharePhase3to4> =
-            BTreeMap::new();
+        let mut zero_received_phase3_by_sender: BTreeMap<
+            PartyIndex,
+            &TransmitInitZeroSharePhase3to4,
+        > = BTreeMap::new();
         for message in zero_received_phase3 {
             if message.parties.receiver != self.party_index {
                 return Err(Abort::new(
@@ -514,7 +518,8 @@ impl Party {
         // Initialization - Two-party multiplication.
         let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver> = BTreeMap::new();
         let mut mul_senders: BTreeMap<PartyIndex, MulSender> = BTreeMap::new();
-        let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4> = BTreeMap::new();
+        let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4> =
+            BTreeMap::new();
         for message in mul_received {
             if message.parties.receiver != self.party_index {
                 return Err(Abort::new(
@@ -1124,7 +1129,7 @@ mod tests {
 
     struct CompleteRefreshPhase4Inputs {
         parties: Vec<Party>,
-        refresh_sid: [u8; 32],
+        refresh_sid: [u8; crate::utilities::ID_LEN],
         correction_values: Vec<Scalar>,
         proofs_commitments: Vec<ProofCommitment>,
         zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>>,
@@ -1139,11 +1144,11 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
-        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1267,7 +1272,10 @@ mod tests {
 
         let tampered = data.mul_received_3to4[0]
             .iter_mut()
-            .find(|message| message.parties.sender == PartyIndex::new(2).unwrap() && message.parties.receiver == PartyIndex::new(1).unwrap())
+            .find(|message| {
+                message.parties.sender == PartyIndex::new(2).unwrap()
+                    && message.parties.receiver == PartyIndex::new(1).unwrap()
+            })
             .expect("expected party-2 message for party 1 in complete refresh");
         assert!(
             !tampered.enc_proofs.is_empty(),
@@ -1299,7 +1307,10 @@ mod tests {
 
         let tampered = data.mul_received_3to4[0]
             .iter_mut()
-            .find(|message| message.parties.sender == PartyIndex::new(2).unwrap() && message.parties.receiver == PartyIndex::new(1).unwrap())
+            .find(|message| {
+                message.parties.sender == PartyIndex::new(2).unwrap()
+                    && message.parties.receiver == PartyIndex::new(1).unwrap()
+            })
             .expect("expected party-2 message for party 1 in complete refresh");
         assert!(
             !tampered.dlog_proof.proofs.is_empty(),
@@ -1367,13 +1378,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
-        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1516,7 +1527,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1543,7 +1554,8 @@ mod tests {
 
         // Phase 1
         let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
@@ -1570,7 +1582,8 @@ mod tests {
 
         // Phase 2
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
         let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
@@ -1664,13 +1677,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
 
-        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1790,7 +1803,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1817,7 +1830,8 @@ mod tests {
 
         // Phase 1
         let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
@@ -1845,7 +1859,8 @@ mod tests {
 
         // Phase 2
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
         let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(

@@ -31,7 +31,8 @@ pub type Fingerprint = [u8; 4];
 /// Chaincode of a key as in BIP-32.
 ///
 /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
-pub type ChainCode = [u8; 32];
+pub const CHAIN_CODE_LEN: usize = 32;
+pub type ChainCode = [u8; CHAIN_CODE_LEN];
 
 /// Represents an error during the derivation protocol.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -74,11 +75,11 @@ pub struct DerivData {
 }
 
 /// Maximum depth.
-pub const MAX_DEPTH: u8 = 255;
+pub const MAX_DEPTH: u8 = u8::MAX;
 /// Maximum child number.
 ///
 /// This is the limit since we are not implementing hardened derivation.
-pub const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
+pub const MAX_CHILD_NUMBER: u32 = i32::MAX as u32; // This avoids a magic number warning
 
 impl DerivData {
     /// Computes the "tweak" needed to derive a secret key. In the process,
@@ -103,7 +104,7 @@ impl DerivData {
         let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
         let hmac_bytes = hmac_result.to_byte_array();
 
-        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..32]);
+        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..CHAIN_CODE_LEN]);
         if number_for_tweak.ge(&Secp256k1::ORDER) {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
@@ -111,7 +112,7 @@ impl DerivData {
         }
 
         let tweak = Scalar::reduce(&number_for_tweak);
-        let chain_code: ChainCode = hmac_bytes[32..]
+        let chain_code: ChainCode = hmac_bytes[CHAIN_CODE_LEN..]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
 
@@ -382,7 +383,7 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
@@ -407,7 +408,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -434,7 +435,8 @@ mod tests {
 
         // Phase 1
         let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
@@ -466,7 +468,8 @@ mod tests {
 
         // Phase 2
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
         let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(

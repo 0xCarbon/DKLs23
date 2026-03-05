@@ -168,7 +168,6 @@ impl Party {
         ),
         Abort,
     > {
-        // Step 4 - We check if we have the correct number of counter parties.
         if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
             return Err(Abort::new(
                 self.party_index,
@@ -219,13 +218,10 @@ impl Party {
             }
         }
 
-        // Step 5 - We sample our secret data.
         let instance_key = Scalar::random(&mut rng::get_rng());
         let inversion_mask = Scalar::random(&mut rng::get_rng());
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
-
-        // Step 6 - We prepare the messages to keep and to send.
 
         let mut keep: BTreeMap<PartyIndex, KeepPhase1to2> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase1to2> =
@@ -354,8 +350,6 @@ impl Party {
         ),
         Abort,
     > {
-        // Step 7
-
         // We first compute the values that only depend on us.
 
         // We find the Lagrange coefficient associated to us.
@@ -364,8 +358,8 @@ impl Party {
         let mut l_denominator = Scalar::ONE;
         for counterparty in &data.counterparties {
             l_numerator *= Scalar::from(u32::from(counterparty.as_u8()));
-            l_denominator *=
-                Scalar::from(u32::from(counterparty.as_u8())) - Scalar::from(u32::from(self.party_index.as_u8()));
+            l_denominator *= Scalar::from(u32::from(counterparty.as_u8()))
+                - Scalar::from(u32::from(self.party_index.as_u8()));
         }
         let l_denominator_inverse = match Option::<Scalar>::from(l_denominator.invert()) {
             Some(inv) => inv,
@@ -547,8 +541,6 @@ impl Party {
         kept: &BTreeMap<PartyIndex, KeepPhase2to3>,
         received: &[TransmitPhase2to3],
     ) -> Result<(String, Broadcast3to4), Abort> {
-        // Steps 8 and 9
-
         // The following values will represent the sums calculated in this step.
         let mut expected_public_key = unique_kept.public_share;
         let mut total_instance_point = unique_kept.instance_point;
@@ -759,8 +751,6 @@ impl Party {
         received: &[Broadcast3to4],
         normalize: bool,
     ) -> Result<(String, u8), Abort> {
-        // Step 10
-
         let mut numerator = Scalar::ZERO;
         let mut denominator = Scalar::ZERO;
         for message in received {
@@ -796,7 +786,6 @@ impl Party {
             ));
         }
 
-        // First we need to calculate R (signature point) in order to retrieve its y coordinate.
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
@@ -826,7 +815,9 @@ impl Party {
         // meaning Scalar::reduce(&R.x) lost information. For secp256k1, n < p, so
         // this can happen in the range [n, p-1] with negligible probability.
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
-        let is_y_odd = signature_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
+        let is_y_odd =
+            signature_point.to_sec1_point(false).y().unwrap()[crate::utilities::ID_LEN - 1] & 1
+                == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         Ok((signature, rec_id.into()))
@@ -835,7 +826,7 @@ impl Party {
 
 /// Parses a 32-byte hex string (64 hex chars) as `U256`.
 fn parse_u256_from_hex_32bytes(hex_value: &str) -> Option<U256> {
-    let mut bytes = [0u8; 32];
+    let mut bytes = [0u8; crate::utilities::ID_LEN];
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
         return None;
     }
@@ -917,13 +908,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -950,7 +941,8 @@ mod tests {
 
         // Phase 1
         let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
@@ -978,7 +970,8 @@ mod tests {
 
         // Phase 2
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
         let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
@@ -1075,13 +1068,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1108,7 +1101,8 @@ mod tests {
 
         // Phase 1
         let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
@@ -1136,7 +1130,8 @@ mod tests {
 
         // Phase 2
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
         let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
@@ -1241,7 +1236,6 @@ mod tests {
             ))
         );
 
-        // Now we can find the signature in the usual way.
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
                 + (secret_key * Scalar::reduce(&U256::from_be_hex(&expected_x_coord))));
@@ -1250,7 +1244,10 @@ mod tests {
         // Calculate the expected recovery id
         let x_as_int = U256::from_be_hex(&expected_x_coord);
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
-        let is_y_odd = total_instance_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
+        let is_y_odd = total_instance_point.to_sec1_point(false).y().unwrap()
+            [crate::utilities::ID_LEN - 1]
+            & 1
+            == 1;
         let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
         // We compare the results.
@@ -1273,7 +1270,7 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1315,7 +1312,8 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> = BTreeMap::new();
+        let mut bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> =
+            BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5, out6) =
                 phase2(&all_data[i as usize], &poly_fragments[i as usize]);
@@ -1361,7 +1359,8 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> = BTreeMap::new();
+        let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> =
+            BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5) = phase3(
                 &all_data[i as usize],
@@ -1449,7 +1448,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1476,7 +1475,8 @@ mod tests {
 
         // Phase 1
         let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
@@ -1504,7 +1504,8 @@ mod tests {
 
         // Phase 2
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
         let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
@@ -1592,12 +1593,14 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
-            sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
+            sign_id: rng::get_rng()
+                .random::<[u8; crate::utilities::ID_LEN]>()
+                .to_vec(),
             counterparties: vec![PartyIndex::new(2).unwrap()],
             message_hash: hash("Message to sign!".as_bytes(), &[]),
         };
@@ -1637,12 +1640,14 @@ mod tests {
             threshold: 3,
             share_count: 3,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
-            sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
+            sign_id: rng::get_rng()
+                .random::<[u8; crate::utilities::ID_LEN]>()
+                .to_vec(),
             counterparties: vec![PartyIndex::new(2).unwrap(), PartyIndex::new(2).unwrap()],
             message_hash: hash("Message to sign!".as_bytes(), &[]),
         };
@@ -1662,7 +1667,11 @@ mod tests {
         party.mul_senders.remove(&PartyIndex::new(2).unwrap());
 
         let abort = party
-            .sign_phase1(all_data.get(&PartyIndex::new(1).unwrap()).expect("party data should exist"))
+            .sign_phase1(
+                all_data
+                    .get(&PartyIndex::new(1).unwrap())
+                    .expect("party data should exist"),
+            )
             .expect_err("missing multiplication state should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
         assert!(abort
@@ -1682,11 +1691,11 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
@@ -1708,7 +1717,8 @@ mod tests {
         );
 
         let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let (unique_keep, keep, transmit) = match parties[(party_index.as_u8() - 1) as usize]
@@ -1758,7 +1768,8 @@ mod tests {
         BTreeMap<PartyIndex, Vec<TransmitPhase2to3>>,
     ) {
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
         let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
@@ -1830,7 +1841,10 @@ mod tests {
         let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
             setup_two_party_signing_phase1();
 
-        let mut tampered = received_1to2.get(&PartyIndex::new(1).unwrap()).unwrap().clone();
+        let mut tampered = received_1to2
+            .get(&PartyIndex::new(1).unwrap())
+            .unwrap()
+            .clone();
         tampered[0].parties.sender = PartyIndex::new(3).unwrap();
 
         let result = parties[0].sign_phase2(
@@ -1852,7 +1866,10 @@ mod tests {
         let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
             setup_two_party_signing_phase1();
 
-        let mut tampered = received_1to2.get(&PartyIndex::new(1).unwrap()).unwrap().clone();
+        let mut tampered = received_1to2
+            .get(&PartyIndex::new(1).unwrap())
+            .unwrap()
+            .clone();
         tampered[0].parties.receiver = PartyIndex::new(2).unwrap();
 
         let result = parties[0].sign_phase2(
@@ -1897,7 +1914,10 @@ mod tests {
             &received_1to2,
         );
 
-        let mut tampered = received_2to3.get(&PartyIndex::new(1).unwrap()).unwrap().clone();
+        let mut tampered = received_2to3
+            .get(&PartyIndex::new(1).unwrap())
+            .unwrap()
+            .clone();
         assert!(
             !tampered[0].salt.is_empty(),
             "phase-3 decommit salt should be non-empty"
@@ -1954,7 +1974,10 @@ mod tests {
             &received_1to2,
         );
 
-        let mut tampered = received_2to3.get(&PartyIndex::new(1).unwrap()).unwrap().clone();
+        let mut tampered = received_2to3
+            .get(&PartyIndex::new(1).unwrap())
+            .unwrap()
+            .clone();
         tampered[0].gamma_u =
             (ProjectivePoint::from(tampered[0].gamma_u) + ProjectivePoint::GENERATOR).to_affine();
 
@@ -1965,7 +1988,10 @@ mod tests {
             &tampered,
         );
         let abort = result.expect_err("inconsistent gamma_u should be rejected");
-        assert_eq!(abort.kind, AbortKind::BanCounterparty(PartyIndex::new(2).unwrap()));
+        assert_eq!(
+            abort.kind,
+            AbortKind::BanCounterparty(PartyIndex::new(2).unwrap())
+        );
         assert!(abort
             .description
             .contains("Consistency check with u-variables failed"));
@@ -1993,7 +2019,12 @@ mod tests {
 
         broadcasts[0].w += Scalar::ONE;
 
-        let result = parties[0].sign_phase4(all_data.get(&PartyIndex::new(1).unwrap()).unwrap(), &x_coord, &broadcasts, true);
+        let result = parties[0].sign_phase4(
+            all_data.get(&PartyIndex::new(1).unwrap()).unwrap(),
+            &x_coord,
+            &broadcasts,
+            true,
+        );
         let abort = result.expect_err("tampered broadcast should fail signature validation");
         assert_eq!(abort.kind, AbortKind::Recoverable);
         assert!(abort.description.contains("Invalid ECDSA signature"));

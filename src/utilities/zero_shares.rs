@@ -179,7 +179,7 @@ mod tests {
         }
 
         //We can finally execute the functionality.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let executing_parties: Vec<PartyIndex> = vec![1, 3, 5, 7, 8]
             .into_iter()
             .map(|i| PartyIndex::new(i).unwrap())
@@ -190,7 +190,8 @@ mod tests {
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party);
             //Compute the share (there is a -1 because indexes for parties start at 1).
-            let share = zero_shares[(party.as_u8() as usize) - 1].compute(&counterparties, &session_id);
+            let share =
+                zero_shares[(party.as_u8() as usize) - 1].compute(&counterparties, &session_id);
             shares.push(share);
         }
 

@@ -330,12 +330,14 @@ pub fn step5(
             }
 
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
-            let point_j = committed_points.get(&PartyIndex::new(j).unwrap()).ok_or_else(|| {
-                Abort::new(
-                    party_index,
-                    &format!("Missing committed point for party {j}"),
-                )
-            })?;
+            let point_j = committed_points
+                .get(&PartyIndex::new(j).unwrap())
+                .ok_or_else(|| {
+                    Abort::new(
+                        party_index,
+                        &format!("Missing committed point for party {j}"),
+                    )
+                })?;
             let lj_times_point = *point_j * lj;
 
             current_pk = (lj_times_point + current_pk).to_affine();
@@ -814,7 +816,8 @@ pub fn phase4(
     // Initialization - Two-party multiplication.
     let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver> = BTreeMap::new();
     let mut mul_senders: BTreeMap<PartyIndex, MulSender> = BTreeMap::new();
-    let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4> = BTreeMap::new();
+    let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4> =
+        BTreeMap::new();
     for message in mul_received {
         if message.parties.receiver != data.party_index {
             return Err(Abort::new(
@@ -940,7 +943,7 @@ pub fn phase4(
     // Initialization - BIP-32.
     // We check the commitments and create the final chain code.
     // It will be given by the XOR of the auxiliary chain codes.
-    let mut chain_code: ChainCode = [0; 32];
+    let mut chain_code: ChainCode = [0; crate::protocols::derivation::CHAIN_CODE_LEN];
     for i in 1..=data.parameters.share_count {
         let i_idx = PartyIndex::new(i).unwrap();
         // We take the messages in the correct order (that's why the BTreeMap).
@@ -972,7 +975,7 @@ pub fn phase4(
 
         // We XOR this auxiliary chain code to the final result.
         let current_aux_chain_code = phase3_msg.aux_chain_code;
-        for j in 0..32 {
+        for j in 0..crate::protocols::derivation::CHAIN_CODE_LEN {
             chain_code[j] ^= current_aux_chain_code[j];
         }
     }
@@ -1024,7 +1027,8 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
 
     // Take the last 20 bytes of the hash and convert to a hex string
     let full_hash = hasher.finalize_reset();
-    let address = hex::encode(&full_hash[12..]);
+    const ETH_ADDRESS_OFFSET: usize = 12;
+    let address = hex::encode(&full_hash[ETH_ADDRESS_OFFSET..]);
 
     // Compute the Keccak256 hash of the lowercase hexadecimal address
     hasher.update(address.to_lowercase().as_bytes());
@@ -1073,7 +1077,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1113,7 +1117,8 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> = BTreeMap::new();
+        let mut bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> =
+            BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5, out6) =
                 phase2(&all_data[i as usize], &poly_fragments[i as usize]);
@@ -1152,7 +1157,8 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> = BTreeMap::new();
+        let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> =
+            BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5) = phase3(
                 &all_data[i as usize],
@@ -1250,7 +1256,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Phase 1 (Steps 1 and 2)
         let p1_phase1 = step2(&parameters, &step1(&parameters)); //p1 = Party 1
@@ -1275,8 +1281,18 @@ mod tests {
         let proofs_commitments = vec![p1_proof_commitment, p2_proof_commitment];
 
         // Phase 4 (Step 5)
-        let p1_result = step5(&parameters, PartyIndex::new(1).unwrap(), &session_id, &proofs_commitments);
-        let p2_result = step5(&parameters, PartyIndex::new(2).unwrap(), &session_id, &proofs_commitments);
+        let p1_result = step5(
+            &parameters,
+            PartyIndex::new(1).unwrap(),
+            &session_id,
+            &proofs_commitments,
+        );
+        let p2_result = step5(
+            &parameters,
+            PartyIndex::new(2).unwrap(),
+            &session_id,
+            &proofs_commitments,
+        );
 
         assert!(p1_result.is_ok());
         assert!(p2_result.is_ok());
@@ -1294,7 +1310,7 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Phase 1 (Steps 1 and 2)
         // Matrix of polynomial points
@@ -1321,7 +1337,11 @@ mod tests {
         let mut proofs_commitments: Vec<ProofCommitment> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let party_i_phase2 = step3(PartyIndex::new(i + 1).unwrap(), &session_id, &poly_fragments[i as usize]);
+            let party_i_phase2 = step3(
+                PartyIndex::new(i + 1).unwrap(),
+                &session_id,
+                &poly_fragments[i as usize],
+            );
             let (_, party_i_proof_commitment) = party_i_phase2;
             proofs_commitments.push(party_i_proof_commitment);
         }
@@ -1330,7 +1350,12 @@ mod tests {
         let mut result_parties: Vec<Result<AffinePoint, Abort>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            result_parties.push(step5(&parameters, PartyIndex::new(i + 1).unwrap(), &session_id, &proofs_commitments));
+            result_parties.push(step5(
+                &parameters,
+                PartyIndex::new(i + 1).unwrap(),
+                &session_id,
+                &proofs_commitments,
+            ));
         }
 
         for result in result_parties {
@@ -1351,7 +1376,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(1u32), Scalar::from(3u32)];
@@ -1373,8 +1398,18 @@ mod tests {
         let proofs_commitments = vec![p1_proof_commitment, p2_proof_commitment];
 
         // Phase 4 (Step 5)
-        let p1_result = step5(&parameters, PartyIndex::new(1).unwrap(), &session_id, &proofs_commitments);
-        let p2_result = step5(&parameters, PartyIndex::new(2).unwrap(), &session_id, &proofs_commitments);
+        let p1_result = step5(
+            &parameters,
+            PartyIndex::new(1).unwrap(),
+            &session_id,
+            &proofs_commitments,
+        );
+        let p2_result = step5(
+            &parameters,
+            PartyIndex::new(2).unwrap(),
+            &session_id,
+            &proofs_commitments,
+        );
 
         assert!(p1_result.is_ok());
         assert!(p2_result.is_ok());
@@ -1395,7 +1430,7 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // We will define the fragments directly
         let p1_poly_fragments = vec![Scalar::from(12u32), Scalar::from(2u32)];
@@ -1417,8 +1452,18 @@ mod tests {
         let proofs_commitments = vec![p1_proof_commitment, p2_proof_commitment];
 
         // Phase 4 (Step 5)
-        let p1_result = step5(&parameters, PartyIndex::new(1).unwrap(), &session_id, &proofs_commitments);
-        let p2_result = step5(&parameters, PartyIndex::new(2).unwrap(), &session_id, &proofs_commitments);
+        let p1_result = step5(
+            &parameters,
+            PartyIndex::new(1).unwrap(),
+            &session_id,
+            &proofs_commitments,
+        );
+        let p2_result = step5(
+            &parameters,
+            PartyIndex::new(2).unwrap(),
+            &session_id,
+            &proofs_commitments,
+        );
 
         assert!(p1_result.is_ok());
         assert!(p2_result.is_ok());
@@ -1440,7 +1485,7 @@ mod tests {
             threshold: 3,
             share_count: 5,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // We will define the fragments directly
         let poly_fragments = [
@@ -1491,7 +1536,11 @@ mod tests {
         let mut proofs_commitments: Vec<ProofCommitment> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let party_i_phase2 = step3(PartyIndex::new(i + 1).unwrap(), &session_id, &poly_fragments[i as usize]);
+            let party_i_phase2 = step3(
+                PartyIndex::new(i + 1).unwrap(),
+                &session_id,
+                &poly_fragments[i as usize],
+            );
             let (_, party_i_proof_commitment) = party_i_phase2;
             proofs_commitments.push(party_i_proof_commitment);
         }
@@ -1500,7 +1549,12 @@ mod tests {
         let mut results: Vec<Result<AffinePoint, Abort>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            results.push(step5(&parameters, PartyIndex::new(i + 1).unwrap(), &session_id, &proofs_commitments));
+            results.push(step5(
+                &parameters,
+                PartyIndex::new(i + 1).unwrap(),
+                &session_id,
+                &proofs_commitments,
+            ));
         }
 
         let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count as usize);
@@ -1545,7 +1599,7 @@ mod tests {
             threshold,
             share_count: threshold + offset,
         }; // You can fix the parameters if you prefer.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1587,7 +1641,8 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut bip_kept_2to3: Vec<UniqueKeepDerivationPhase2to3> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> = BTreeMap::new();
+        let mut bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> =
+            BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5, out6) =
                 phase2(&all_data[i as usize], &poly_fragments[i as usize]);
@@ -1633,7 +1688,8 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> = BTreeMap::new();
+        let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> =
+            BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5) = phase3(
                 &all_data[i as usize],

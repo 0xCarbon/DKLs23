@@ -31,7 +31,9 @@ impl fmt::Display for InvalidPartyIndex {
 impl std::error::Error for InvalidPartyIndex {}
 
 /// Strongly-typed 1-based participant identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Zeroize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Zeroize,
+)]
 #[repr(transparent)]
 #[serde(try_from = "u8", into = "u8")]
 pub struct PartyIndex(u8);
@@ -216,14 +218,14 @@ mod tests {
 
     #[test]
     fn party_index_accepts_nonzero() {
-        for i in 1..=255u8 {
+        for i in 1..=u8::MAX {
             assert!(PartyIndex::new(i).is_ok());
         }
     }
 
     #[test]
     fn party_index_round_trip() {
-        for i in 1..=255u8 {
+        for i in 1..=u8::MAX {
             let pi = PartyIndex::new(i).unwrap();
             assert_eq!(pi.as_u8(), i);
             assert_eq!(u8::from(pi), i);

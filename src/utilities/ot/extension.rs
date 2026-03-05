@@ -64,7 +64,8 @@ pub const KAPPA: u16 = RAW_SECURITY;
 /// <https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>.
 ///
 /// It has to divide [`BATCH_SIZE`]!
-pub const OT_SECURITY: u16 = 128 + STAT_SECURITY;
+const BASE_SECURITY: u16 = 128;
+pub const OT_SECURITY: u16 = BASE_SECURITY + STAT_SECURITY;
 /// The extension execute this number of OT's.
 ///
 /// This particular number is the one used in the [multiplication protocol](super::super::multiplication).
@@ -77,7 +78,8 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
-pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S::Error>
+const PRG_DATA_SIZE: usize = 78;
+pub fn serialize_vec_prg<S>(data: &[[u8; PRG_DATA_SIZE]], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -85,16 +87,16 @@ where
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
 
-pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 78]>, D::Error>
+pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; PRG_DATA_SIZE]>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let concatenated: Vec<u8> = serde_bytes::Deserialize::deserialize(deserializer)?;
 
     concatenated
-        .chunks(78)
+        .chunks(PRG_DATA_SIZE)
         .map(|chunk| {
-            let array: [u8; 78] = chunk.try_into().map_err(D::Error::custom)?;
+            let array: [u8; PRG_DATA_SIZE] = chunk.try_into().map_err(D::Error::custom)?;
             Ok(array)
         })
         .collect()
@@ -230,9 +232,6 @@ impl OTESender {
 
         // EXTEND
 
-        // Step 1 - No action for the sender.
-
-        // Step 2 - Extend the seed with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
         let mut extended_seeds: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -260,9 +259,6 @@ impl OTESender {
             extended_seeds.push(prg_output);
         }
 
-        // Step 3 - No action for the sender.
-
-        // Step 4 - Compute the q from Fig. 10 in KOS.
         // It is computed with the matrix u sent by the receiver.
         let mut q: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -277,7 +273,6 @@ impl OTESender {
 
         // CONSISTENCY CHECK
 
-        // Step 1 - At this point, the sender would sample some random values to the receiver.
         // In order to reduce the round count, we adopt DKLs23 suggestion on page 30 and
         // modify this step via the Fiat-Shamir heuristic. Hence, this random value will not
         // be random but it will come from the data that the receiver has to transmit to
@@ -300,9 +295,6 @@ impl OTESender {
             &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
         );
 
-        // Step 2 - No action for the sender.
-
-        // Step 3 - Verify the values sent by the receiver against our data.
         // We start by computing the verifying vector q (as in KOS, Fig. 10).
         let mut verify_q: Vec<FieldElement> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -345,13 +337,8 @@ impl OTESender {
 
         // TRANSPOSE AND RANDOMIZE
 
-        // Step 1 - We compute the transpose of q and take the first BATCH_SIZE rows.
-
         let transposed_q = cut_and_transpose(&q)?;
 
-        // Step 2 - No action for the sender.
-
-        // Step 3 - We compute the final messages. For the final part, it will be better
         // if we compute them in the form Scalar<Secp256k1>.
 
         // IMPORTANT: This step will generate the sender's output. In this implementation,
@@ -425,7 +412,6 @@ impl OTESender {
 
         // As before, this part is executed ot_width times.
 
-        // Step 1 - We compute t_A and tau, as in the paper.
         // Note that t_A is just the message v0 we computed above.
         let mut vector_of_tau: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
@@ -442,8 +428,6 @@ impl OTESender {
 
             vector_of_tau.push(tau);
         }
-
-        // Step 2 - No action for the sender.
 
         // Each v0 in vector_of_v0 is the output for the sender in each iteration.
         // vector_of_tau has to be sent to the receiver.
@@ -526,7 +510,6 @@ impl OTEReceiver {
         }
         // EXTEND
 
-        // Step 1 - Extend the choice bits by adding random noise.
         let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY as usize);
         for _ in 0..OT_SECURITY {
             random_choice_bits.push(rng::get_rng().random());
@@ -550,7 +533,6 @@ impl OTEReceiver {
             );
         }
 
-        // Step 2 - Extend the seeds with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
         let mut extended_seeds0: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         let mut extended_seeds1: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
@@ -588,7 +570,6 @@ impl OTEReceiver {
             extended_seeds1.push(prg1_output);
         }
 
-        // Step 3 - Compute the matrix u from Fig. 10 in KOS.
         // This matrix will be sent to the sender.
         let mut u: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -601,11 +582,8 @@ impl OTEReceiver {
             u.push(u_i);
         }
 
-        // Step 4 - No action for the receiver.
-
         // CONSISTENCY CHECK
 
-        // Step 1 - At this point, the sender would sample some random values to the receiver.
         // In order to reduce the round count, we adopt DKLs23 suggestion on page 30 and
         // modify this step via the Fiat-Shamir heuristic. Hence, this random value will not
         // be random but it will come from the data that the receiver has to transmit to
@@ -627,8 +605,6 @@ impl OTEReceiver {
         chi2.clone_from_slice(
             &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
         );
-
-        // Step 2 - We compute the verification values to the sender.
 
         // The summation sign on the protocol is just the sum of the following two terms:
         let prod_x_1 = field_mul(
@@ -672,8 +648,6 @@ impl OTEReceiver {
 
             verify_t.push(verify_ti);
         }
-
-        // Step 3 - No action for the receiver.
 
         // These values are transmitted to the sender.
         let data_to_sender = OTEDataToSender {
@@ -731,11 +705,8 @@ impl OTEReceiver {
 
         // TRANSPOSE AND RANDOMIZE
 
-        // Step 1 - We compute the transpose of extended_seeds and take the first BATCH_SIZE rows.
-
         let transposed_t = cut_and_transpose(extended_seeds)?;
 
-        // Step 2 - We compute the final message. For the final part, it will be better
         // if we compute it in the form Scalar<Secp256k1>.
 
         // As stated for the sender, we run this part ot_width times with varying salts.
@@ -759,16 +730,10 @@ impl OTEReceiver {
             vector_of_v.push(v);
         }
 
-        // Step 3 - No action for the receiver.
-
         // TRANSFER
         // We finished implementing Fig. 10 in KOS for the receiver, which gives us
         // a random OT protocol. Now, for our use in DKLs23, we implement the
         // "Transfer" phase in Protocol 9 of DKLs18 (https://eprint.iacr.org/2018/499.pdf).
-
-        // Step 1 - No action for the receiver.
-
-        // Step 2 - We compute t_B as in the paper. We use the value tau sent by the sender.
 
         // Again, we repeat this step ot_width times.
 
@@ -937,8 +902,6 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> Result<FieldElement, ErrorOT> {
     // We save only the last 16 bits (note that 0xFFFF = 0b11...11 with 16 one's).
     c[(T - 1) as usize] &= 0xFFFF;
 
-    // At this point, c is the product of a and b in the finite field.
-
     // We convert the result to the original format.
     let mut result = [0u8; (OT_SECURITY / 8) as usize];
     for i in 0..OT_SECURITY / 8 {
@@ -958,7 +921,7 @@ mod tests {
     use std::collections::HashSet;
 
     fn prepare_ote_sender_inputs(
-        session_id: &[u8; 32],
+        session_id: &[u8; crate::utilities::ID_LEN],
         ot_width: u8,
     ) -> (OTESender, Vec<Vec<Scalar>>, OTEDataToSender) {
         // INITIALIZATION
@@ -1048,7 +1011,7 @@ mod tests {
     /// Tests if receiver-side OTE phase 1 rejects malformed choice bit lengths.
     #[test]
     fn test_ot_extension_receiver_phase1_rejects_wrong_choice_bits_len() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
         let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
         let seed = ot_receiver.seed;
@@ -1068,7 +1031,7 @@ mod tests {
     /// Tests if receiver-side OTE phase 2 rejects malformed choice bit lengths.
     #[test]
     fn test_ot_extension_receiver_phase2_rejects_wrong_choice_bits_len() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
         let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
         let seed = ot_receiver.seed;
@@ -1098,7 +1061,7 @@ mod tests {
     /// satisfy the relations they are supposed to satisfy.
     #[test]
     fn test_ot_extension() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // INITIALIZATION
 
@@ -1255,7 +1218,6 @@ mod tests {
             panic!("Very improbable/unexpected: The receiver got two identic outputs!");
         }
 
-        //TODO - We included this last check because an old implementation was wrong
         //       and was generating repeated outputs for the sender. A more appropriate
         //       test would be to run this test many times and attest that there is no
         //       noticeable correlation between the outputs.
@@ -1264,7 +1226,7 @@ mod tests {
     /// Tests if sender-side OTE rejects malformed dimensions from deserialized input.
     #[test]
     fn test_ot_extension_sender_rejects_malformed_data_dimensions() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // INITIALIZATION
         let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(&session_id);
@@ -1310,7 +1272,7 @@ mod tests {
     /// Tests if receiver-side OTE rejects tau vectors with incorrect inner length.
     #[test]
     fn test_ot_extension_receiver_rejects_short_tau_rows() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // INITIALIZATION
         let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
@@ -1345,7 +1307,7 @@ mod tests {
     /// Tests if sender-side OTE rejects tampered u matrix rows.
     #[test]
     fn test_ot_extension_sender_rejects_tampered_u() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let ot_width = 2;
         let (ote_sender, sender_input_correlations, mut data_to_sender) =
             prepare_ote_sender_inputs(&session_id, ot_width);
@@ -1365,7 +1327,7 @@ mod tests {
     /// Tests if sender-side OTE rejects tampered verify_x.
     #[test]
     fn test_ot_extension_sender_rejects_tampered_verify_x() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let ot_width = 2;
         let (ote_sender, sender_input_correlations, mut data_to_sender) =
             prepare_ote_sender_inputs(&session_id, ot_width);
@@ -1385,7 +1347,7 @@ mod tests {
     /// Tests if sender-side OTE rejects tampered verify_t entries.
     #[test]
     fn test_ot_extension_sender_rejects_tampered_verify_t() {
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         // Exercise a different width than the other adversarial OTE tests.
         let ot_width = 1;
         let (ote_sender, sender_input_correlations, mut data_to_sender) =
