@@ -16,13 +16,13 @@ pub mod dkg;
 pub mod messages;
 pub mod re_key;
 pub mod refresh;
-pub mod sign_session;
+pub(crate) mod sign_session;
 pub mod signature;
 pub mod signing;
 
-pub use signature::EcdsaSignature;
 #[allow(unused_imports)]
 pub(crate) use sign_session::SignSession;
+pub use signature::EcdsaSignature;
 
 /// Contains the values `t` and  `n` from `DKLs23`.
 #[derive(Clone, Serialize, Deserialize, Debug)]
