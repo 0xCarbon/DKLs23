@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::protocols::derivation::{ChainCode, DerivData};
-use crate::protocols::{Abort, Parameters, PartiesMessage, Party, PartyIndex};
+use crate::protocols::{Abort, Parameters, PartiesMessage, Party, PartyIndex, PublicKeyPackage};
 
 use crate::utilities::commits;
 use crate::utilities::hashes::HashOutput;
@@ -288,7 +288,7 @@ pub fn step5(
     party_index: PartyIndex,
     session_id: &[u8],
     proofs_commitments: &[ProofCommitment],
-) -> Result<AffinePoint, Abort> {
+) -> Result<(AffinePoint, BTreeMap<PartyIndex, AffinePoint>), Abort> {
     let mut committed_points: BTreeMap<PartyIndex, AffinePoint> = BTreeMap::new(); //The "public key fragments"
 
     // Verify the proofs and gather the committed points.
@@ -353,7 +353,7 @@ pub fn step5(
             ));
         }
     }
-    Ok(pk)
+    Ok((pk, committed_points))
 }
 
 // PHASES
@@ -664,9 +664,9 @@ pub fn phase4(
     mul_received: &[TransmitInitMulPhase3to4],
     bip_received_phase2: &BTreeMap<PartyIndex, BroadcastDerivationPhase2to4>,
     bip_received_phase3: &BTreeMap<PartyIndex, BroadcastDerivationPhase3to4>,
-) -> Result<Party, Abort> {
+) -> Result<(Party, PublicKeyPackage), Abort> {
     // DKG
-    let pk = step5(
+    let (pk, verifying_shares) = step5(
         &data.parameters,
         data.party_index,
         &data.session_id,
@@ -1011,7 +1011,10 @@ pub fn phase4(
         eth_address,
     };
 
-    Ok(party)
+    let public_key_package =
+        PublicKeyPackage::new(pk, verifying_shares, data.parameters.clone());
+
+    Ok((party, public_key_package))
 }
 
 /// Computes the Ethereum address given a public key.
@@ -1347,18 +1350,13 @@ mod tests {
         }
 
         // Phase 4 (Step 5)
-        let mut result_parties: Vec<Result<AffinePoint, Abort>> =
-            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            result_parties.push(step5(
+            let result = step5(
                 &parameters,
                 PartyIndex::new(i + 1).unwrap(),
                 &session_id,
                 &proofs_commitments,
-            ));
-        }
-
-        for result in result_parties {
+            );
             assert!(result.is_ok());
         }
     }
@@ -1414,8 +1412,8 @@ mod tests {
         assert!(p1_result.is_ok());
         assert!(p2_result.is_ok());
 
-        let p1_pk = p1_result.unwrap();
-        let p2_pk = p2_result.unwrap();
+        let (p1_pk, _) = p1_result.unwrap();
+        let (p2_pk, _) = p2_result.unwrap();
 
         // Verifying the public key
         let expected_pk = (AffinePoint::GENERATOR * Scalar::from(2u32)).to_affine();
@@ -1468,8 +1466,8 @@ mod tests {
         assert!(p1_result.is_ok());
         assert!(p2_result.is_ok());
 
-        let p1_pk = p1_result.unwrap();
-        let p2_pk = p2_result.unwrap();
+        let (p1_pk, _) = p1_result.unwrap();
+        let (p2_pk, _) = p2_result.unwrap();
 
         // Verifying the public key
         let expected_pk = (AffinePoint::GENERATOR * Scalar::from(23u32)).to_affine();
@@ -1546,27 +1544,18 @@ mod tests {
         }
 
         // Phase 4 (Step 5)
-        let mut results: Vec<Result<AffinePoint, Abort>> =
-            Vec::with_capacity(parameters.share_count as usize);
+        let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            results.push(step5(
+            let (pk, _) = step5(
                 &parameters,
                 PartyIndex::new(i + 1).unwrap(),
                 &session_id,
                 &proofs_commitments,
-            ));
-        }
-
-        let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count as usize);
-        for result in results {
-            match result {
-                Ok(pk) => {
-                    public_keys.push(pk);
-                }
-                Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
-                }
-            }
+            )
+            .unwrap_or_else(|abort| {
+                panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            });
+            public_keys.push(pk);
         }
 
         // Verifying the public key
@@ -1744,6 +1733,8 @@ mod tests {
 
         // Phase 4
         let mut parties: Vec<Party> = Vec::with_capacity((parameters.share_count) as usize);
+        let mut pkgs: Vec<PublicKeyPackage> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = phase4(
                 &all_data[i as usize],
@@ -1761,8 +1752,9 @@ mod tests {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
                 }
-                Ok(party) => {
+                Ok((party, pkg)) => {
                     parties.push(party);
+                    pkgs.push(pkg);
                 }
             }
         }
@@ -1774,6 +1766,29 @@ mod tests {
             assert_eq!(expected_pk, party.pk);
             assert_eq!(expected_chain_code, party.derivation_data.chain_code);
         }
+
+        // All parties must produce identical PublicKeyPackages.
+        let pkg0 = &pkgs[0];
+        assert_eq!(*pkg0.verifying_key(), expected_pk);
+        assert_eq!(pkg0.threshold(), parameters.threshold);
+        assert_eq!(pkg0.share_count(), parameters.share_count);
+        for pkg in &pkgs[1..] {
+            assert_eq!(pkg.verifying_key(), pkg0.verifying_key());
+            for i in 1..=parameters.share_count {
+                let idx = PartyIndex::new(i).unwrap();
+                assert_eq!(pkg.verifying_share(idx), pkg0.verifying_share(idx));
+            }
+        }
+
+        // Each verification share must equal poly_point * G for the corresponding party.
+        for party in &parties {
+            let expected_share =
+                (AffinePoint::GENERATOR * party.poly_point).to_affine();
+            assert!(pkg0.verify_share(party.party_index, &expected_share));
+        }
+
+        // ethereum_address must match the address from Party.
+        assert_eq!(pkg0.ethereum_address(), parties[0].eth_address);
     }
 
     /// Tests if [`compute_eth_address`] correctly

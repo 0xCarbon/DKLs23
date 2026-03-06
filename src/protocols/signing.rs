@@ -921,7 +921,7 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING
 
@@ -1081,7 +1081,7 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         // SIGNING (as in test_signing)
 
@@ -1444,7 +1444,7 @@ mod tests {
                 Err(abort) => {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description);
                 }
-                Ok(party) => {
+                Ok((party, _)) => {
                     parties.push(party);
                 }
             }
@@ -1607,7 +1607,7 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
             sign_id: rng::get_rng()
@@ -1654,7 +1654,7 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
             sign_id: rng::get_rng()
@@ -1705,7 +1705,7 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);

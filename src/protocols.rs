@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use crate::protocols::derivation::DerivData;
+use crate::protocols::dkg::compute_eth_address;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::zero_shares::ZeroShare;
 
@@ -129,6 +130,62 @@ impl Zeroize for Party {
 impl Drop for Party {
     fn drop(&mut self) {
         self.zeroize();
+    }
+}
+
+/// Aggregates the group public key, per-participant verification shares,
+/// and threshold parameters produced by DKG or re-key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicKeyPackage {
+    verifying_key: AffinePoint,
+    verifying_shares: BTreeMap<PartyIndex, AffinePoint>,
+    parameters: Parameters,
+}
+
+impl PublicKeyPackage {
+    #[must_use]
+    pub fn new(
+        verifying_key: AffinePoint,
+        verifying_shares: BTreeMap<PartyIndex, AffinePoint>,
+        parameters: Parameters,
+    ) -> Self {
+        Self {
+            verifying_key,
+            verifying_shares,
+            parameters,
+        }
+    }
+
+    #[must_use]
+    pub fn verifying_key(&self) -> &AffinePoint {
+        &self.verifying_key
+    }
+
+    #[must_use]
+    pub fn verifying_share(&self, party: PartyIndex) -> Option<&AffinePoint> {
+        self.verifying_shares.get(&party)
+    }
+
+    #[must_use]
+    pub fn threshold(&self) -> u8 {
+        self.parameters.threshold
+    }
+
+    #[must_use]
+    pub fn share_count(&self) -> u8 {
+        self.parameters.share_count
+    }
+
+    #[must_use]
+    pub fn ethereum_address(&self) -> String {
+        compute_eth_address(&self.verifying_key)
+    }
+
+    #[must_use]
+    pub fn verify_share(&self, party: PartyIndex, verification_share: &AffinePoint) -> bool {
+        self.verifying_shares
+            .get(&party)
+            .is_some_and(|stored| stored == verification_share)
     }
 }
 
