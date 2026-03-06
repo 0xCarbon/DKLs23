@@ -8,13 +8,18 @@ use k256::{AffinePoint, Scalar};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
+use rand::RngExt;
+
 use crate::protocols::derivation::DerivData;
 use crate::protocols::dkg::compute_eth_address;
+use crate::protocols::export::CompactExport;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
+use crate::utilities::rng;
 use crate::utilities::zero_shares::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
+pub mod export;
 pub mod re_key;
 pub mod refresh;
 pub mod signing;
@@ -130,6 +135,30 @@ impl Zeroize for Party {
 impl Drop for Party {
     fn drop(&mut self) {
         self.zeroize();
+    }
+}
+
+impl Party {
+    #[must_use]
+    pub fn compact_export(&self) -> Option<CompactExport> {
+        let reconstruction_seed: [u8; 32] = rng::get_rng().random();
+        let compact = CompactExport {
+            version: 1,
+            parameters: self.parameters.clone(),
+            party_index: self.party_index,
+            session_id: self.session_id.clone(),
+            poly_point: self.poly_point,
+            pk: self.pk,
+            derivation_data: self.derivation_data.clone(),
+            reconstruction_seed,
+        };
+
+        let reconstructed = compact.reconstruct().ok()?;
+        if reconstructed.poly_point != self.poly_point || reconstructed.pk != self.pk {
+            return None;
+        }
+
+        Some(compact)
     }
 }
 

@@ -8,6 +8,8 @@
 pub mod protocols;
 pub mod utilities;
 
+pub use protocols::export::CompactExport;
+
 // The following constants should not be changed!
 // They are the same as the reference implementation of DKLs19:
 // https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs

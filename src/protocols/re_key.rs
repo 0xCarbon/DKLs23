@@ -13,7 +13,7 @@ use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
 
 use crate::utilities::rng;
-use rand::RngExt;
+use rand::{CryptoRng, RngExt};
 
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::dkg::compute_eth_address;
@@ -42,6 +42,16 @@ pub fn re_key(
     secret_key: &Scalar,
     option_chain_code: Option<ChainCode>,
 ) -> (Vec<Party>, PublicKeyPackage) {
+    re_key_with_rng(parameters, session_id, secret_key, option_chain_code, &mut rng::get_rng())
+}
+
+pub(crate) fn re_key_with_rng(
+    parameters: &Parameters,
+    session_id: &[u8],
+    secret_key: &Scalar,
+    option_chain_code: Option<ChainCode>,
+    rng: &mut impl CryptoRng,
+) -> (Vec<Party>, PublicKeyPackage) {
     // Public key.
     let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
 
@@ -50,7 +60,7 @@ pub fn re_key(
     let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
     polynomial.push(*secret_key);
     for _ in 1..parameters.threshold {
-        polynomial.push(Scalar::random(&mut rng::get_rng()));
+        polynomial.push(Scalar::random(&mut *rng));
     }
 
     // Zero shares.
@@ -67,7 +77,7 @@ pub fn re_key(
         let mut seeds_with_lower_index: Vec<zero_shares::Seed> =
             Vec::with_capacity((parameters.share_count - lower_index) as usize);
         for _ in (lower_index + 1)..=parameters.share_count {
-            let seed = rng::get_rng().random::<zero_shares::Seed>();
+            let seed = rng.random::<zero_shares::Seed>();
             seeds_with_lower_index.push(seed);
         }
         common_seeds.push(seeds_with_lower_index);
@@ -125,8 +135,8 @@ pub fn re_key(
             let mut seeds0: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             let mut seeds1: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for _ in 0..ot::extension::KAPPA {
-                seeds0.push(rng::get_rng().random::<HashOutput>());
-                seeds1.push(rng::get_rng().random::<HashOutput>());
+                seeds0.push(rng.random::<HashOutput>());
+                seeds1.push(rng.random::<HashOutput>());
             }
 
             // Sender: Sample the correlation and choose the correct seed.
@@ -134,7 +144,7 @@ pub fn re_key(
             let mut correlation: Vec<bool> = Vec::with_capacity(ot::extension::KAPPA as usize);
             let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for i in 0..ot::extension::KAPPA {
-                let current_bit: bool = rng::get_rng().random();
+                let current_bit: bool = rng.random();
                 if current_bit {
                     seeds.push(seeds1[i as usize]);
                 } else {
@@ -151,7 +161,7 @@ pub fn re_key(
             let mut public_gadget: Vec<Scalar> =
                 Vec::with_capacity(ot::extension::BATCH_SIZE as usize);
             for _ in 0..ot::extension::BATCH_SIZE {
-                public_gadget.push(Scalar::random(&mut rng::get_rng()));
+                public_gadget.push(Scalar::random(&mut *rng));
             }
 
             // We finish the initialization.
@@ -177,7 +187,7 @@ pub fn re_key(
     // We use the chain code given or we sample a new one.
     let chain_code = match option_chain_code {
         Some(cc) => cc,
-        None => rng::get_rng().random::<ChainCode>(),
+        None => rng.random::<ChainCode>(),
     };
 
     // We create the parties.
