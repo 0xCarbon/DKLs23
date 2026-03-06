@@ -113,7 +113,7 @@ use crate::protocols::{Abort, PartiesMessage, Party, PartyIndex};
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TransmitRefreshPhase2to4 {
+pub(crate) struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
@@ -122,7 +122,7 @@ pub struct TransmitRefreshPhase2to4 {
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TransmitRefreshPhase3to4 {
+pub(crate) struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -134,7 +134,7 @@ pub struct TransmitRefreshPhase3to4 {
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct KeepRefreshPhase2to3 {
+pub(crate) struct KeepRefreshPhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
@@ -143,8 +143,20 @@ pub struct KeepRefreshPhase2to3 {
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct KeepRefreshPhase3to4 {
+pub(crate) struct KeepRefreshPhase3to4 {
     pub seed: zero_shares::Seed,
+}
+
+// MessageTag implementations.
+use crate::protocols::messages::MessageTag;
+
+const TRANSMIT_REFRESH_PHASE_2_TO_4_TAG: u8 = 0x20;
+impl MessageTag for TransmitRefreshPhase2to4 {
+    const TAG: u8 = TRANSMIT_REFRESH_PHASE_2_TO_4_TAG;
+}
+const TRANSMIT_REFRESH_PHASE_3_TO_4_TAG: u8 = 0x21;
+impl MessageTag for TransmitRefreshPhase3to4 {
+    const TAG: u8 = TRANSMIT_REFRESH_PHASE_3_TO_4_TAG;
 }
 
 /// Implementations related to refresh protocols ([read more](self)).
@@ -156,7 +168,7 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_complete_phase1(&self) -> Vec<Scalar> {
+    pub(crate) fn refresh_complete_phase1(&self) -> Vec<Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
@@ -177,7 +189,7 @@ impl Party {
     /// difference is that we will refer to the scalar`poly_point`
     /// as `correction_value`.
     #[must_use]
-    pub fn refresh_complete_phase2(
+    pub(crate) fn refresh_complete_phase2(
         &self,
         refresh_sid: &[u8],
         poly_fragments: &[Scalar],
@@ -233,7 +245,7 @@ impl Party {
     /// The output should be dealt in the same way.
     #[must_use]
     #[allow(clippy::type_complexity)]
-    pub fn refresh_complete_phase3(
+    pub(crate) fn refresh_complete_phase3(
         &self,
         refresh_sid: &[u8],
         zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
@@ -360,7 +372,7 @@ impl Party {
     /// protocol fails when verifying the seeds or if the multiplication
     /// protocol fails.
     #[allow(clippy::too_many_arguments)]
-    pub fn refresh_complete_phase4(
+    pub(crate) fn refresh_complete_phase4(
         &self,
         refresh_sid: &[u8],
         correction_value: &Scalar,
@@ -680,7 +692,7 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_phase1(&self) -> Vec<Scalar> {
+    pub(crate) fn refresh_phase1(&self) -> Vec<Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
@@ -701,7 +713,7 @@ impl Party {
     /// difference is that we will refer to the scalar`poly_point`
     /// as `correction_value`.
     #[must_use]
-    pub fn refresh_phase2(
+    pub(crate) fn refresh_phase2(
         &self,
         refresh_sid: &[u8],
         poly_fragments: &[Scalar],
@@ -753,7 +765,7 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_phase3(
+    pub(crate) fn refresh_phase3(
         &self,
         kept: &BTreeMap<PartyIndex, KeepRefreshPhase2to3>,
     ) -> (
@@ -806,7 +818,7 @@ impl Party {
     ///
     /// Will panic if the indices of the parties are different
     /// from the ones used in DKG.
-    pub fn refresh_phase4(
+    pub(crate) fn refresh_phase4(
         &self,
         refresh_sid: &[u8],
         correction_value: &Scalar,
@@ -1127,9 +1139,11 @@ mod tests {
 
     use rand::RngExt;
 
+    const SESSION_ID_LEN: usize = 32;
+
     struct CompleteRefreshPhase4Inputs {
         parties: Vec<Party>,
-        refresh_sid: [u8; crate::utilities::ID_LEN],
+        refresh_sid: [u8; SESSION_ID_LEN],
         correction_values: Vec<Scalar>,
         proofs_commitments: Vec<ProofCommitment>,
         zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>>,
@@ -1144,11 +1158,11 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
-        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1378,13 +1392,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
-        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1527,7 +1541,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
@@ -1677,13 +1691,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
         let parties = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
 
-        let refresh_sid = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1803,7 +1817,7 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
