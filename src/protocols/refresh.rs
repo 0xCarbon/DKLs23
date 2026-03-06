@@ -439,12 +439,16 @@ impl Party {
                 ));
             }
         }
-        if zero_received_phase2_by_sender.len() != zero_kept.len()
-            || zero_received_phase3_by_sender.len() != zero_kept.len()
-        {
+        if zero_received_phase2_by_sender.len() != zero_kept.len() {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::WrongMessageCount { expected: zero_kept.len(), got: zero_received_phase2_by_sender.len() },
+            ));
+        }
+        if zero_received_phase3_by_sender.len() != zero_kept.len() {
+            return Err(Abort::recoverable(
+                self.party_index,
+                AbortReason::WrongMessageCount { expected: zero_kept.len(), got: zero_received_phase3_by_sender.len() },
             ));
         }
 
@@ -851,12 +855,16 @@ impl Party {
                 ));
             }
         }
-        if received_phase2_by_sender.len() != kept.len()
-            || received_phase3_by_sender.len() != kept.len()
-        {
+        if received_phase2_by_sender.len() != kept.len() {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::WrongMessageCount { expected: kept.len(), got: received_phase2_by_sender.len() },
+            ));
+        }
+        if received_phase3_by_sender.len() != kept.len() {
+            return Err(Abort::recoverable(
+                self.party_index,
+                AbortReason::WrongMessageCount { expected: kept.len(), got: received_phase3_by_sender.len() },
             ));
         }
 
