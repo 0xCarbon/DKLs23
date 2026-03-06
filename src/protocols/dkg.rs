@@ -1011,8 +1011,7 @@ pub fn phase4(
         eth_address,
     };
 
-    let public_key_package =
-        PublicKeyPackage::new(pk, verifying_shares, data.parameters.clone());
+    let public_key_package = PublicKeyPackage::new(pk, verifying_shares, data.parameters.clone());
 
     Ok((party, public_key_package))
 }
@@ -1733,8 +1732,7 @@ mod tests {
 
         // Phase 4
         let mut parties: Vec<Party> = Vec::with_capacity((parameters.share_count) as usize);
-        let mut pkgs: Vec<PublicKeyPackage> =
-            Vec::with_capacity(parameters.share_count as usize);
+        let mut pkgs: Vec<PublicKeyPackage> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = phase4(
                 &all_data[i as usize],
@@ -1782,8 +1780,7 @@ mod tests {
 
         // Each verification share must equal poly_point * G for the corresponding party.
         for party in &parties {
-            let expected_share =
-                (AffinePoint::GENERATOR * party.poly_point).to_affine();
+            let expected_share = (AffinePoint::GENERATOR * party.poly_point).to_affine();
             assert!(pkg0.verify_share(party.party_index, &expected_share));
         }
 
