@@ -21,7 +21,7 @@ pub struct CompactExport {
     #[zeroize(skip)]
     pub pk: AffinePoint,
     pub derivation_data: DerivData,
-    pub reconstruction_seed: [u8; 32],
+    pub reconstruction_seed: [u8; crate::SECURITY as usize],
 }
 
 impl CompactExport {
@@ -71,7 +71,9 @@ mod tests {
         let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let original = &parties[0];
-        let compact = original.compact_export().expect("compact_export should succeed");
+        let compact = original
+            .compact_export()
+            .expect("compact_export should succeed");
 
         assert_eq!(compact.version, 1);
         assert_eq!(compact.party_index, original.party_index);
@@ -97,14 +99,18 @@ mod tests {
         let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let original = &parties[0];
-        let compact = original.compact_export().expect("compact_export should succeed");
+        let compact = original
+            .compact_export()
+            .expect("compact_export should succeed");
 
         let compact_bytes = bincode::serialize(&compact).expect("serialize compact");
         let party_bytes = bincode::serialize(original).expect("serialize party");
 
+        const MAX_COMPACT_EXPORT_SIZE: usize = 300;
         assert!(
-            compact_bytes.len() < 300,
-            "CompactExport should be < 300 bytes, got {}",
+            compact_bytes.len() < MAX_COMPACT_EXPORT_SIZE,
+            "CompactExport should be < {} bytes, got {}",
+            MAX_COMPACT_EXPORT_SIZE,
             compact_bytes.len()
         );
         assert!(

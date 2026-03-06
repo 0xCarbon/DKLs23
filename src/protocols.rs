@@ -141,7 +141,7 @@ impl Drop for Party {
 impl Party {
     #[must_use]
     pub fn compact_export(&self) -> Option<CompactExport> {
-        let reconstruction_seed: [u8; 32] = rng::get_rng().random();
+        let reconstruction_seed: [u8; crate::SECURITY as usize] = rng::get_rng().random();
         let compact = CompactExport {
             version: 1,
             parameters: self.parameters.clone(),

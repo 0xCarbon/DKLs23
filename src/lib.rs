@@ -16,9 +16,9 @@ pub use protocols::export::CompactExport;
 
 /// Computational security parameter `lambda_c` from `DKLs23`.
 /// We take it to be the same as the parameter `kappa`.
-pub const RAW_SECURITY: u16 = 256;
+pub const RAW_SECURITY: u16 = 1 << 8;
 /// `RAW_SECURITY` divided by 8 (used for arrays of bytes)
-pub const SECURITY: u16 = 32;
+pub const SECURITY: u16 = 1 << 5;
 
 /// Statistical security parameter `lambda_s` from `DKLs23`.
-pub const STAT_SECURITY: u16 = 80;
+pub const STAT_SECURITY: u16 = (1 << 6) + (1 << 4);

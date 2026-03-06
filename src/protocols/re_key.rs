@@ -42,7 +42,13 @@ pub fn re_key(
     secret_key: &Scalar,
     option_chain_code: Option<ChainCode>,
 ) -> (Vec<Party>, PublicKeyPackage) {
-    re_key_with_rng(parameters, session_id, secret_key, option_chain_code, &mut rng::get_rng())
+    re_key_with_rng(
+        parameters,
+        session_id,
+        secret_key,
+        option_chain_code,
+        &mut rng::get_rng(),
+    )
 }
 
 pub(crate) fn re_key_with_rng(
@@ -232,7 +238,12 @@ pub(crate) fn re_key_with_rng(
 
     let verifying_shares: BTreeMap<PartyIndex, AffinePoint> = parties
         .iter()
-        .map(|p| (p.party_index, (AffinePoint::GENERATOR * p.poly_point).to_affine()))
+        .map(|p| {
+            (
+                p.party_index,
+                (AffinePoint::GENERATOR * p.poly_point).to_affine(),
+            )
+        })
         .collect();
 
     let public_key_package = PublicKeyPackage::new(pk, verifying_shares, parameters.clone());

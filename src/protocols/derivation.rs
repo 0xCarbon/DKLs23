@@ -632,8 +632,7 @@ mod tests {
             let derived_party = party.derive_child(child_number).unwrap();
             assert_eq!(*derived_pkg.verifying_key(), derived_party.pk);
 
-            let expected_share =
-                (AffinePoint::GENERATOR * derived_party.poly_point).to_affine();
+            let expected_share = (AffinePoint::GENERATOR * derived_party.poly_point).to_affine();
             assert!(derived_pkg.verify_share(party.party_index, &expected_share));
         }
     }
