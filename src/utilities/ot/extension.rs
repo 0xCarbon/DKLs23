@@ -232,6 +232,9 @@ impl OTESender {
 
         // EXTEND
 
+        // Step 1 - No action for the sender.
+
+        // Step 2 - Extend the seed with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
         let mut extended_seeds: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -259,6 +262,9 @@ impl OTESender {
             extended_seeds.push(prg_output);
         }
 
+        // Step 3 - No action for the sender.
+
+        // Step 4 - Compute the q from Fig. 10 in KOS.
         // It is computed with the matrix u sent by the receiver.
         let mut q: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -273,6 +279,7 @@ impl OTESender {
 
         // CONSISTENCY CHECK
 
+        // Step 1 - At this point, the sender would sample some random values to the receiver.
         // In order to reduce the round count, we adopt DKLs23 suggestion on page 30 and
         // modify this step via the Fiat-Shamir heuristic. Hence, this random value will not
         // be random but it will come from the data that the receiver has to transmit to
@@ -295,6 +302,9 @@ impl OTESender {
             &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
         );
 
+        // Step 2 - No action for the sender.
+
+        // Step 3 - Verify the values sent by the receiver against our data.
         // We start by computing the verifying vector q (as in KOS, Fig. 10).
         let mut verify_q: Vec<FieldElement> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -337,8 +347,12 @@ impl OTESender {
 
         // TRANSPOSE AND RANDOMIZE
 
+        // Step 1 - We compute the transpose of q and take the first BATCH_SIZE rows.
         let transposed_q = cut_and_transpose(&q)?;
 
+        // Step 2 - No action for the sender.
+
+        // Step 3 - We compute the final messages. For the final part, it will be better
         // if we compute them in the form Scalar<Secp256k1>.
 
         // IMPORTANT: This step will generate the sender's output. In this implementation,
@@ -412,6 +426,7 @@ impl OTESender {
 
         // As before, this part is executed ot_width times.
 
+        // Step 1 - We compute t_A and tau, as in the paper.
         // Note that t_A is just the message v0 we computed above.
         let mut vector_of_tau: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
@@ -428,6 +443,8 @@ impl OTESender {
 
             vector_of_tau.push(tau);
         }
+
+        // Step 2 - No action for the sender.
 
         // Each v0 in vector_of_v0 is the output for the sender in each iteration.
         // vector_of_tau has to be sent to the receiver.
@@ -510,6 +527,7 @@ impl OTEReceiver {
         }
         // EXTEND
 
+        // Step 1 - Extend the choice bits by adding random noise.
         let mut random_choice_bits: Vec<bool> = Vec::with_capacity(OT_SECURITY as usize);
         for _ in 0..OT_SECURITY {
             random_choice_bits.push(rng::get_rng().random());
@@ -533,6 +551,7 @@ impl OTEReceiver {
             );
         }
 
+        // Step 2 - Extend the seeds with the pseudorandom generator (PRG).
         // The PRG will be implemented via hash functions.
         let mut extended_seeds0: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         let mut extended_seeds1: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
@@ -570,6 +589,7 @@ impl OTEReceiver {
             extended_seeds1.push(prg1_output);
         }
 
+        // Step 3 - Compute the matrix u from Fig. 10 in KOS.
         // This matrix will be sent to the sender.
         let mut u: Vec<PRGOutput> = Vec::with_capacity(KAPPA as usize);
         for i in 0..KAPPA {
@@ -582,8 +602,11 @@ impl OTEReceiver {
             u.push(u_i);
         }
 
+        // Step 4 - No action for the receiver.
+
         // CONSISTENCY CHECK
 
+        // Step 1 - At this point, the sender would sample some random values to the receiver.
         // In order to reduce the round count, we adopt DKLs23 suggestion on page 30 and
         // modify this step via the Fiat-Shamir heuristic. Hence, this random value will not
         // be random but it will come from the data that the receiver has to transmit to
@@ -606,6 +629,7 @@ impl OTEReceiver {
             &tagged_hash(TAG_OTE_CHI, &[session_id, b"chi2", &msg])[0..(OT_SECURITY / 8) as usize],
         );
 
+        // Step 2 - We compute the verification values to the sender.
         // The summation sign on the protocol is just the sum of the following two terms:
         let prod_x_1 = field_mul(
             &compressed_extended_bits[0..(OT_SECURITY / 8) as usize],
@@ -648,6 +672,8 @@ impl OTEReceiver {
 
             verify_t.push(verify_ti);
         }
+
+        // Step 3 - No action for the receiver.
 
         // These values are transmitted to the sender.
         let data_to_sender = OTEDataToSender {
@@ -705,8 +731,10 @@ impl OTEReceiver {
 
         // TRANSPOSE AND RANDOMIZE
 
+        // Step 1 - We compute the transpose of extended_seeds and take the first BATCH_SIZE rows.
         let transposed_t = cut_and_transpose(extended_seeds)?;
 
+        // Step 2 - We compute the final message. For the final part, it will be better
         // if we compute it in the form Scalar<Secp256k1>.
 
         // As stated for the sender, we run this part ot_width times with varying salts.
@@ -730,6 +758,8 @@ impl OTEReceiver {
             vector_of_v.push(v);
         }
 
+        // Step 3 - No action for the receiver.
+
         // TRANSFER
         // We finished implementing Fig. 10 in KOS for the receiver, which gives us
         // a random OT protocol. Now, for our use in DKLs23, we implement the
@@ -737,6 +767,9 @@ impl OTEReceiver {
 
         // Again, we repeat this step ot_width times.
 
+        // Step 1 - No action for the receiver.
+
+        // Step 2 - We compute t_B as in the paper. We use the value tau sent by the sender.
         let mut vector_of_t_b: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
             // Retrieving the current values.
@@ -901,6 +934,8 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> Result<FieldElement, ErrorOT> {
 
     // We save only the last 16 bits (note that 0xFFFF = 0b11...11 with 16 one's).
     c[(T - 1) as usize] &= 0xFFFF;
+
+    // At this point, c is the product of a and b in the finite field.
 
     // We convert the result to the original format.
     let mut result = [0u8; (OT_SECURITY / 8) as usize];
@@ -1218,6 +1253,7 @@ mod tests {
             panic!("Very improbable/unexpected: The receiver got two identic outputs!");
         }
 
+        //TODO - We included this last check because an old implementation was wrong
         //       and was generating repeated outputs for the sender. A more appropriate
         //       test would be to run this test many times and attest that there is no
         //       noticeable correlation between the outputs.

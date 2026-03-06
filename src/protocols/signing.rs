@@ -168,6 +168,7 @@ impl Party {
         ),
         Abort,
     > {
+        // Step 4 - We check if we have the correct number of counter parties.
         if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
             return Err(Abort::new(
                 self.party_index,
@@ -218,10 +219,13 @@ impl Party {
             }
         }
 
+        // Step 5 - We sample our secret data.
         let instance_key = Scalar::random(&mut rng::get_rng());
         let inversion_mask = Scalar::random(&mut rng::get_rng());
 
         let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
+
+        // Step 6 - We prepare the messages to keep and to send.
 
         let mut keep: BTreeMap<PartyIndex, KeepPhase1to2> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase1to2> =
@@ -350,6 +354,8 @@ impl Party {
         ),
         Abort,
     > {
+        // Step 7
+
         // We first compute the values that only depend on us.
 
         // We find the Lagrange coefficient associated to us.
@@ -541,6 +547,8 @@ impl Party {
         kept: &BTreeMap<PartyIndex, KeepPhase2to3>,
         received: &[TransmitPhase2to3],
     ) -> Result<(String, Broadcast3to4), Abort> {
+        // Steps 8 and 9
+
         // The following values will represent the sums calculated in this step.
         let mut expected_public_key = unique_kept.public_share;
         let mut total_instance_point = unique_kept.instance_point;
@@ -751,6 +759,8 @@ impl Party {
         received: &[Broadcast3to4],
         normalize: bool,
     ) -> Result<(String, u8), Abort> {
+        // Step 10
+
         let mut numerator = Scalar::ZERO;
         let mut denominator = Scalar::ZERO;
         for message in received {
@@ -786,6 +796,7 @@ impl Party {
             ));
         }
 
+        // First we need to calculate R (signature point) in order to retrieve its y coordinate.
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
@@ -1236,6 +1247,7 @@ mod tests {
             ))
         );
 
+        // Now we can find the signature in the usual way.
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
                 + (secret_key * Scalar::reduce(&U256::from_be_hex(&expected_x_coord))));
