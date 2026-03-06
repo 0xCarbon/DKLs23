@@ -102,7 +102,7 @@ use crate::protocols::dkg::{
     KeepInitZeroSharePhase3to4, ProofCommitment, TransmitInitMulPhase3to4,
     TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
 };
-use crate::protocols::{Abort, PartiesMessage, Party};
+use crate::protocols::{Abort, AbortReason, PartiesMessage, Party};
 
 // STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
 
@@ -382,9 +382,9 @@ impl Party {
 
         // The public key calculated above should be the zero point on the curve.
         if verifying_pk != AffinePoint::IDENTITY {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "The auxiliary public key is not the zero point!",
+                AbortReason::PolynomialInconsistency,
             ));
         }
 
@@ -393,30 +393,24 @@ impl Party {
             BTreeMap::new();
         for message in zero_received_phase2 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a zero-share phase-2 message not meant for me!",
+                    AbortReason::MisroutedMessage { expected_receiver: self.party_index, actual_receiver: message.parties.receiver },
                 ));
             }
             if !zero_kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected zero-share phase-2 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender { sender: message.parties.sender },
                 ));
             }
             if zero_received_phase2_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate zero-share phase-2 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender { sender: message.parties.sender },
                 ));
             }
         }
@@ -424,39 +418,33 @@ impl Party {
             BTreeMap::new();
         for message in zero_received_phase3 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a zero-share phase-3 message not meant for me!",
+                    AbortReason::MisroutedMessage { expected_receiver: self.party_index, actual_receiver: message.parties.receiver },
                 ));
             }
             if !zero_kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected zero-share phase-3 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender { sender: message.parties.sender },
                 ));
             }
             if zero_received_phase3_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate zero-share phase-3 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender { sender: message.parties.sender },
                 ));
             }
         }
         if zero_received_phase2_by_sender.len() != zero_kept.len()
             || zero_received_phase3_by_sender.len() != zero_kept.len()
         {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Missing zero-share initialization messages from one or more parties",
+                AbortReason::WrongMessageCount { expected: zero_kept.len(), got: zero_received_phase2_by_sender.len() },
             ));
         }
 
@@ -466,17 +454,17 @@ impl Party {
             let message_received_2 = zero_received_phase2_by_sender
                 .get(target_party)
                 .ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing zero-share phase-2 message from Party {target_party}"),
+                        AbortReason::WrongMessageCount { expected: 1, got: 0 },
                     )
                 })?;
             let message_received_3 = zero_received_phase3_by_sender
                 .get(target_party)
                 .ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing zero-share phase-3 message from Party {target_party}"),
+                        AbortReason::WrongMessageCount { expected: 1, got: 0 },
                     )
                 })?;
 
@@ -487,11 +475,9 @@ impl Party {
                 &message_received_3.salt,
             );
             if !verification {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
-                    ),
+                    AbortReason::ZeroShareDecommitFailed { counterparty: *target_party },
                 ));
             }
 
@@ -513,45 +499,39 @@ impl Party {
         let mut mul_received_by_sender: BTreeMap<u8, &TransmitInitMulPhase3to4> = BTreeMap::new();
         for message in mul_received {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a multiplication-init message not meant for me!",
+                    AbortReason::MisroutedMessage { expected_receiver: self.party_index, actual_receiver: message.parties.receiver },
                 ));
             }
             if !mul_kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected multiplication-init sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender { sender: message.parties.sender },
                 ));
             }
             if mul_received_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate multiplication-init message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender { sender: message.parties.sender },
                 ));
             }
         }
         if mul_received_by_sender.len() != mul_kept.len() {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Missing multiplication initialization messages from one or more parties",
+                AbortReason::WrongMessageCount { expected: mul_kept.len(), got: mul_received_by_sender.len() },
             ));
         }
 
         for (target_party, message_kept) in mul_kept {
             let message_received = mul_received_by_sender.get(target_party).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication-init message from Party {target_party}"),
+                    AbortReason::WrongMessageCount { expected: 1, got: 0 },
                 )
             })?;
 
@@ -578,15 +558,12 @@ impl Party {
 
             let mul_receiver: MulReceiver = match receiver_result {
                 Ok(r) => r,
-                Err(error) => {
+                Err(_error) => {
                     // Complete refresh builds fresh OT from scratch (no reused COTe state),
                     // so init failures are recoverable, matching DKG classification.
-                    return Err(Abort::new(
+                    return Err(Abort::recoverable(
                         self.party_index,
-                        &format!(
-                            "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                            target_party, error.description
-                        ),
+                        AbortReason::MultiplicationVerificationFailed { counterparty: *target_party },
                     ));
                 }
             };
@@ -615,15 +592,12 @@ impl Party {
 
             let mul_sender: MulSender = match sender_result {
                 Ok(s) => s,
-                Err(error) => {
+                Err(_error) => {
                     // Complete refresh builds fresh OT from scratch (no reused COTe state),
                     // so init failures are recoverable, matching DKG classification.
-                    return Err(Abort::new(
+                    return Err(Abort::recoverable(
                         self.party_index,
-                        &format!(
-                            "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                            target_party, error.description
-                        ),
+                        AbortReason::MultiplicationVerificationFailed { counterparty: *target_party },
                     ));
                 }
             };
@@ -820,9 +794,9 @@ impl Party {
 
         // The public key calculated above should be the zero point on the curve.
         if verifying_pk != AffinePoint::IDENTITY {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "The auxiliary public key is not the zero point!",
+                AbortReason::PolynomialInconsistency,
             ));
         }
 
@@ -831,30 +805,24 @@ impl Party {
             BTreeMap::new();
         for message in received_phase2 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a refresh phase-2 message not meant for me!",
+                    AbortReason::MisroutedMessage { expected_receiver: self.party_index, actual_receiver: message.parties.receiver },
                 ));
             }
             if !kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected refresh phase-2 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender { sender: message.parties.sender },
                 ));
             }
             if received_phase2_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate refresh phase-2 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender { sender: message.parties.sender },
                 ));
             }
         }
@@ -862,39 +830,33 @@ impl Party {
             BTreeMap::new();
         for message in received_phase3 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a refresh phase-3 message not meant for me!",
+                    AbortReason::MisroutedMessage { expected_receiver: self.party_index, actual_receiver: message.parties.receiver },
                 ));
             }
             if !kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected refresh phase-3 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender { sender: message.parties.sender },
                 ));
             }
             if received_phase3_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate refresh phase-3 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender { sender: message.parties.sender },
                 ));
             }
         }
         if received_phase2_by_sender.len() != kept.len()
             || received_phase3_by_sender.len() != kept.len()
         {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Missing refresh initialization messages from one or more parties",
+                AbortReason::WrongMessageCount { expected: kept.len(), got: received_phase2_by_sender.len() },
             ));
         }
 
@@ -903,16 +865,16 @@ impl Party {
         for (target_party, message_kept) in kept {
             let message_received_2 =
                 received_phase2_by_sender.get(target_party).ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing refresh phase-2 message from Party {target_party}"),
+                        AbortReason::WrongMessageCount { expected: 1, got: 0 },
                     )
                 })?;
             let message_received_3 =
                 received_phase3_by_sender.get(target_party).ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing refresh phase-3 message from Party {target_party}"),
+                        AbortReason::WrongMessageCount { expected: 1, got: 0 },
                     )
                 })?;
 
@@ -923,11 +885,9 @@ impl Party {
                 &message_received_3.salt,
             );
             if !verification {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
-                    ),
+                    AbortReason::ZeroShareDecommitFailed { counterparty: *target_party },
                 ));
             }
 
@@ -952,15 +912,15 @@ impl Party {
             let seed = seed_pair.seed;
 
             let mul_sender = self.mul_senders.get(&their_index).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication sender state for party {their_index}"),
+                    AbortReason::MissingMulState { counterparty: their_index },
                 )
             })?;
             let mul_receiver = self.mul_receivers.get(&their_index).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication receiver state for party {their_index}"),
+                    AbortReason::MissingMulState { counterparty: their_index },
                 )
             })?;
 
@@ -1112,7 +1072,7 @@ mod tests {
 
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
-    use crate::protocols::{AbortKind, Parameters};
+    use crate::protocols::{AbortKind, AbortReason, Parameters};
     use crate::utilities::hashes::hash;
 
     use rand::RngExt;
@@ -1280,9 +1240,7 @@ mod tests {
         );
         let abort = result.expect_err("tampered complete-refresh enc proof should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Initialization for multiplication protocol failed because of Party 2"));
+        assert!(matches!(abort.reason, AbortReason::MultiplicationVerificationFailed { counterparty: 2 }));
     }
 
     /// Tests that complete refresh phase 4 aborts (recoverably) on tampered OT DLog proofs.
@@ -1312,9 +1270,7 @@ mod tests {
         );
         let abort = result.expect_err("tampered complete-refresh DLog proof should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Initialization for multiplication protocol failed because of Party 2"));
+        assert!(matches!(abort.reason, AbortReason::MultiplicationVerificationFailed { counterparty: 2 }));
     }
 
     /// Tests if complete refresh phase 4 rejects duplicate multiplication-init senders.
@@ -1340,9 +1296,7 @@ mod tests {
         );
         let abort = result.expect_err("duplicate mul-init sender should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Duplicate multiplication-init message from Party 2"));
+        assert!(matches!(abort.reason, AbortReason::DuplicateSender { sender: 2 }));
     }
 
     /// Tests if the complete refresh protocol generates parties
@@ -1495,7 +1449,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok(party) => {
                     refreshed_parties.push(party);
@@ -1570,7 +1524,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1607,7 +1561,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1634,7 +1588,7 @@ mod tests {
             true,
         );
         if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            panic!("Party {} aborted: {:?}", abort.index, abort.description());
         }
     }
 
@@ -1765,7 +1719,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok(party) => {
                     refreshed_parties.push(party);
@@ -1841,7 +1795,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1878,7 +1832,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1905,7 +1859,7 @@ mod tests {
             true,
         );
         if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            panic!("Party {} aborted: {:?}", abort.index, abort.description());
         }
     }
 }
