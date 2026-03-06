@@ -12,7 +12,7 @@ use rand::RngExt;
 
 use crate::protocols::derivation::DerivData;
 use crate::protocols::dkg::compute_eth_address;
-use crate::protocols::export::CompactExport;
+pub use crate::protocols::export::CompactExport;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::rng;
 use crate::utilities::zero_shares::ZeroShare;
