@@ -2,6 +2,7 @@
 //!
 //! Some structs appearing in most of the protocols are defined here.
 use std::collections::BTreeMap;
+use std::fmt;
 
 use k256::{AffinePoint, Scalar};
 use serde::{Deserialize, Serialize};
@@ -96,23 +97,130 @@ pub enum AbortKind {
     BanCounterparty(u8),
 }
 
+/// Machine-readable reason for a protocol abort.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum AbortReason {
+    // --- Input validation (all Recoverable) ---
+    InvalidPartyIndex { index: u8 },
+    WrongCounterpartyCount { expected: usize, got: usize },
+    DuplicateCounterparty { index: u8 },
+    SelfInCounterparties,
+    MissingMulState { counterparty: u8 },
+
+    // --- Message routing (all Recoverable) ---
+    MisroutedMessage { expected_receiver: u8, actual_receiver: u8 },
+    UnexpectedSender { sender: u8 },
+    DuplicateSender { sender: u8 },
+    WrongMessageCount { expected: usize, got: usize },
+
+    // --- Cryptographic verification (severity varies) ---
+    ProofVerificationFailed { counterparty: u8 },
+    CommitmentMismatch { counterparty: u8 },
+    PolynomialInconsistency,
+    TrivialInstancePoint { counterparty: u8 },
+    TrivialPublicKey,
+    TrivialKeyShare,
+
+    // --- OT/Multiplication failures (typically BanCounterparty) ---
+    OtConsistencyCheckFailed { counterparty: u8 },
+    MultiplicationVerificationFailed { counterparty: u8 },
+    GammaUInconsistency { counterparty: u8 },
+
+    // --- Signature assembly ---
+    SignatureVerificationFailed,
+    ZeroDenominator,
+
+    // --- Zero-share initialization ---
+    ZeroShareDecommitFailed { counterparty: u8 },
+
+    // --- Catch-all ---
+    Other { detail: String },
+}
+
+impl fmt::Display for AbortReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPartyIndex { index } => {
+                write!(f, "party index {index} is out of valid range")
+            }
+            Self::WrongCounterpartyCount { expected, got } => {
+                write!(f, "wrong counterparty count: expected {expected}, got {got}")
+            }
+            Self::DuplicateCounterparty { index } => {
+                write!(f, "duplicate counterparty: {index}")
+            }
+            Self::SelfInCounterparties => write!(f, "own index in counterparty list"),
+            Self::MissingMulState { counterparty } => {
+                write!(f, "missing multiplication state for party {counterparty}")
+            }
+            Self::MisroutedMessage {
+                expected_receiver,
+                actual_receiver,
+            } => write!(
+                f,
+                "message addressed to {actual_receiver}, expected {expected_receiver}"
+            ),
+            Self::UnexpectedSender { sender } => write!(f, "unexpected sender: {sender}"),
+            Self::DuplicateSender { sender } => write!(f, "duplicate message from party {sender}"),
+            Self::WrongMessageCount { expected, got } => {
+                write!(f, "wrong message count: expected {expected}, got {got}")
+            }
+            Self::ProofVerificationFailed { counterparty } => {
+                write!(f, "proof verification failed for party {counterparty}")
+            }
+            Self::CommitmentMismatch { counterparty } => {
+                write!(f, "commitment mismatch for party {counterparty}")
+            }
+            Self::PolynomialInconsistency => write!(f, "polynomial inconsistency"),
+            Self::TrivialInstancePoint { counterparty } => {
+                write!(f, "trivial instance point from party {counterparty}")
+            }
+            Self::TrivialPublicKey => write!(f, "trivial public key"),
+            Self::TrivialKeyShare => write!(f, "trivial key share"),
+            Self::OtConsistencyCheckFailed { counterparty } => {
+                write!(f, "OT consistency check failed for party {counterparty}")
+            }
+            Self::MultiplicationVerificationFailed { counterparty } => {
+                write!(
+                    f,
+                    "multiplication verification failed for party {counterparty}"
+                )
+            }
+            Self::GammaUInconsistency { counterparty } => {
+                write!(f, "gamma-u inconsistency for party {counterparty}")
+            }
+            Self::SignatureVerificationFailed => write!(f, "signature verification failed"),
+            Self::ZeroDenominator => write!(f, "zero denominator in signature assembly"),
+            Self::ZeroShareDecommitFailed { counterparty } => {
+                write!(
+                    f,
+                    "zero-share decommitment failed for party {counterparty}"
+                )
+            }
+            Self::Other { detail } => write!(f, "{detail}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Abort {
     /// Index of the party generating the abort message.
     pub index: u8,
     /// Indicates whether the abort requires permanently banning a counterparty.
     pub kind: AbortKind,
-    pub description: String,
+    /// Machine-readable reason for the abort.
+    pub reason: AbortReason,
 }
 
 impl Abort {
     /// Creates a recoverable `Abort`.
     #[must_use]
-    pub fn new(index: u8, description: &str) -> Abort {
+    pub fn recoverable(index: u8, reason: AbortReason) -> Abort {
         Abort {
             index,
             kind: AbortKind::Recoverable,
-            description: String::from(description),
+            reason,
         }
     }
 
@@ -123,12 +231,18 @@ impl Abort {
     /// has either cheated or been compromised, and continuing to sign with
     /// them leaks information enabling key extraction.
     #[must_use]
-    pub fn ban(index: u8, counterparty: u8, description: &str) -> Abort {
+    pub fn ban(index: u8, counterparty: u8, reason: AbortReason) -> Abort {
         Abort {
             index,
             kind: AbortKind::BanCounterparty(counterparty),
-            description: String::from(description),
+            reason,
         }
+    }
+
+    /// Human-readable description for logging/debugging.
+    #[must_use]
+    pub fn description(&self) -> String {
+        self.reason.to_string()
     }
 }
 
