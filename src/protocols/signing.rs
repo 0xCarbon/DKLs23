@@ -172,6 +172,7 @@ impl Party {
     /// Will return `Err` if the number of counterparties is wrong, if any
     /// party index is out of range, or if the counterparty list contains our
     /// own index.
+    #[deprecated(note = "Use `SignSession` instead")]
     pub(crate) fn sign_phase1(
         &self,
         data: &SignData,
@@ -354,6 +355,7 @@ impl Party {
     ///
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
+    #[deprecated(note = "Use `SignSession` instead")]
     pub(crate) fn sign_phase2(
         &self,
         data: &SignData,
@@ -554,6 +556,7 @@ impl Party {
     ///
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
+    #[deprecated(note = "Use `SignSession` instead")]
     pub(crate) fn sign_phase3(
         &self,
         data: &SignData,
@@ -766,13 +769,14 @@ impl Party {
     ///
     /// Will return `Err` if the final ECDSA signature is invalid
     /// or if the denominator in signature assembly is zero.
+    #[deprecated(note = "Use `SignSession` instead")]
     pub(crate) fn sign_phase4(
         &self,
         data: &SignData,
         x_coord: &str,
         received: &[Broadcast3to4],
         normalize: bool,
-    ) -> Result<(String, u8), Abort> {
+    ) -> Result<crate::protocols::signature::EcdsaSignature, Abort> {
         // Step 10
 
         let mut numerator = Scalar::ZERO;
@@ -846,7 +850,11 @@ impl Party {
                 == 1;
         let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
 
-        Ok((signature, rec_id.into()))
+        Ok(crate::protocols::signature::EcdsaSignature {
+            r: x_as_int.to_be_bytes().into(),
+            s: s.to_bytes().into(),
+            recovery_id: rec_id.into(),
+        })
     }
 }
 
@@ -1259,17 +1267,18 @@ mod tests {
         let expected_signature_as_scalar = total_instance_key.invert().unwrap()
             * (hashed_message
                 + (secret_key * Scalar::reduce(&U256::from_be_hex(&expected_x_coord))));
-        let expected_signature = hex::encode(expected_signature_as_scalar.to_bytes());
+        let expected_s: [u8; 32] = expected_signature_as_scalar.to_bytes().into();
 
         // Calculate the expected recovery id
         let x_as_int = U256::from_be_hex(&expected_x_coord);
         let is_x_reduced = x_as_int >= Secp256k1::ORDER;
         let is_y_odd = total_instance_point.to_sec1_point(false).y().unwrap()[31] & 1 == 1;
-        let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
+        let expected_rec_id: u8 = RecoveryId::new(is_y_odd, is_x_reduced).into();
 
         // We compare the results.
-        assert_eq!(signature.0, expected_signature);
-        assert_eq!(signature.1, expected_rec_id.into());
+        assert_eq!(hex::encode(signature.r), expected_x_coord);
+        assert_eq!(signature.s, expected_s);
+        assert_eq!(signature.recovery_id, expected_rec_id);
     }
 
     /// Tests DKG and signing together. The main purpose is to
