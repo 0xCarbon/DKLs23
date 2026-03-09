@@ -14,6 +14,7 @@ use crate::utilities::zero_shares::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
+pub mod messages;
 pub mod re_key;
 pub mod refresh;
 pub mod signing;
