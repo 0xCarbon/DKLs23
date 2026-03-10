@@ -10,7 +10,7 @@ use crate::protocols::dkg::{
     TransmitInitMulPhase3to4, TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
     UniqueKeepDerivationPhase2to3,
 };
-use crate::protocols::{Abort, Parameters, Party, PartyIndex};
+use crate::protocols::{Abort, Parameters, Party, PartyIndex, PublicKeyPackage};
 
 pub struct DkgSession {
     data: SessionData,
@@ -124,7 +124,7 @@ impl DkgSession {
         mul_received: &[TransmitInitMulPhase3to4],
         bip_received_phase2: &BTreeMap<PartyIndex, BroadcastDerivationPhase2to4>,
         bip_received_phase3: &BTreeMap<PartyIndex, BroadcastDerivationPhase3to4>,
-    ) -> Result<Party, Abort> {
+    ) -> Result<(Party, PublicKeyPackage), Abort> {
         let poly_point = self
             .poly_point
             .as_ref()
@@ -347,7 +347,7 @@ mod tests {
         // Phase 4
         let mut parties: Vec<Party> = Vec::with_capacity(n);
         for (i, session) in sessions.into_iter().enumerate() {
-            let party = session
+            let (party, _pkg) = session
                 .phase4(
                     &proofs_commitments,
                     &zero_received_2to4[i],

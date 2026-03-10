@@ -93,7 +93,7 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::{verify_ecdsa_signature, SignData};
     use crate::protocols::Parameters;
-    use crate::utilities::hashes::hash;
+    use crate::utilities::hashes::tagged_hash;
     use crate::utilities::rng;
     use rand::RngExt;
 
@@ -108,10 +108,10 @@ mod tests {
 
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let sign_id = rng::get_rng().random::<[u8; 32]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &["Message to sign!".as_bytes()]);
         let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
 
         // Build SignData per party.
@@ -221,12 +221,12 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         let data = SignData {
             sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),
             counterparties: vec![PartyIndex::new(2).unwrap()],
-            message_hash: hash("Message to sign!".as_bytes(), &[]),
+            message_hash: tagged_hash(b"test-sign", &["Message to sign!".as_bytes()]),
         };
 
         let (mut session, _) = SignSession::new(&parties[0], data).unwrap();
