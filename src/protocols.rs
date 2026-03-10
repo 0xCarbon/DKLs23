@@ -18,6 +18,8 @@ pub mod dkg_session;
 pub mod messages;
 pub mod re_key;
 pub mod refresh;
+pub mod sign_session;
+pub mod signature;
 pub mod signing;
 
 /// Error returned when attempting to construct a `PartyIndex` from `0`.
