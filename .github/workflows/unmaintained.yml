@@ -22,6 +22,18 @@ jobs:
       - name: Install cargo unmaintained
         run: cargo install cargo-unmaintained
       - name: Run cargo unmaintained
-        run: cargo unmaintained
+        run: |
+          # Known exceptions:
+          # - bincode v1: repo archived but crate is stable, widely used, and
+          #   pinned behind the optional "serde" feature gate.
+          EXCEPTIONS="bincode"
+          OUTPUT=$(cargo unmaintained 2>&1) || true
+          # Filter out accepted exceptions and check if anything remains
+          FILTERED=$(echo "$OUTPUT" | grep -v '^\s*$' | grep -vE "^($(echo $EXCEPTIONS | tr ' ' '|'))\b" | grep -vE '^\*|^warning:' || true)
+          echo "$OUTPUT"
+          if echo "$FILTERED" | grep -qE '^[a-zA-Z]'; then
+            echo "::error::Unmaintained packages found (beyond known exceptions)"
+            exit 1
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
