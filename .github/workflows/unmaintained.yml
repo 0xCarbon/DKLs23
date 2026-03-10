@@ -29,10 +29,17 @@ jobs:
           EXCEPTIONS="bincode"
           OUTPUT=$(cargo unmaintained 2>&1) || true
           # Filter out accepted exceptions and check if anything remains
-          FILTERED=$(echo "$OUTPUT" | grep -v '^\s*$' | grep -vE "^($(echo $EXCEPTIONS | tr ' ' '|'))\b" | grep -vE '^\*|^warning:' || true)
           echo "$OUTPUT"
-          if echo "$FILTERED" | grep -qE '^[a-zA-Z]'; then
-            echo "::error::Unmaintained packages found (beyond known exceptions)"
+          # Strip ANSI escape codes, then filter out non-finding lines and known exceptions
+          FILTERED=$(echo "$OUTPUT" \
+            | sed 's/\x1b\[[0-9;]*m//g' \
+            | grep -v '^\s*$' \
+            | grep -vE '^(warning:|Scanning |\*)' \
+            | grep -vE "^($(echo $EXCEPTIONS | tr ' ' '|'))\b" \
+            || true)
+          if [ -n "$FILTERED" ]; then
+            echo "::error::Unmaintained packages found (beyond known exceptions):"
+            echo "$FILTERED"
             exit 1
           fi
         env:
