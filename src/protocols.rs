@@ -32,11 +32,10 @@ impl fmt::Display for InvalidPartyIndex {
 impl std::error::Error for InvalidPartyIndex {}
 
 /// Strongly-typed 1-based participant identifier.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Zeroize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Zeroize)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
-#[serde(try_from = "u8", into = "u8")]
+#[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 pub struct PartyIndex(u8);
 
 impl PartyIndex {

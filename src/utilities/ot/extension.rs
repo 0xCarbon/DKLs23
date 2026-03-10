@@ -80,13 +80,9 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
-<<<<<<< HEAD
 const PRG_DATA_SIZE: usize = 78;
-pub fn serialize_vec_prg<S>(data: &[[u8; PRG_DATA_SIZE]], serializer: S) -> Result<S::Ok, S::Error>
-=======
 #[cfg(feature = "serde")]
-pub fn serialize_vec_prg<S>(data: &[[u8; 78]], serializer: S) -> Result<S::Ok, S::Error>
->>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
+pub fn serialize_vec_prg<S>(data: &[[u8; PRG_DATA_SIZE]], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -94,12 +90,8 @@ where
     serde_bytes::Serialize::serialize(&concatenated, serializer)
 }
 
-<<<<<<< HEAD
-pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; PRG_DATA_SIZE]>, D::Error>
-=======
 #[cfg(feature = "serde")]
-pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; 78]>, D::Error>
->>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
+pub fn deserialize_vec_prg<'de, D>(deserializer: D) -> Result<Vec<[u8; PRG_DATA_SIZE]>, D::Error>
 where
     D: Deserializer<'de>,
 {

@@ -111,14 +111,9 @@ use crate::protocols::{Abort, PartiesMessage, Party, PartyIndex};
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-<<<<<<< HEAD
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) struct TransmitRefreshPhase2to4 {
-=======
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TransmitRefreshPhase2to4 {
->>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
+pub(crate) struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
 }
@@ -126,14 +121,9 @@ pub struct TransmitRefreshPhase2to4 {
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-<<<<<<< HEAD
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) struct TransmitRefreshPhase3to4 {
-=======
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TransmitRefreshPhase3to4 {
->>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
+pub(crate) struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -144,14 +134,9 @@ pub struct TransmitRefreshPhase3to4 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-<<<<<<< HEAD
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) struct KeepRefreshPhase2to3 {
-=======
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct KeepRefreshPhase2to3 {
->>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
+pub(crate) struct KeepRefreshPhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
 }
@@ -159,14 +144,9 @@ pub struct KeepRefreshPhase2to3 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-<<<<<<< HEAD
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) struct KeepRefreshPhase3to4 {
-=======
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct KeepRefreshPhase3to4 {
->>>>>>> e553d10 (chore(wip): checkpoint [skip ci])
+pub(crate) struct KeepRefreshPhase3to4 {
     pub seed: zero_shares::Seed,
 }
 
