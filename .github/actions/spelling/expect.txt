@@ -1,10 +1,6 @@
-btreemap
-chmod
-commitlint
-commitlintrc
-idx
 bealore
-chmod
+bincode
+btreemap
 commitlint
 commitlintrc
 decommitment
@@ -14,9 +10,9 @@ ENCPROOF
 fabio
 fischlin
 Fordefi
+idx
 libdkls
 misrouting
-pnpm
 recoverably
 REQUIERMENT
 rerandomization
@@ -26,8 +22,6 @@ rustdoc
 Rustfmt
 rustup
 screenshots
-socio
-tls
 versioned
 xcarbon
 Zeroization
