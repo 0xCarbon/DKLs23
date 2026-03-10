@@ -86,6 +86,12 @@ fn find_in_stream<T: MessageTag>(stream: &[u8]) -> Result<T, MessageError> {
     Err(MessageError::NotFound { sender: 0 })
 }
 
+impl Default for PhaseOutput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PhaseOutput {
     #[must_use]
     pub fn new() -> Self {

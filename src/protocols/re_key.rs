@@ -17,7 +17,7 @@ use rand::RngExt;
 
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::dkg::compute_eth_address;
-use crate::protocols::{Parameters, Party, PartyIndex};
+use crate::protocols::{Parameters, Party, PartyIndex, PublicKeyPackage};
 
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
@@ -41,7 +41,7 @@ pub fn re_key(
     session_id: &[u8],
     secret_key: &Scalar,
     option_chain_code: Option<ChainCode>,
-) -> Vec<Party> {
+) -> (Vec<Party>, PublicKeyPackage) {
     // Public key.
     let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
 
@@ -220,7 +220,19 @@ pub fn re_key(
         });
     }
 
-    parties
+    let verifying_shares: BTreeMap<PartyIndex, AffinePoint> = parties
+        .iter()
+        .map(|p| {
+            (
+                p.party_index,
+                (AffinePoint::GENERATOR * p.poly_point).to_affine(),
+            )
+        })
+        .collect();
+
+    let public_key_package = PublicKeyPackage::new(pk, verifying_shares, parameters.clone());
+
+    (parties, public_key_package)
 }
 
 // For tests, see the file signing.rs. It uses the function above.
