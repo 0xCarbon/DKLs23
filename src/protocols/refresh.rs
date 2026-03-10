@@ -87,7 +87,6 @@ use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
-use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
@@ -112,7 +111,8 @@ use crate::protocols::{Abort, PartiesMessage, Party, PartyIndex};
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
@@ -121,7 +121,8 @@ pub(crate) struct TransmitRefreshPhase2to4 {
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
@@ -133,7 +134,8 @@ pub(crate) struct TransmitRefreshPhase3to4 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct KeepRefreshPhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -142,21 +144,24 @@ pub(crate) struct KeepRefreshPhase2to3 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct KeepRefreshPhase3to4 {
     pub seed: zero_shares::Seed,
 }
 
 // MessageTag implementations.
-use crate::protocols::messages::MessageTag;
+#[cfg(feature = "serde")]
+mod message_tags {
+    use super::*;
+    use crate::protocols::messages::MessageTag;
 
-const TRANSMIT_REFRESH_PHASE_2_TO_4_TAG: u8 = 0x20;
-impl MessageTag for TransmitRefreshPhase2to4 {
-    const TAG: u8 = TRANSMIT_REFRESH_PHASE_2_TO_4_TAG;
-}
-const TRANSMIT_REFRESH_PHASE_3_TO_4_TAG: u8 = 0x21;
-impl MessageTag for TransmitRefreshPhase3to4 {
-    const TAG: u8 = TRANSMIT_REFRESH_PHASE_3_TO_4_TAG;
+    impl MessageTag for TransmitRefreshPhase2to4 {
+        const TAG: u8 = 0x20;
+    }
+    impl MessageTag for TransmitRefreshPhase3to4 {
+        const TAG: u8 = 0x21;
+    }
 }
 
 /// Implementations related to refresh protocols ([read more](self)).

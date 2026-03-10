@@ -16,7 +16,6 @@ use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacE
 
 use k256::elliptic_curve::{ops::Reduce, Curve};
 use k256::{AffinePoint, Scalar, Secp256k1, U256};
-use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::protocols::Party;
@@ -35,7 +34,8 @@ pub const CHAIN_CODE_LEN: usize = 32;
 pub type ChainCode = [u8; CHAIN_CODE_LEN];
 
 /// Represents an error during the derivation protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ErrorDeriv {
     pub description: String,
 }
@@ -57,7 +57,8 @@ impl ErrorDeriv {
 /// if someone wants to retrieve the full extended public key
 /// as in BIP-32. The only field missing is the one for the
 /// network, but it can be easily inferred from context.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DerivData {
     /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,

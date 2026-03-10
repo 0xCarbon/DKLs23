@@ -1,9 +1,2 @@
 /target
 /Cargo.lock
-
-# Coder workflow
-.coder/
-coder.json
-# coder workflow artifacts
-.gemini/
-.coder/logs/
