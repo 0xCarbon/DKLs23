@@ -13,6 +13,7 @@ use crate::utilities::zero_shares::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
+pub mod dkg_session;
 #[cfg(feature = "serde")]
 pub mod messages;
 pub mod re_key;
