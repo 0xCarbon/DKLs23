@@ -12,6 +12,7 @@ fischlin
 Fordefi
 idx
 libdkls
+Misrouted
 misrouting
 recoverably
 REQUIERMENT
@@ -22,7 +23,9 @@ rustdoc
 Rustfmt
 rustup
 screenshots
+UInconsistency
 versioned
 xcarbon
+XCoordinate
 Zeroization
 zeroized
