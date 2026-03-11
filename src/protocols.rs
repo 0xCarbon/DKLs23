@@ -2,33 +2,94 @@
 //!
 //! Some structs appearing in most of the protocols are defined here.
 use std::collections::BTreeMap;
+use std::fmt;
 
 use k256::{AffinePoint, Scalar};
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use crate::protocols::derivation::DerivData;
+pub use crate::protocols::dkg::compute_eth_address;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::zero_shares::ZeroShare;
 
 pub mod derivation;
 pub mod dkg;
+pub mod dkg_session;
+#[cfg(feature = "serde")]
+pub mod messages;
 pub mod re_key;
 pub mod refresh;
+pub mod sign_session;
+pub mod signature;
 pub mod signing;
 
+/// Error returned when attempting to construct a `PartyIndex` from `0`.
+#[derive(Debug, Clone)]
+pub struct InvalidPartyIndex;
+
+impl fmt::Display for InvalidPartyIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "party index must be > 0")
+    }
+}
+
+impl std::error::Error for InvalidPartyIndex {}
+
+/// Strongly-typed 1-based participant identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Zeroize)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[repr(transparent)]
+#[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
+pub struct PartyIndex(u8);
+
+impl PartyIndex {
+    pub fn new(value: u8) -> Result<Self, InvalidPartyIndex> {
+        if value == 0 {
+            Err(InvalidPartyIndex)
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    #[must_use]
+    pub fn as_u8(&self) -> u8 {
+        self.0
+    }
+}
+
+impl TryFrom<u8> for PartyIndex {
+    type Error = InvalidPartyIndex;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<PartyIndex> for u8 {
+    fn from(pi: PartyIndex) -> Self {
+        pi.0
+    }
+}
+
+impl fmt::Display for PartyIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Contains the values `t` and  `n` from `DKLs23`.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Parameters {
     pub threshold: u8,   //t
     pub share_count: u8, //n
 }
 
 /// Represents a party after key generation ready to sign a message.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Party {
     pub parameters: Parameters,
-    pub party_index: u8,
+    pub party_index: PartyIndex,
     pub session_id: Vec<u8>,
 
     /// Behaves as the secret key share.
@@ -41,8 +102,8 @@ pub struct Party {
 
     /// Initializations for two-party multiplication.
     /// The key in the `BTreeMap` represents the other party.
-    pub mul_senders: BTreeMap<u8, MulSender>,
-    pub mul_receivers: BTreeMap<u8, MulReceiver>,
+    pub mul_senders: BTreeMap<PartyIndex, MulSender>,
+    pub mul_receivers: BTreeMap<PartyIndex, MulReceiver>,
 
     /// Data for BIP-32 derivation.
     pub derivation_data: DerivData,
@@ -77,6 +138,63 @@ impl Drop for Party {
     }
 }
 
+/// Aggregates the group public key, per-participant verification shares,
+/// and threshold parameters produced by DKG or re-key.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PublicKeyPackage {
+    verifying_key: AffinePoint,
+    verifying_shares: BTreeMap<PartyIndex, AffinePoint>,
+    parameters: Parameters,
+}
+
+impl PublicKeyPackage {
+    #[must_use]
+    pub fn new(
+        verifying_key: AffinePoint,
+        verifying_shares: BTreeMap<PartyIndex, AffinePoint>,
+        parameters: Parameters,
+    ) -> Self {
+        Self {
+            verifying_key,
+            verifying_shares,
+            parameters,
+        }
+    }
+
+    #[must_use]
+    pub fn verifying_key(&self) -> &AffinePoint {
+        &self.verifying_key
+    }
+
+    #[must_use]
+    pub fn verifying_share(&self, party: PartyIndex) -> Option<&AffinePoint> {
+        self.verifying_shares.get(&party)
+    }
+
+    #[must_use]
+    pub fn threshold(&self) -> u8 {
+        self.parameters.threshold
+    }
+
+    #[must_use]
+    pub fn share_count(&self) -> u8 {
+        self.parameters.share_count
+    }
+
+    #[must_use]
+    pub fn ethereum_address(&self) -> String {
+        compute_eth_address(&self.verifying_key)
+    }
+
+    #[must_use]
+    pub fn verify_share(&self, party: PartyIndex, verification_share: &AffinePoint) -> bool {
+        self.verifying_shares
+            .get(&party)
+            .is_some_and(|stored| stored == verification_share)
+    }
+}
+
 /// Classifies the severity and required response for an abort.
 ///
 /// The `DKLs23` protocol reuses base OT correlations across signing sessions.
@@ -84,7 +202,8 @@ impl Drop for Party {
 /// is leaked. The paper mandates that the offending counterparty must be
 /// **permanently banned** from all future sessions. Failure to do so
 /// enables a key extraction attack over multiple sessions.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AbortKind {
     /// The protocol failed but can be retried safely.
     /// No long-term state was compromised.
@@ -93,26 +212,210 @@ pub enum AbortKind {
     /// about reusable OT state. This party **MUST** be permanently excluded
     /// from all future signing and refresh sessions. Continuing to interact
     /// with this party enables private key extraction.
-    BanCounterparty(u8),
+    BanCounterparty(PartyIndex),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Machine-readable reason for a protocol abort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum AbortReason {
+    // --- Input validation (all Recoverable) ---
+    InvalidPartyIndex {
+        index: PartyIndex,
+    },
+    WrongCounterpartyCount {
+        expected: usize,
+        got: usize,
+    },
+    DuplicateCounterparty {
+        index: PartyIndex,
+    },
+    SelfInCounterparties,
+    MissingMulState {
+        counterparty: PartyIndex,
+    },
+
+    // --- Message routing (all Recoverable) ---
+    MisroutedMessage {
+        expected_receiver: PartyIndex,
+        actual_receiver: PartyIndex,
+    },
+    UnexpectedSender {
+        sender: PartyIndex,
+    },
+    DuplicateSender {
+        sender: PartyIndex,
+    },
+    WrongMessageCount {
+        expected: usize,
+        got: usize,
+    },
+    MissingMessageFromParty {
+        party: PartyIndex,
+    },
+
+    // --- Cryptographic verification (severity varies) ---
+    ProofVerificationFailed {
+        counterparty: PartyIndex,
+    },
+    CommitmentMismatch {
+        counterparty: PartyIndex,
+    },
+    PolynomialInconsistency,
+    TrivialInstancePoint {
+        counterparty: PartyIndex,
+    },
+    TrivialPublicKey,
+    TrivialKeyShare,
+    MissingCommittedPoint {
+        party: PartyIndex,
+    },
+
+    // --- OT/Multiplication failures (typically BanCounterparty) ---
+    OtConsistencyCheckFailed {
+        counterparty: PartyIndex,
+    },
+    MultiplicationVerificationFailed {
+        counterparty: PartyIndex,
+        detail: String,
+    },
+    GammaUInconsistency {
+        counterparty: PartyIndex,
+    },
+
+    // --- Signature assembly ---
+    SignatureVerificationFailed,
+    ZeroDenominator,
+    LagrangeCoefficientFailed,
+    InvalidXCoordinateHex,
+
+    // --- Zero-share initialization ---
+    ZeroShareDecommitFailed {
+        counterparty: PartyIndex,
+    },
+
+    // --- Chain code / BIP derivation ---
+    ChainCodeCommitmentFailed {
+        party: PartyIndex,
+    },
+
+    // --- Session state machine ---
+    PhaseCalledOutOfOrder {
+        phase: String,
+    },
+
+    // --- Hex parsing ---
+    InvalidHex {
+        detail: String,
+    },
+}
+
+impl fmt::Display for AbortReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPartyIndex { index } => {
+                write!(f, "party index {index} is out of valid range")
+            }
+            Self::WrongCounterpartyCount { expected, got } => {
+                write!(
+                    f,
+                    "wrong counterparty count: expected {expected}, got {got}"
+                )
+            }
+            Self::DuplicateCounterparty { index } => {
+                write!(f, "duplicate counterparty: {index}")
+            }
+            Self::SelfInCounterparties => write!(f, "own index in counterparty list"),
+            Self::MissingMulState { counterparty } => {
+                write!(f, "missing multiplication state for party {counterparty}")
+            }
+            Self::MisroutedMessage {
+                expected_receiver,
+                actual_receiver,
+            } => write!(
+                f,
+                "message addressed to {actual_receiver}, expected {expected_receiver}"
+            ),
+            Self::UnexpectedSender { sender } => write!(f, "unexpected sender: {sender}"),
+            Self::DuplicateSender { sender } => {
+                write!(f, "duplicate message from party {sender}")
+            }
+            Self::WrongMessageCount { expected, got } => {
+                write!(f, "wrong message count: expected {expected}, got {got}")
+            }
+            Self::MissingMessageFromParty { party } => {
+                write!(f, "missing message from party {party}")
+            }
+            Self::ProofVerificationFailed { counterparty } => {
+                write!(f, "proof verification failed for party {counterparty}")
+            }
+            Self::CommitmentMismatch { counterparty } => {
+                write!(f, "commitment mismatch for party {counterparty}")
+            }
+            Self::PolynomialInconsistency => write!(f, "polynomial inconsistency"),
+            Self::TrivialInstancePoint { counterparty } => {
+                write!(f, "trivial instance point from party {counterparty}")
+            }
+            Self::TrivialPublicKey => write!(f, "trivial public key"),
+            Self::TrivialKeyShare => write!(f, "trivial key share"),
+            Self::MissingCommittedPoint { party } => {
+                write!(f, "missing committed point for party {party}")
+            }
+            Self::OtConsistencyCheckFailed { counterparty } => {
+                write!(f, "OT consistency check failed for party {counterparty}")
+            }
+            Self::MultiplicationVerificationFailed {
+                counterparty,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "multiplication verification failed for party {counterparty}: {detail}"
+                )
+            }
+            Self::GammaUInconsistency { counterparty } => {
+                write!(f, "gamma-u inconsistency for party {counterparty}")
+            }
+            Self::SignatureVerificationFailed => write!(f, "signature verification failed"),
+            Self::ZeroDenominator => write!(f, "zero denominator in signature assembly"),
+            Self::LagrangeCoefficientFailed => {
+                write!(f, "failed to compute Lagrange coefficient")
+            }
+            Self::InvalidXCoordinateHex => write!(f, "invalid x-coordinate hex"),
+            Self::ZeroShareDecommitFailed { counterparty } => {
+                write!(f, "zero-share decommitment failed for party {counterparty}")
+            }
+            Self::ChainCodeCommitmentFailed { party } => {
+                write!(f, "chain code commitment failed for party {party}")
+            }
+            Self::PhaseCalledOutOfOrder { phase } => {
+                write!(f, "{phase}")
+            }
+            Self::InvalidHex { detail } => write!(f, "invalid hex: {detail}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Abort {
     /// Index of the party generating the abort message.
-    pub index: u8,
+    pub index: PartyIndex,
     /// Indicates whether the abort requires permanently banning a counterparty.
     pub kind: AbortKind,
-    pub description: String,
+    /// Machine-readable reason for the abort.
+    pub reason: AbortReason,
 }
 
 impl Abort {
     /// Creates a recoverable `Abort`.
     #[must_use]
-    pub fn new(index: u8, description: &str) -> Abort {
+    pub fn recoverable(index: PartyIndex, reason: AbortReason) -> Abort {
         Abort {
             index,
             kind: AbortKind::Recoverable,
-            description: String::from(description),
+            reason,
         }
     }
 
@@ -123,20 +426,27 @@ impl Abort {
     /// has either cheated or been compromised, and continuing to sign with
     /// them leaks information enabling key extraction.
     #[must_use]
-    pub fn ban(index: u8, counterparty: u8, description: &str) -> Abort {
+    pub fn ban(index: PartyIndex, counterparty: PartyIndex, reason: AbortReason) -> Abort {
         Abort {
             index,
             kind: AbortKind::BanCounterparty(counterparty),
-            description: String::from(description),
+            reason,
         }
+    }
+
+    /// Human-readable description for logging/debugging.
+    #[must_use]
+    pub fn description(&self) -> String {
+        self.reason.to_string()
     }
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PartiesMessage {
-    pub sender: u8,
-    pub receiver: u8,
+    pub sender: PartyIndex,
+    pub receiver: PartyIndex,
 }
 
 impl PartiesMessage {
@@ -147,5 +457,60 @@ impl PartiesMessage {
             sender: self.receiver,
             receiver: self.sender,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn party_index_rejects_zero() {
+        assert!(PartyIndex::new(0).is_err());
+        assert!(PartyIndex::try_from(0u8).is_err());
+    }
+
+    #[test]
+    fn party_index_accepts_nonzero() {
+        for i in 1..=u8::MAX {
+            assert!(PartyIndex::new(i).is_ok());
+        }
+    }
+
+    #[test]
+    fn party_index_round_trip() {
+        for i in 1..=u8::MAX {
+            let pi = PartyIndex::new(i).unwrap();
+            assert_eq!(pi.as_u8(), i);
+            assert_eq!(u8::from(pi), i);
+        }
+    }
+
+    #[test]
+    fn party_index_serde_json_transparent() {
+        let pi = PartyIndex::new(5).unwrap();
+        let json = serde_json::to_string(&pi).unwrap();
+        assert_eq!(json, "5");
+
+        let deserialized: PartyIndex = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, pi);
+    }
+
+    #[test]
+    fn party_index_serde_rejects_zero() {
+        let result: Result<PartyIndex, _> = serde_json::from_str("0");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn party_index_btreemap_ordering() {
+        let mut map = BTreeMap::new();
+        map.insert(PartyIndex::new(3).unwrap(), "c");
+        map.insert(PartyIndex::new(1).unwrap(), "a");
+        map.insert(PartyIndex::new(2).unwrap(), "b");
+
+        let keys: Vec<u8> = map.keys().map(|k| k.as_u8()).collect();
+        assert_eq!(keys, vec![1, 2, 3]);
     }
 }

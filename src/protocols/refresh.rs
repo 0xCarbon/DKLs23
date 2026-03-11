@@ -87,7 +87,6 @@ use std::collections::BTreeMap;
 
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, Scalar};
-use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
@@ -102,7 +101,7 @@ use crate::protocols::dkg::{
     KeepInitZeroSharePhase3to4, ProofCommitment, TransmitInitMulPhase3to4,
     TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
 };
-use crate::protocols::{Abort, PartiesMessage, Party};
+use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 
 // STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
 
@@ -112,7 +111,8 @@ use crate::protocols::{Abort, PartiesMessage, Party};
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitRefreshPhase2to4 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
@@ -121,7 +121,8 @@ pub struct TransmitRefreshPhase2to4 {
 /// Transmit - (Faster) Refresh.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitRefreshPhase3to4 {
     pub parties: PartiesMessage,
     pub seed: zero_shares::Seed,
@@ -133,7 +134,8 @@ pub struct TransmitRefreshPhase3to4 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KeepRefreshPhase2to3 {
     pub seed: zero_shares::Seed,
     pub salt: Vec<u8>,
@@ -142,9 +144,24 @@ pub struct KeepRefreshPhase2to3 {
 /// Keep - (Faster) Refresh.
 ///
 /// The message is produced during Phase 3 and used in Phase 4.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KeepRefreshPhase3to4 {
     pub seed: zero_shares::Seed,
+}
+
+// MessageTag implementations.
+#[cfg(feature = "serde")]
+mod message_tags {
+    use super::*;
+    use crate::protocols::messages::MessageTag;
+
+    impl MessageTag for TransmitRefreshPhase2to4 {
+        const TAG: u8 = 0x20;
+    }
+    impl MessageTag for TransmitRefreshPhase3to4 {
+        const TAG: u8 = 0x21;
+    }
 }
 
 /// Implementations related to refresh protocols ([read more](self)).
@@ -184,7 +201,7 @@ impl Party {
     ) -> (
         Scalar,
         ProofCommitment,
-        BTreeMap<u8, KeepInitZeroSharePhase2to3>,
+        BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
         Vec<TransmitInitZeroSharePhase2to4>,
     ) {
         // We run Phase 2 in DKG, but we omit the derivation part.
@@ -198,11 +215,12 @@ impl Party {
         // Initialization - Zero shares.
 
         // We will use BTreeMap to keep messages: the key indicates the party to whom the message refers.
-        let mut zero_keep: BTreeMap<u8, KeepInitZeroSharePhase2to3> = BTreeMap::new();
+        let mut zero_keep: BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3> = BTreeMap::new();
         let mut zero_transmit: Vec<TransmitInitZeroSharePhase2to4> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for i in 1..=self.parameters.share_count {
-            if i == self.party_index {
+            let i_idx = PartyIndex::new(i).unwrap();
+            if i_idx == self.party_index {
                 continue;
             }
 
@@ -214,12 +232,12 @@ impl Party {
             let transmit = TransmitInitZeroSharePhase2to4 {
                 parties: PartiesMessage {
                     sender: self.party_index,
-                    receiver: i,
+                    receiver: i_idx,
                 },
                 commitment,
             };
 
-            zero_keep.insert(i, keep);
+            zero_keep.insert(i_idx, keep);
             zero_transmit.push(transmit);
         }
 
@@ -231,20 +249,21 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
+    #[allow(clippy::type_complexity)]
     pub fn refresh_complete_phase3(
         &self,
         refresh_sid: &[u8],
-        zero_kept: &BTreeMap<u8, KeepInitZeroSharePhase2to3>,
+        zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
     ) -> (
-        BTreeMap<u8, KeepInitZeroSharePhase3to4>,
+        BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>,
         Vec<TransmitInitZeroSharePhase3to4>,
-        BTreeMap<u8, KeepInitMulPhase3to4>,
+        BTreeMap<PartyIndex, KeepInitMulPhase3to4>,
         Vec<TransmitInitMulPhase3to4>,
     ) {
         // We run Phase 3 in DKG, but we omit the derivation part.
 
         // Initialization - Zero shares.
-        let mut zero_keep: BTreeMap<u8, KeepInitZeroSharePhase3to4> = BTreeMap::new();
+        let mut zero_keep: BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4> = BTreeMap::new();
         let mut zero_transmit: Vec<TransmitInitZeroSharePhase3to4> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for (target_party, message_kept) in zero_kept {
@@ -270,11 +289,12 @@ impl Party {
         // Initialization - Two-party multiplication.
         // Each party prepares initialization both as
         // a receiver and as a sender.
-        let mut mul_keep: BTreeMap<u8, KeepInitMulPhase3to4> = BTreeMap::new();
+        let mut mul_keep: BTreeMap<PartyIndex, KeepInitMulPhase3to4> = BTreeMap::new();
         let mut mul_transmit: Vec<TransmitInitMulPhase3to4> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for i in 1..=self.parameters.share_count {
-            if i == self.party_index {
+            let i_idx = PartyIndex::new(i).unwrap();
+            if i_idx == self.party_index {
                 continue;
             }
 
@@ -285,7 +305,7 @@ impl Party {
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
             let mul_sid_receiver = [
                 "Multiplication protocol".as_bytes(),
-                &self.party_index.to_be_bytes(),
+                &self.party_index.as_u8().to_be_bytes(),
                 &i.to_be_bytes(),
                 refresh_sid,
             ]
@@ -301,7 +321,7 @@ impl Party {
             let mul_sid_sender = [
                 "Multiplication protocol".as_bytes(),
                 &i.to_be_bytes(),
-                &self.party_index.to_be_bytes(),
+                &self.party_index.as_u8().to_be_bytes(),
                 refresh_sid,
             ]
             .concat();
@@ -314,7 +334,7 @@ impl Party {
             let transmit = TransmitInitMulPhase3to4 {
                 parties: PartiesMessage {
                     sender: self.party_index,
-                    receiver: i,
+                    receiver: i_idx,
                 },
 
                 // Us = Receiver
@@ -336,7 +356,7 @@ impl Party {
                 vec_r,
             };
 
-            mul_keep.insert(i, keep);
+            mul_keep.insert(i_idx, keep);
             mul_transmit.push(transmit);
         }
 
@@ -356,15 +376,16 @@ impl Party {
     /// if a message is not meant for the party, if the zero shares
     /// protocol fails when verifying the seeds or if the multiplication
     /// protocol fails.
+    #[allow(clippy::too_many_arguments)]
     pub fn refresh_complete_phase4(
         &self,
         refresh_sid: &[u8],
         correction_value: &Scalar,
         proofs_commitments: &[ProofCommitment],
-        zero_kept: &BTreeMap<u8, KeepInitZeroSharePhase3to4>,
+        zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>,
         zero_received_phase2: &[TransmitInitZeroSharePhase2to4],
         zero_received_phase3: &[TransmitInitZeroSharePhase3to4],
-        mul_kept: &BTreeMap<u8, KeepInitMulPhase3to4>,
+        mul_kept: &BTreeMap<PartyIndex, KeepInitMulPhase3to4>,
         mul_received: &[TransmitInitMulPhase3to4],
     ) -> Result<Party, Abort> {
         // We run Phase 4, but now we don't check if the resulting public key is zero.
@@ -373,7 +394,7 @@ impl Party {
         // Again, the derivation part is omitted.
 
         // DKG
-        let verifying_pk = step5(
+        let (verifying_pk, _) = step5(
             &self.parameters,
             self.party_index,
             refresh_sid,
@@ -382,81 +403,97 @@ impl Party {
 
         // The public key calculated above should be the zero point on the curve.
         if verifying_pk != AffinePoint::IDENTITY {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "The auxiliary public key is not the zero point!",
+                AbortReason::PolynomialInconsistency,
             ));
         }
 
         // Initialization - Zero shares.
-        let mut zero_received_phase2_by_sender: BTreeMap<u8, &TransmitInitZeroSharePhase2to4> =
-            BTreeMap::new();
+        let mut zero_received_phase2_by_sender: BTreeMap<
+            PartyIndex,
+            &TransmitInitZeroSharePhase2to4,
+        > = BTreeMap::new();
         for message in zero_received_phase2 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a zero-share phase-2 message not meant for me!",
+                    AbortReason::MisroutedMessage {
+                        expected_receiver: self.party_index,
+                        actual_receiver: message.parties.receiver,
+                    },
                 ));
             }
             if !zero_kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected zero-share phase-2 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
             if zero_received_phase2_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate zero-share phase-2 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
         }
-        let mut zero_received_phase3_by_sender: BTreeMap<u8, &TransmitInitZeroSharePhase3to4> =
-            BTreeMap::new();
+        let mut zero_received_phase3_by_sender: BTreeMap<
+            PartyIndex,
+            &TransmitInitZeroSharePhase3to4,
+        > = BTreeMap::new();
         for message in zero_received_phase3 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a zero-share phase-3 message not meant for me!",
+                    AbortReason::MisroutedMessage {
+                        expected_receiver: self.party_index,
+                        actual_receiver: message.parties.receiver,
+                    },
                 ));
             }
             if !zero_kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected zero-share phase-3 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
             if zero_received_phase3_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate zero-share phase-3 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
         }
-        if zero_received_phase2_by_sender.len() != zero_kept.len()
-            || zero_received_phase3_by_sender.len() != zero_kept.len()
-        {
-            return Err(Abort::new(
+        if zero_received_phase2_by_sender.len() != zero_kept.len() {
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Missing zero-share initialization messages from one or more parties",
+                AbortReason::WrongMessageCount {
+                    expected: zero_kept.len(),
+                    got: zero_received_phase2_by_sender.len(),
+                },
+            ));
+        }
+        if zero_received_phase3_by_sender.len() != zero_kept.len() {
+            return Err(Abort::recoverable(
+                self.party_index,
+                AbortReason::WrongMessageCount {
+                    expected: zero_kept.len(),
+                    got: zero_received_phase3_by_sender.len(),
+                },
             ));
         }
 
@@ -466,17 +503,21 @@ impl Party {
             let message_received_2 = zero_received_phase2_by_sender
                 .get(target_party)
                 .ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing zero-share phase-2 message from Party {target_party}"),
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
             let message_received_3 = zero_received_phase3_by_sender
                 .get(target_party)
                 .ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing zero-share phase-3 message from Party {target_party}"),
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
 
@@ -487,11 +528,11 @@ impl Party {
                 &message_received_3.salt,
             );
             if !verification {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
-                    ),
+                    AbortReason::ZeroShareDecommitFailed {
+                        counterparty: *target_party,
+                    },
                 ));
             }
 
@@ -508,50 +549,57 @@ impl Party {
         let zero_share = ZeroShare::initialize(seeds);
 
         // Initialization - Two-party multiplication.
-        let mut mul_receivers: BTreeMap<u8, MulReceiver> = BTreeMap::new();
-        let mut mul_senders: BTreeMap<u8, MulSender> = BTreeMap::new();
-        let mut mul_received_by_sender: BTreeMap<u8, &TransmitInitMulPhase3to4> = BTreeMap::new();
+        let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver> = BTreeMap::new();
+        let mut mul_senders: BTreeMap<PartyIndex, MulSender> = BTreeMap::new();
+        let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4> =
+            BTreeMap::new();
         for message in mul_received {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a multiplication-init message not meant for me!",
+                    AbortReason::MisroutedMessage {
+                        expected_receiver: self.party_index,
+                        actual_receiver: message.parties.receiver,
+                    },
                 ));
             }
             if !mul_kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected multiplication-init sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
             if mul_received_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate multiplication-init message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
         }
         if mul_received_by_sender.len() != mul_kept.len() {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Missing multiplication initialization messages from one or more parties",
+                AbortReason::WrongMessageCount {
+                    expected: mul_kept.len(),
+                    got: mul_received_by_sender.len(),
+                },
             ));
         }
 
         for (target_party, message_kept) in mul_kept {
             let message_received = mul_received_by_sender.get(target_party).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication-init message from Party {target_party}"),
+                    AbortReason::MissingMessageFromParty {
+                        party: *target_party,
+                    },
                 )
             })?;
 
@@ -562,8 +610,8 @@ impl Party {
             // is the receiver and the second, the sender.
             let mul_sid_receiver = [
                 "Multiplication protocol".as_bytes(),
-                &self.party_index.to_be_bytes(),
-                &target_party.to_be_bytes(),
+                &self.party_index.as_u8().to_be_bytes(),
+                &target_party.as_u8().to_be_bytes(),
                 refresh_sid,
             ]
             .concat();
@@ -581,12 +629,12 @@ impl Party {
                 Err(error) => {
                     // Complete refresh builds fresh OT from scratch (no reused COTe state),
                     // so init failures are recoverable, matching DKG classification.
-                    return Err(Abort::new(
+                    return Err(Abort::recoverable(
                         self.party_index,
-                        &format!(
-                            "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                            target_party, error.description
-                        ),
+                        AbortReason::MultiplicationVerificationFailed {
+                            counterparty: *target_party,
+                            detail: error.description.clone(),
+                        },
                     ));
                 }
             };
@@ -598,8 +646,8 @@ impl Party {
             // is the receiver and the second, the sender.
             let mul_sid_sender = [
                 "Multiplication protocol".as_bytes(),
-                &target_party.to_be_bytes(),
-                &self.party_index.to_be_bytes(),
+                &target_party.as_u8().to_be_bytes(),
+                &self.party_index.as_u8().to_be_bytes(),
                 refresh_sid,
             ]
             .concat();
@@ -618,12 +666,12 @@ impl Party {
                 Err(error) => {
                     // Complete refresh builds fresh OT from scratch (no reused COTe state),
                     // so init failures are recoverable, matching DKG classification.
-                    return Err(Abort::new(
+                    return Err(Abort::recoverable(
                         self.party_index,
-                        &format!(
-                            "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                            target_party, error.description
-                        ),
+                        AbortReason::MultiplicationVerificationFailed {
+                            counterparty: *target_party,
+                            detail: error.description.clone(),
+                        },
                     ));
                 }
             };
@@ -699,7 +747,7 @@ impl Party {
     ) -> (
         Scalar,
         ProofCommitment,
-        BTreeMap<u8, KeepRefreshPhase2to3>,
+        BTreeMap<PartyIndex, KeepRefreshPhase2to3>,
         Vec<TransmitRefreshPhase2to4>,
     ) {
         // We run Phase 2 in DKG, but we omit the derivation part.
@@ -713,11 +761,12 @@ impl Party {
         // Initialization - Zero shares.
 
         // We will use BTreeMap to keep messages: the key indicates the party to whom the message refers.
-        let mut keep: BTreeMap<u8, KeepRefreshPhase2to3> = BTreeMap::new();
+        let mut keep: BTreeMap<PartyIndex, KeepRefreshPhase2to3> = BTreeMap::new();
         let mut transmit: Vec<TransmitRefreshPhase2to4> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for i in 1..=self.parameters.share_count {
-            if i == self.party_index {
+            let i_idx = PartyIndex::new(i).unwrap();
+            if i_idx == self.party_index {
                 continue;
             }
 
@@ -725,11 +774,11 @@ impl Party {
             let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
 
             // We first send the commitments. We keep the rest to send later.
-            keep.insert(i, KeepRefreshPhase2to3 { seed, salt });
+            keep.insert(i_idx, KeepRefreshPhase2to3 { seed, salt });
             transmit.push(TransmitRefreshPhase2to4 {
                 parties: PartiesMessage {
                     sender: self.party_index,
-                    receiver: i,
+                    receiver: i_idx,
                 },
                 commitment,
             });
@@ -745,15 +794,15 @@ impl Party {
     #[must_use]
     pub fn refresh_phase3(
         &self,
-        kept: &BTreeMap<u8, KeepRefreshPhase2to3>,
+        kept: &BTreeMap<PartyIndex, KeepRefreshPhase2to3>,
     ) -> (
-        BTreeMap<u8, KeepRefreshPhase3to4>,
+        BTreeMap<PartyIndex, KeepRefreshPhase3to4>,
         Vec<TransmitRefreshPhase3to4>,
     ) {
         // We run Phase 3 in DKG, but we omit the multiplication and the derivation parts.
 
         // Initialization - Zero shares.
-        let mut keep: BTreeMap<u8, KeepRefreshPhase3to4> = BTreeMap::new();
+        let mut keep: BTreeMap<PartyIndex, KeepRefreshPhase3to4> = BTreeMap::new();
         let mut transmit: Vec<TransmitRefreshPhase3to4> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for (target_party, message_kept) in kept {
@@ -801,7 +850,7 @@ impl Party {
         refresh_sid: &[u8],
         correction_value: &Scalar,
         proofs_commitments: &[ProofCommitment],
-        kept: &BTreeMap<u8, KeepRefreshPhase3to4>,
+        kept: &BTreeMap<PartyIndex, KeepRefreshPhase3to4>,
         received_phase2: &[TransmitRefreshPhase2to4],
         received_phase3: &[TransmitRefreshPhase3to4],
     ) -> Result<Party, Abort> {
@@ -811,7 +860,7 @@ impl Party {
         // Again, the derivation part is omitted.
 
         // DKG
-        let verifying_pk = step5(
+        let (verifying_pk, _) = step5(
             &self.parameters,
             self.party_index,
             refresh_sid,
@@ -820,81 +869,93 @@ impl Party {
 
         // The public key calculated above should be the zero point on the curve.
         if verifying_pk != AffinePoint::IDENTITY {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "The auxiliary public key is not the zero point!",
+                AbortReason::PolynomialInconsistency,
             ));
         }
 
         // Initialization - Zero shares.
-        let mut received_phase2_by_sender: BTreeMap<u8, &TransmitRefreshPhase2to4> =
+        let mut received_phase2_by_sender: BTreeMap<PartyIndex, &TransmitRefreshPhase2to4> =
             BTreeMap::new();
         for message in received_phase2 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a refresh phase-2 message not meant for me!",
+                    AbortReason::MisroutedMessage {
+                        expected_receiver: self.party_index,
+                        actual_receiver: message.parties.receiver,
+                    },
                 ));
             }
             if !kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected refresh phase-2 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
             if received_phase2_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate refresh phase-2 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
         }
-        let mut received_phase3_by_sender: BTreeMap<u8, &TransmitRefreshPhase3to4> =
+        let mut received_phase3_by_sender: BTreeMap<PartyIndex, &TransmitRefreshPhase3to4> =
             BTreeMap::new();
         for message in received_phase3 {
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Received a refresh phase-3 message not meant for me!",
+                    AbortReason::MisroutedMessage {
+                        expected_receiver: self.party_index,
+                        actual_receiver: message.parties.receiver,
+                    },
                 ));
             }
             if !kept.contains_key(&message.parties.sender) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Unexpected refresh phase-3 sender {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::UnexpectedSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
             if received_phase3_by_sender
                 .insert(message.parties.sender, message)
                 .is_some()
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Duplicate refresh phase-3 message from Party {}",
-                        message.parties.sender
-                    ),
+                    AbortReason::DuplicateSender {
+                        sender: message.parties.sender,
+                    },
                 ));
             }
         }
-        if received_phase2_by_sender.len() != kept.len()
-            || received_phase3_by_sender.len() != kept.len()
-        {
-            return Err(Abort::new(
+        if received_phase2_by_sender.len() != kept.len() {
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Missing refresh initialization messages from one or more parties",
+                AbortReason::WrongMessageCount {
+                    expected: kept.len(),
+                    got: received_phase2_by_sender.len(),
+                },
+            ));
+        }
+        if received_phase3_by_sender.len() != kept.len() {
+            return Err(Abort::recoverable(
+                self.party_index,
+                AbortReason::WrongMessageCount {
+                    expected: kept.len(),
+                    got: received_phase3_by_sender.len(),
+                },
             ));
         }
 
@@ -903,16 +964,20 @@ impl Party {
         for (target_party, message_kept) in kept {
             let message_received_2 =
                 received_phase2_by_sender.get(target_party).ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing refresh phase-2 message from Party {target_party}"),
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
             let message_received_3 =
                 received_phase3_by_sender.get(target_party).ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         self.party_index,
-                        &format!("Missing refresh phase-3 message from Party {target_party}"),
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
 
@@ -923,11 +988,11 @@ impl Party {
                 &message_received_3.salt,
             );
             if !verification {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
-                    ),
+                    AbortReason::ZeroShareDecommitFailed {
+                        counterparty: *target_party,
+                    },
                 ));
             }
 
@@ -942,8 +1007,8 @@ impl Party {
 
         // Having the seeds, we can update the data for multiplication.
 
-        let mut mul_senders: BTreeMap<u8, MulSender> = BTreeMap::new();
-        let mut mul_receivers: BTreeMap<u8, MulReceiver> = BTreeMap::new();
+        let mut mul_senders: BTreeMap<PartyIndex, MulSender> = BTreeMap::new();
+        let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver> = BTreeMap::new();
 
         for seed_pair in &seeds {
             // This is the same as running through the counterparties.
@@ -952,15 +1017,19 @@ impl Party {
             let seed = seed_pair.seed;
 
             let mul_sender = self.mul_senders.get(&their_index).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication sender state for party {their_index}"),
+                    AbortReason::MissingMulState {
+                        counterparty: their_index,
+                    },
                 )
             })?;
             let mul_receiver = self.mul_receivers.get(&their_index).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication receiver state for party {their_index}"),
+                    AbortReason::MissingMulState {
+                        counterparty: their_index,
+                    },
                 )
             })?;
 
@@ -978,8 +1047,8 @@ impl Party {
 
                 // Sender
                 let i_bytes = i.to_be_bytes();
-                let sender_bytes = u16::from(self.party_index).to_be_bytes();
-                let receiver_bytes = u16::from(their_index).to_be_bytes();
+                let sender_bytes = u16::from(self.party_index.as_u8()).to_be_bytes();
+                let receiver_bytes = u16::from(their_index.as_u8()).to_be_bytes();
 
                 let r0_prime = tagged_hash(
                     TAG_REFRESH_FAST_R0,
@@ -1010,8 +1079,8 @@ impl Party {
 
                 // Receiver
                 let i_bytes = i.to_be_bytes();
-                let sender_bytes = u16::from(their_index).to_be_bytes();
-                let receiver_bytes = u16::from(self.party_index).to_be_bytes();
+                let sender_bytes = u16::from(their_index.as_u8()).to_be_bytes();
+                let receiver_bytes = u16::from(self.party_index.as_u8()).to_be_bytes();
 
                 let r0_prime = tagged_hash(
                     TAG_REFRESH_FAST_R0,
@@ -1112,20 +1181,22 @@ mod tests {
 
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
-    use crate::protocols::{AbortKind, Parameters};
+    use crate::protocols::{AbortKind, AbortReason, Parameters};
     use crate::utilities::hashes::hash;
 
     use rand::RngExt;
 
+    const SESSION_ID_LEN: usize = 32;
+
     struct CompleteRefreshPhase4Inputs {
         parties: Vec<Party>,
-        refresh_sid: [u8; 32],
+        refresh_sid: [u8; SESSION_ID_LEN],
         correction_values: Vec<Scalar>,
         proofs_commitments: Vec<ProofCommitment>,
-        zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>>,
+        zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>>,
         zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>>,
         zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>>,
-        mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>>,
+        mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>>,
         mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>>,
     }
 
@@ -1134,11 +1205,11 @@ mod tests {
             threshold: 2,
             share_count: 2,
         };
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
-        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1162,7 +1233,7 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut proofs_commitments: Vec<ProofCommitment> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+        let mut zero_kept_2to3: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1180,11 +1251,12 @@ mod tests {
         let mut zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
+            let i_idx = PartyIndex::new(i).unwrap();
             let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_2to4 {
                 for message in party {
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         new_row.push(message.clone());
                     }
                 }
@@ -1193,11 +1265,11 @@ mod tests {
         }
 
         // Phase 3
-        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+        let mut zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1217,11 +1289,12 @@ mod tests {
         let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
+            let i_idx = PartyIndex::new(i).unwrap();
             let mut zero_row: Vec<TransmitInitZeroSharePhase3to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_3to4 {
                 for message in party {
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         zero_row.push(message.clone());
                     }
                 }
@@ -1232,7 +1305,7 @@ mod tests {
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         mul_row.push(message.clone());
                     }
                 }
@@ -1260,7 +1333,10 @@ mod tests {
 
         let tampered = data.mul_received_3to4[0]
             .iter_mut()
-            .find(|message| message.parties.sender == 2 && message.parties.receiver == 1)
+            .find(|message| {
+                message.parties.sender == PartyIndex::new(2).unwrap()
+                    && message.parties.receiver == PartyIndex::new(1).unwrap()
+            })
             .expect("expected party-2 message for party 1 in complete refresh");
         assert!(
             !tampered.enc_proofs.is_empty(),
@@ -1280,9 +1356,9 @@ mod tests {
         );
         let abort = result.expect_err("tampered complete-refresh enc proof should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Initialization for multiplication protocol failed because of Party 2"));
+        assert!(
+            matches!(abort.reason, AbortReason::MultiplicationVerificationFailed { counterparty, .. } if counterparty == PartyIndex::new(2).unwrap())
+        );
     }
 
     /// Tests that complete refresh phase 4 aborts (recoverably) on tampered OT DLog proofs.
@@ -1292,7 +1368,10 @@ mod tests {
 
         let tampered = data.mul_received_3to4[0]
             .iter_mut()
-            .find(|message| message.parties.sender == 2 && message.parties.receiver == 1)
+            .find(|message| {
+                message.parties.sender == PartyIndex::new(2).unwrap()
+                    && message.parties.receiver == PartyIndex::new(1).unwrap()
+            })
             .expect("expected party-2 message for party 1 in complete refresh");
         assert!(
             !tampered.dlog_proof.proofs.is_empty(),
@@ -1312,9 +1391,9 @@ mod tests {
         );
         let abort = result.expect_err("tampered complete-refresh DLog proof should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Initialization for multiplication protocol failed because of Party 2"));
+        assert!(
+            matches!(abort.reason, AbortReason::MultiplicationVerificationFailed { counterparty, .. } if counterparty == PartyIndex::new(2).unwrap())
+        );
     }
 
     /// Tests if complete refresh phase 4 rejects duplicate multiplication-init senders.
@@ -1340,9 +1419,9 @@ mod tests {
         );
         let abort = result.expect_err("duplicate mul-init sender should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Duplicate multiplication-init message from Party 2"));
+        assert!(
+            matches!(abort.reason, AbortReason::DuplicateSender { sender } if sender == PartyIndex::new(2).unwrap())
+        );
     }
 
     /// Tests if the complete refresh protocol generates parties
@@ -1360,13 +1439,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (it follows test_dkg_initialization closely)
 
-        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1393,7 +1472,7 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut proofs_commitments: Vec<ProofCommitment> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut zero_kept_2to3: Vec<BTreeMap<u8, KeepInitZeroSharePhase2to3>> =
+        let mut zero_kept_2to3: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1414,12 +1493,13 @@ mod tests {
             // We don't need to transmit the commitments because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
+            let i_idx = PartyIndex::new(i).unwrap();
             let mut new_row: Vec<TransmitInitZeroSharePhase2to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_2to4 {
                 for message in party {
                     // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         new_row.push(message.clone());
                     }
                 }
@@ -1428,11 +1508,11 @@ mod tests {
         }
 
         // Phase 3
-        let mut zero_kept_3to4: Vec<BTreeMap<u8, KeepInitZeroSharePhase3to4>> =
+        let mut zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<u8, KeepInitMulPhase3to4>> =
+        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1455,12 +1535,13 @@ mod tests {
             // We don't need to transmit the proofs because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
+            let i_idx = PartyIndex::new(i).unwrap();
             let mut new_row: Vec<TransmitInitZeroSharePhase3to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &zero_transmit_3to4 {
                 for message in party {
                     // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         new_row.push(message.clone());
                     }
                 }
@@ -1472,7 +1553,7 @@ mod tests {
             for party in &mul_transmit_3to4 {
                 for message in party {
                     // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         new_row.push(message.clone());
                     }
                 }
@@ -1495,7 +1576,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok(party) => {
                     refreshed_parties.push(party);
@@ -1507,14 +1588,16 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
-        let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
+        let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
+            .map(|i| PartyIndex::new(i).unwrap())
+            .collect();
 
         // Each party prepares their data for this signing session.
-        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+        let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -1531,11 +1614,12 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
-        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
+            let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap())
                 .unwrap();
 
@@ -1545,7 +1629,7 @@ mod tests {
         }
 
         // Communication round 1
-        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut received_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for &party_index in &executing_parties {
             let messages_for_party: Vec<TransmitPhase1to2> = transmit_1to2
                 .values()
@@ -1558,11 +1642,12 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase2(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
@@ -1570,7 +1655,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1581,7 +1666,7 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3 = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
 
         for &party_index in &executing_parties {
             let filtered_messages: Vec<_> = transmit_2to3
@@ -1599,7 +1684,7 @@ mod tests {
         let mut broadcast_3to4: Vec<Broadcast3to4> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase3(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_2to3.get(&party_index).unwrap(),
                 kept_2to3.get(&party_index).unwrap(),
@@ -1607,7 +1692,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1627,14 +1712,14 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[(some_index - 1) as usize].sign_phase4(
+        let result = parties[(some_index.as_u8() - 1) as usize].sign_phase4(
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
             true,
         );
         if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            panic!("Party {} aborted: {:?}", abort.index, abort.description());
         }
     }
 
@@ -1653,13 +1738,13 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         // REFRESH (faster version)
 
-        let refresh_sid = rng::get_rng().random::<[u8; 32]>();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
@@ -1686,7 +1771,7 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut proofs_commitments: Vec<ProofCommitment> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut kept_2to3: Vec<BTreeMap<u8, KeepRefreshPhase2to3>> =
+        let mut kept_2to3: Vec<BTreeMap<PartyIndex, KeepRefreshPhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut transmit_2to4: Vec<Vec<TransmitRefreshPhase2to4>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1707,12 +1792,13 @@ mod tests {
             // We don't need to transmit the commitments because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
+            let i_idx = PartyIndex::new(i).unwrap();
             let mut new_row: Vec<TransmitRefreshPhase2to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &transmit_2to4 {
                 for message in party {
                     // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         new_row.push(message.clone());
                     }
                 }
@@ -1721,7 +1807,7 @@ mod tests {
         }
 
         // Phase 3
-        let mut kept_3to4: Vec<BTreeMap<u8, KeepRefreshPhase3to4>> =
+        let mut kept_3to4: Vec<BTreeMap<PartyIndex, KeepRefreshPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut transmit_3to4: Vec<Vec<TransmitRefreshPhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1739,12 +1825,13 @@ mod tests {
             // We don't need to transmit the proofs because proofs_commitments is already what we need.
             // In practice, this should be done here.
 
+            let i_idx = PartyIndex::new(i).unwrap();
             let mut new_row: Vec<TransmitRefreshPhase3to4> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &transmit_3to4 {
                 for message in party {
                     // Check if this message should be sent to us.
-                    if message.parties.receiver == i {
+                    if message.parties.receiver == i_idx {
                         new_row.push(message.clone());
                     }
                 }
@@ -1765,7 +1852,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok(party) => {
                     refreshed_parties.push(party);
@@ -1777,14 +1864,16 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
-        let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
+        let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
+            .map(|i| PartyIndex::new(i).unwrap())
+            .collect();
 
         // Each party prepares their data for this signing session.
-        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+        let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -1801,11 +1890,12 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
-        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
+            let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap())
                 .unwrap();
 
@@ -1815,7 +1905,7 @@ mod tests {
         }
 
         // Communication round 1
-        let mut received_1to2 = BTreeMap::new();
+        let mut received_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
 
         for &party_index in &executing_parties {
             let filtered_messages: Vec<_> = transmit_1to2
@@ -1829,11 +1919,12 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase2(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
@@ -1841,7 +1932,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1852,7 +1943,7 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
 
         for &party_index in &executing_parties {
             let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
@@ -1870,7 +1961,7 @@ mod tests {
         let mut broadcast_3to4: Vec<Broadcast3to4> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase3(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_2to3.get(&party_index).unwrap(),
                 kept_2to3.get(&party_index).unwrap(),
@@ -1878,7 +1969,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1898,14 +1989,14 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[(some_index - 1) as usize].sign_phase4(
+        let result = parties[(some_index.as_u8() - 1) as usize].sign_phase4(
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
             true,
         );
         if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            panic!("Party {} aborted: {:?}", abort.index, abort.description());
         }
     }
 }

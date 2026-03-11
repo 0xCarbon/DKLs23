@@ -19,7 +19,6 @@
 use k256::elliptic_curve::Field;
 use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::RngExt;
-use serde::{Deserialize, Serialize};
 
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
 use crate::utilities::oracle_tags::{TAG_OT_BASE_H, TAG_OT_BASE_MSG};
@@ -31,7 +30,8 @@ use crate::SECURITY;
 // SENDER DATA
 
 /// Sender's data and methods for the base OT protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTSender {
     pub s: Scalar,
     pub proof: DLogProof,
@@ -43,7 +43,8 @@ pub struct OTSender {
 pub type Seed = [u8; SECURITY as usize];
 
 /// Receiver's data and methods for the base OT protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTReceiver {
     pub seed: Seed,
 }
@@ -140,8 +141,8 @@ impl OTSender {
         seed: &Seed,
         enc_proofs: &[EncProof],
     ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
-        let batch_size =
-            u16::try_from(enc_proofs.len()).expect("The batch sizes used always fit into an u16!");
+        let batch_size = u16::try_from(enc_proofs.len())
+            .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
@@ -196,14 +197,17 @@ impl OTReceiver {
     // Phase 1 batch version: used for multiple executions (e.g. OT extension).
 
     /// Executes `run_phase1` for each choice bit in `bits`.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the batch size exceeds the maximum (65535).
     pub fn run_phase1_batch(
         &self,
         session_id: &[u8],
         bits: &[bool],
-    ) -> (Vec<Scalar>, Vec<EncProof>) {
-        let batch_size =
-            u16::try_from(bits.len()).expect("The batch sizes used always fit into an u16!");
+    ) -> Result<(Vec<Scalar>, Vec<EncProof>), ErrorOT> {
+        let batch_size = u16::try_from(bits.len())
+            .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size as usize);
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size as usize);
@@ -217,7 +221,7 @@ impl OTReceiver {
             vec_proof.push(proof);
         }
 
-        (vec_r, vec_proof)
+        Ok((vec_r, vec_proof))
     }
 
     // Communication round
@@ -285,8 +289,8 @@ impl OTReceiver {
         let z = self.run_phase2_step1(session_id, dlog_proof)?;
 
         // Step 2
-        let batch_size =
-            u16::try_from(vec_r.len()).expect("The batch sizes used always fit into an u16!");
+        let batch_size = u16::try_from(vec_r.len())
+            .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
@@ -414,7 +418,7 @@ mod tests {
             bits.push(rng::get_rng().random());
         }
 
-        let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits);
+        let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits).unwrap();
 
         // Communication round - The parties exchange the proofs.
         // The receiver also sends his seed.

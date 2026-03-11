@@ -8,3 +8,4 @@ pub mod ot;
 pub mod proofs;
 pub mod rng;
 pub mod zero_shares;
+pub const ID_LEN: usize = 32;

@@ -17,7 +17,7 @@ use rand::RngExt;
 
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::dkg::compute_eth_address;
-use crate::protocols::{Parameters, Party};
+use crate::protocols::{Parameters, Party, PartyIndex, PublicKeyPackage};
 
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
@@ -41,7 +41,7 @@ pub fn re_key(
     session_id: &[u8],
     secret_key: &Scalar,
     option_chain_code: Option<ChainCode>,
-) -> Vec<Party> {
+) -> (Vec<Party>, PublicKeyPackage) {
     // Public key.
     let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
 
@@ -84,7 +84,7 @@ pub fn re_key(
             for counterparty in 1..party {
                 seeds.push(zero_shares::SeedPair {
                     lowest_index: false,
-                    index_counterparty: counterparty,
+                    index_counterparty: PartyIndex::new(counterparty).unwrap(),
                     seed: common_seeds[(counterparty - 1) as usize]
                         [(party - counterparty - 1) as usize],
                 });
@@ -96,7 +96,7 @@ pub fn re_key(
             for counterparty in (party + 1)..=parameters.share_count {
                 seeds.push(zero_shares::SeedPair {
                     lowest_index: true,
-                    index_counterparty: counterparty,
+                    index_counterparty: PartyIndex::new(counterparty).unwrap(),
                     seed: common_seeds[(party - 1) as usize][(counterparty - party - 1) as usize],
                 });
             }
@@ -108,9 +108,9 @@ pub fn re_key(
     // Two-party multiplication.
 
     // These will store the result of initialization for each party.
-    let mut all_mul_receivers: Vec<BTreeMap<u8, MulReceiver>> =
+    let mut all_mul_receivers: Vec<BTreeMap<PartyIndex, MulReceiver>> =
         vec![BTreeMap::new(); parameters.share_count as usize];
-    let mut all_mul_senders: Vec<BTreeMap<u8, MulSender>> =
+    let mut all_mul_senders: Vec<BTreeMap<PartyIndex, MulSender>> =
         vec![BTreeMap::new(); parameters.share_count as usize];
 
     for receiver in 1..=parameters.share_count {
@@ -166,8 +166,10 @@ pub fn re_key(
             };
 
             // We save the results.
-            all_mul_receivers[(receiver - 1) as usize].insert(sender, mul_receiver);
-            all_mul_senders[(sender - 1) as usize].insert(receiver, mul_sender);
+            all_mul_receivers[(receiver - 1) as usize]
+                .insert(PartyIndex::new(sender).unwrap(), mul_receiver);
+            all_mul_senders[(sender - 1) as usize]
+                .insert(PartyIndex::new(receiver).unwrap(), mul_sender);
         }
     }
 
@@ -206,7 +208,7 @@ pub fn re_key(
 
         parties.push(Party {
             parameters: parameters.clone(),
-            party_index: index,
+            party_index: PartyIndex::new(index).unwrap(),
             session_id: session_id.to_vec(),
             poly_point,
             pk,
@@ -218,7 +220,19 @@ pub fn re_key(
         });
     }
 
-    parties
+    let verifying_shares: BTreeMap<PartyIndex, AffinePoint> = parties
+        .iter()
+        .map(|p| {
+            (
+                p.party_index,
+                (AffinePoint::GENERATOR * p.poly_point).to_affine(),
+            )
+        })
+        .collect();
+
+    let public_key_package = PublicKeyPackage::new(pk, verifying_shares, parameters.clone());
+
+    (parties, public_key_package)
 }
 
 // For tests, see the file signing.rs. It uses the function above.

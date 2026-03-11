@@ -16,10 +16,9 @@ use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacE
 
 use k256::elliptic_curve::{ops::Reduce, Curve};
 use k256::{AffinePoint, Scalar, Secp256k1, U256};
-use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::protocols::Party;
+use crate::protocols::{Party, PublicKeyPackage};
 use crate::utilities::hashes::point_to_bytes;
 
 use super::dkg::compute_eth_address;
@@ -31,10 +30,12 @@ pub type Fingerprint = [u8; 4];
 /// Chaincode of a key as in BIP-32.
 ///
 /// See <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
-pub type ChainCode = [u8; 32];
+pub const CHAIN_CODE_LEN: usize = 32;
+pub type ChainCode = [u8; CHAIN_CODE_LEN];
 
 /// Represents an error during the derivation protocol.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ErrorDeriv {
     pub description: String,
 }
@@ -56,7 +57,8 @@ impl ErrorDeriv {
 /// if someone wants to retrieve the full extended public key
 /// as in BIP-32. The only field missing is the one for the
 /// network, but it can be easily inferred from context.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DerivData {
     /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,
@@ -74,11 +76,11 @@ pub struct DerivData {
 }
 
 /// Maximum depth.
-pub const MAX_DEPTH: u8 = 255;
+pub const MAX_DEPTH: u8 = u8::MAX;
 /// Maximum child number.
 ///
 /// This is the limit since we are not implementing hardened derivation.
-pub const MAX_CHILD_NUMBER: u32 = 0x7FFF_FFFF;
+pub const MAX_CHILD_NUMBER: u32 = i32::MAX as u32; // This avoids a magic number warning
 
 impl DerivData {
     /// Computes the "tweak" needed to derive a secret key. In the process,
@@ -103,7 +105,7 @@ impl DerivData {
         let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
         let hmac_bytes = hmac_result.to_byte_array();
 
-        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..32]);
+        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..CHAIN_CODE_LEN]);
         if number_for_tweak.ge(&Secp256k1::ORDER) {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
@@ -111,7 +113,7 @@ impl DerivData {
         }
 
         let tweak = Scalar::reduce(&number_for_tweak);
-        let chain_code: ChainCode = hmac_bytes[32..]
+        let chain_code: ChainCode = hmac_bytes[CHAIN_CODE_LEN..]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
 
@@ -262,6 +264,63 @@ impl Party {
     }
 }
 
+/// Implementations related to BIP-32 derivation for [`PublicKeyPackage`].
+impl PublicKeyPackage {
+    /// Derives a child [`PublicKeyPackage`] given a chain code and child number.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the child number is invalid or the HMAC
+    /// result is out of range (very unlikely).
+    pub fn derive_child(
+        &self,
+        chain_code: &ChainCode,
+        child_number: u32,
+    ) -> Result<PublicKeyPackage, ErrorDeriv> {
+        if child_number > MAX_CHILD_NUMBER {
+            return Err(ErrorDeriv::new(
+                "Child index should be between 0 and 2^31 - 1!",
+            ));
+        }
+
+        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&chain_code[..]);
+        let pk_as_bytes = point_to_bytes(self.verifying_key());
+        hmac_engine.input(&pk_as_bytes);
+        hmac_engine.input(&child_number.to_be_bytes());
+        let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
+        let hmac_bytes = hmac_result.to_byte_array();
+
+        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..CHAIN_CODE_LEN]);
+        if number_for_tweak.ge(&Secp256k1::ORDER) {
+            return Err(ErrorDeriv::new(
+                "Very improbable: Child index results in value not allowed by BIP-32!",
+            ));
+        }
+        let tweak = Scalar::reduce(&number_for_tweak);
+
+        let tweak_point = AffinePoint::GENERATOR * tweak;
+        let new_verifying_key = (tweak_point + *self.verifying_key()).to_affine();
+
+        if new_verifying_key == AffinePoint::IDENTITY {
+            return Err(ErrorDeriv::new(
+                "Very improbable: Child index results in value not allowed by BIP-32!",
+            ));
+        }
+
+        let new_verifying_shares = self
+            .verifying_shares
+            .iter()
+            .map(|(party, share)| (*party, (tweak_point + *share).to_affine()))
+            .collect();
+
+        Ok(PublicKeyPackage::new(
+            new_verifying_key,
+            new_verifying_shares,
+            self.parameters.clone(),
+        ))
+    }
+}
+
 /// Takes a path as in BIP-32 (for normal derivation),
 /// and transforms it into a vector of child numbers.
 ///
@@ -303,7 +362,7 @@ mod tests {
 
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
-    use crate::protocols::Parameters;
+    use crate::protocols::{Parameters, PartyIndex};
 
     use crate::utilities::hashes::*;
 
@@ -382,9 +441,9 @@ mod tests {
         }; // You can fix the parameters if you prefer.
 
         // We use the re_key function to quickly sample the parties.
-        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let parties = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
 
         // DERIVATION
 
@@ -407,14 +466,16 @@ mod tests {
 
         // SIGNING (as in test_signing)
 
-        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
 
         // For simplicity, we are testing only the first parties.
-        let executing_parties: Vec<u8> = Vec::from_iter(1..=parameters.threshold);
+        let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
+            .map(|i| PartyIndex::new(i).unwrap())
+            .collect();
 
         // Each party prepares their data for this signing session.
-        let mut all_data: BTreeMap<u8, SignData> = BTreeMap::new();
+        let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             //Gather the counterparties
             let mut counterparties = executing_parties.clone();
@@ -431,11 +492,12 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<u8, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<u8, BTreeMap<u8, KeepPhase1to2>> = BTreeMap::new();
-        let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+            BTreeMap::new();
+        let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let (unique_keep, keep, transmit) = parties[(party_index - 1) as usize]
+            let (unique_keep, keep, transmit) = parties[(party_index.as_u8() - 1) as usize]
                 .sign_phase1(all_data.get(&party_index).unwrap())
                 .unwrap();
 
@@ -445,7 +507,7 @@ mod tests {
         }
 
         // Communication round 1
-        let mut received_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        let mut received_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
 
         // Iterate over each party_index in executing_parties
         for &party_index in &executing_parties {
@@ -463,11 +525,12 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<u8, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<u8, BTreeMap<u8, KeepPhase2to3>> = BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+            BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase2(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_1to2.get(&party_index).unwrap(),
                 kept_1to2.get(&party_index).unwrap(),
@@ -475,7 +538,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -486,7 +549,7 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
 
         // Use references to avoid cloning executing_parties
         for &party_index in &executing_parties {
@@ -508,7 +571,7 @@ mod tests {
         let mut broadcast_3to4: Vec<Broadcast3to4> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
-            let result = parties[(party_index - 1) as usize].sign_phase3(
+            let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
                 unique_kept_2to3.get(&party_index).unwrap(),
                 kept_2to3.get(&party_index).unwrap(),
@@ -516,7 +579,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -536,14 +599,42 @@ mod tests {
 
         // Phase 4
         let some_index = executing_parties[0];
-        let result = parties[(some_index - 1) as usize].sign_phase4(
+        let result = parties[(some_index.as_u8() - 1) as usize].sign_phase4(
             all_data.get(&some_index).unwrap(),
             &x_coord,
             &broadcast_3to4,
             true,
         );
         if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            panic!("Party {} aborted: {:?}", abort.index, abort.description());
+        }
+    }
+
+    /// Tests if [`PublicKeyPackage::derive_child`] produces a package
+    /// consistent with per-party derivation via [`Party::derive_child`].
+    #[test]
+    fn test_public_key_package_derive_child() {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 3,
+        };
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let (parties, pkg) = re_key(&parameters, &session_id, &secret_key, None);
+
+        let chain_code = parties[0].derivation_data.chain_code;
+        const TEST_CHILD_NUMBER: u32 = 42;
+        let child_number = TEST_CHILD_NUMBER;
+
+        let derived_pkg = pkg.derive_child(&chain_code, child_number).unwrap();
+
+        // Derive each party individually and verify consistency.
+        for party in &parties {
+            let derived_party = party.derive_child(child_number).unwrap();
+            assert_eq!(*derived_pkg.verifying_key(), derived_party.pk);
+
+            let expected_share = (AffinePoint::GENERATOR * derived_party.poly_point).to_affine();
+            assert!(derived_pkg.verify_share(party.party_index, &expected_share));
         }
     }
 }

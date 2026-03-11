@@ -9,7 +9,6 @@
 
 use k256::elliptic_curve::Field;
 use k256::Scalar;
-use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::utilities::hashes::{scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
@@ -19,6 +18,7 @@ use crate::utilities::oracle_tags::{
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
+#[cfg(feature = "serde")]
 use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::extension::{
@@ -35,21 +35,24 @@ pub const L: u8 = 2;
 pub const OT_WIDTH: u8 = 2 * L;
 
 /// Sender's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MulSender {
     pub public_gadget: Vec<Scalar>,
     pub ote_sender: OTESender,
 }
 
 /// Receiver's data and methods for the multiplication protocol.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MulReceiver {
     pub public_gadget: Vec<Scalar>,
     pub ote_receiver: OTEReceiver,
 }
 
 /// Data transmitted by the sender to the receiver after his phase.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MulDataToReceiver {
     pub vector_of_tau: Vec<Vec<Scalar>>,
     pub verify_r: HashOutput,
@@ -58,13 +61,17 @@ pub struct MulDataToReceiver {
 }
 
 /// Data kept by the receiver between phases.
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MulDataToKeepReceiver {
     pub b: Scalar,
     pub choice_bits: Vec<bool>,
-    #[serde(
-        serialize_with = "serialize_vec_prg",
-        deserialize_with = "deserialize_vec_prg"
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            serialize_with = "serialize_vec_prg",
+            deserialize_with = "deserialize_vec_prg"
+        )
     )]
     pub extended_seeds: Vec<PRGOutput>,
     pub chi_tilde: Vec<Scalar>,
