@@ -35,10 +35,14 @@ impl<'a> SignSession<'a> {
         &mut self,
         received: &[TransmitPhase1to2],
     ) -> Result<Vec<TransmitPhase2to3>, Abort> {
-        let (unique_kept, kept) = self
-            .phase1_to_2
-            .take()
-            .ok_or_else(|| Abort::recoverable(self.party.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase2 called out of order".into() }))?;
+        let (unique_kept, kept) = self.phase1_to_2.take().ok_or_else(|| {
+            Abort::recoverable(
+                self.party.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase2 called out of order".into(),
+                },
+            )
+        })?;
         let (new_unique, new_kept, transmit) =
             self.party
                 .sign_phase2(&self.data, &unique_kept, &kept, received)?;
@@ -50,10 +54,14 @@ impl<'a> SignSession<'a> {
         &mut self,
         received: &[TransmitPhase2to3],
     ) -> Result<Broadcast3to4, Abort> {
-        let (unique_kept, kept) = self
-            .phase2_to_3
-            .take()
-            .ok_or_else(|| Abort::recoverable(self.party.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase3 called out of order".into() }))?;
+        let (unique_kept, kept) = self.phase2_to_3.take().ok_or_else(|| {
+            Abort::recoverable(
+                self.party.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase3 called out of order".into(),
+                },
+            )
+        })?;
         let (x_coord, broadcast) =
             self.party
                 .sign_phase3(&self.data, &unique_kept, &kept, received)?;
@@ -66,20 +74,36 @@ impl<'a> SignSession<'a> {
         received: &[Broadcast3to4],
         normalize: bool,
     ) -> Result<EcdsaSignature, Abort> {
-        let x_coord = self
-            .x_coord
-            .take()
-            .ok_or_else(|| Abort::recoverable(self.party.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase4 called out of order".into() }))?;
+        let x_coord = self.x_coord.take().ok_or_else(|| {
+            Abort::recoverable(
+                self.party.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase4 called out of order".into(),
+                },
+            )
+        })?;
         let (s_hex, recovery_id) = self
             .party
             .sign_phase4(&self.data, &x_coord, received, normalize)?;
 
         let mut r = [0u8; 32];
         let mut s = [0u8; 32];
-        hex::decode_to_slice(&x_coord, &mut r)
-            .map_err(|e| Abort::recoverable(self.party.party_index, AbortReason::InvalidHex { detail: format!("invalid r hex: {e}") }))?;
-        hex::decode_to_slice(&s_hex, &mut s)
-            .map_err(|e| Abort::recoverable(self.party.party_index, AbortReason::InvalidHex { detail: format!("invalid s hex: {e}") }))?;
+        hex::decode_to_slice(&x_coord, &mut r).map_err(|e| {
+            Abort::recoverable(
+                self.party.party_index,
+                AbortReason::InvalidHex {
+                    detail: format!("invalid r hex: {e}"),
+                },
+            )
+        })?;
+        hex::decode_to_slice(&s_hex, &mut s).map_err(|e| {
+            Abort::recoverable(
+                self.party.party_index,
+                AbortReason::InvalidHex {
+                    detail: format!("invalid s hex: {e}"),
+                },
+            )
+        })?;
         Ok(EcdsaSignature { r, s, recovery_id })
     }
 }

@@ -505,7 +505,9 @@ impl Party {
                 .ok_or_else(|| {
                     Abort::recoverable(
                         self.party_index,
-                        AbortReason::MissingMessageFromParty { party: *target_party },
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
             let message_received_3 = zero_received_phase3_by_sender
@@ -513,7 +515,9 @@ impl Party {
                 .ok_or_else(|| {
                     Abort::recoverable(
                         self.party_index,
-                        AbortReason::MissingMessageFromParty { party: *target_party },
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
 
@@ -526,7 +530,9 @@ impl Party {
             if !verification {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::ZeroShareDecommitFailed { counterparty: *target_party },
+                    AbortReason::ZeroShareDecommitFailed {
+                        counterparty: *target_party,
+                    },
                 ));
             }
 
@@ -591,7 +597,9 @@ impl Party {
             let message_received = mul_received_by_sender.get(target_party).ok_or_else(|| {
                 Abort::recoverable(
                     self.party_index,
-                    AbortReason::MissingMessageFromParty { party: *target_party },
+                    AbortReason::MissingMessageFromParty {
+                        party: *target_party,
+                    },
                 )
             })?;
 
@@ -958,14 +966,18 @@ impl Party {
                 received_phase2_by_sender.get(target_party).ok_or_else(|| {
                     Abort::recoverable(
                         self.party_index,
-                        AbortReason::MissingMessageFromParty { party: *target_party },
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
             let message_received_3 =
                 received_phase3_by_sender.get(target_party).ok_or_else(|| {
                     Abort::recoverable(
                         self.party_index,
-                        AbortReason::MissingMessageFromParty { party: *target_party },
+                        AbortReason::MissingMessageFromParty {
+                            party: *target_party,
+                        },
                     )
                 })?;
 
@@ -978,7 +990,9 @@ impl Party {
             if !verification {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::ZeroShareDecommitFailed { counterparty: *target_party },
+                    AbortReason::ZeroShareDecommitFailed {
+                        counterparty: *target_party,
+                    },
                 ));
             }
 
@@ -1005,13 +1019,17 @@ impl Party {
             let mul_sender = self.mul_senders.get(&their_index).ok_or_else(|| {
                 Abort::recoverable(
                     self.party_index,
-                    AbortReason::MissingMulState { counterparty: their_index },
+                    AbortReason::MissingMulState {
+                        counterparty: their_index,
+                    },
                 )
             })?;
             let mul_receiver = self.mul_receivers.get(&their_index).ok_or_else(|| {
                 Abort::recoverable(
                     self.party_index,
-                    AbortReason::MissingMulState { counterparty: their_index },
+                    AbortReason::MissingMulState {
+                        counterparty: their_index,
+                    },
                 )
             })?;
 

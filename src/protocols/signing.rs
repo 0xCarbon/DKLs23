@@ -207,7 +207,9 @@ impl Party {
         if self.party_index.as_u8() > self.parameters.share_count {
             return Err(Abort::recoverable(
                 self.party_index,
-                AbortReason::InvalidPartyIndex { index: self.party_index },
+                AbortReason::InvalidPartyIndex {
+                    index: self.party_index,
+                },
             ));
         }
         let mut seen_counterparties: BTreeSet<PartyIndex> = BTreeSet::new();
@@ -215,13 +217,17 @@ impl Party {
             if counterparty.as_u8() > self.parameters.share_count {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::InvalidPartyIndex { index: *counterparty },
+                    AbortReason::InvalidPartyIndex {
+                        index: *counterparty,
+                    },
                 ));
             }
             if !seen_counterparties.insert(*counterparty) {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::DuplicateCounterparty { index: *counterparty },
+                    AbortReason::DuplicateCounterparty {
+                        index: *counterparty,
+                    },
                 ));
             }
             if *counterparty == self.party_index {
@@ -235,7 +241,9 @@ impl Party {
             {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::MissingMulState { counterparty: *counterparty },
+                    AbortReason::MissingMulState {
+                        counterparty: *counterparty,
+                    },
                 ));
             }
         }
@@ -276,7 +284,9 @@ impl Party {
             let mul_receiver = self.mul_receivers.get(counterparty).ok_or_else(|| {
                 Abort::recoverable(
                     self.party_index,
-                    AbortReason::MissingMulState { counterparty: *counterparty },
+                    AbortReason::MissingMulState {
+                        counterparty: *counterparty,
+                    },
                 )
             })?;
             let (chi, mul_keep, mul_transmit) = match mul_receiver.run_phase1(&mul_sid) {
@@ -426,7 +436,9 @@ impl Party {
             if !data.counterparties.contains(&counterparty) {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::UnexpectedSender { sender: counterparty },
+                    AbortReason::UnexpectedSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             if message.parties.receiver != self.party_index {
@@ -441,7 +453,9 @@ impl Party {
             if !seen_senders.insert(counterparty) {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::DuplicateSender { sender: counterparty },
+                    AbortReason::DuplicateSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
@@ -598,7 +612,9 @@ impl Party {
             if !data.counterparties.contains(&counterparty) {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::UnexpectedSender { sender: counterparty },
+                    AbortReason::UnexpectedSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             if message.parties.receiver != self.party_index {
@@ -619,7 +635,9 @@ impl Party {
             if !seen_senders.insert(counterparty) {
                 return Err(Abort::recoverable(
                     self.party_index,
-                    AbortReason::DuplicateSender { sender: counterparty },
+                    AbortReason::DuplicateSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
@@ -1695,7 +1713,10 @@ mod tests {
             .sign_phase1(&data)
             .expect_err("duplicate counterparty should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(matches!(abort.reason, AbortReason::DuplicateCounterparty { .. }));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::DuplicateCounterparty { .. }
+        ));
     }
 
     /// Tests if phase 1 rejects missing multiplication state.
@@ -1931,7 +1952,10 @@ mod tests {
         );
         let abort = result.expect_err("wrong message count should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(matches!(abort.reason, AbortReason::WrongMessageCount { .. }));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::WrongMessageCount { .. }
+        ));
     }
 
     /// Tests if phase 3 rejects invalid decommitment data.
@@ -1965,7 +1989,10 @@ mod tests {
         );
         let abort = result.expect_err("invalid decommit should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(matches!(abort.reason, AbortReason::CommitmentMismatch { .. }));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::CommitmentMismatch { .. }
+        ));
     }
 
     /// Tests if phase 3 rejects message vectors with unexpected size.
@@ -1989,7 +2016,10 @@ mod tests {
         );
         let abort = result.expect_err("wrong message count should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(matches!(abort.reason, AbortReason::WrongMessageCount { .. }));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::WrongMessageCount { .. }
+        ));
     }
 
     /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
@@ -2023,7 +2053,10 @@ mod tests {
             abort.kind,
             AbortKind::BanCounterparty(PartyIndex::new(2).unwrap())
         );
-        assert!(matches!(abort.reason, AbortReason::GammaUInconsistency { .. }));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::GammaUInconsistency { .. }
+        ));
     }
 
     /// Tests if phase 4 rejects tampered broadcast values that invalidate signature assembly.
@@ -2056,6 +2089,9 @@ mod tests {
         );
         let abort = result.expect_err("tampered broadcast should fail signature validation");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(matches!(abort.reason, AbortReason::SignatureVerificationFailed));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SignatureVerificationFailed
+        ));
     }
 }

@@ -59,7 +59,9 @@ impl DkgSession {
         if self.poly_point.is_some() {
             return Err(Abort::recoverable(
                 self.data.party_index,
-                AbortReason::PhaseCalledOutOfOrder { phase: "phase2 already called on this session".into() },
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase2 already called on this session".into(),
+                },
             ));
         }
 
@@ -84,14 +86,22 @@ impl DkgSession {
         ),
         Abort,
     > {
-        let zero_kept = self
-            .zero_kept_2to3
-            .as_ref()
-            .ok_or_else(|| Abort::recoverable(self.data.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase3 called before phase2".into() }))?;
-        let bip_kept = self
-            .bip_kept_2to3
-            .as_ref()
-            .ok_or_else(|| Abort::recoverable(self.data.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase3 called before phase2".into() }))?;
+        let zero_kept = self.zero_kept_2to3.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase3 called before phase2".into(),
+                },
+            )
+        })?;
+        let bip_kept = self.bip_kept_2to3.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase3 called before phase2".into(),
+                },
+            )
+        })?;
 
         let (zero_keep_3to4, zero_transmit, mul_keep, mul_transmit, bip_broadcast) =
             dkg::phase3(&self.data, zero_kept, bip_kept);
@@ -125,18 +135,30 @@ impl DkgSession {
         bip_received_phase2: &BTreeMap<PartyIndex, BroadcastDerivationPhase2to4>,
         bip_received_phase3: &BTreeMap<PartyIndex, BroadcastDerivationPhase3to4>,
     ) -> Result<(Party, PublicKeyPackage), Abort> {
-        let poly_point = self
-            .poly_point
-            .as_ref()
-            .ok_or_else(|| Abort::recoverable(self.data.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase4 called before phase2".into() }))?;
-        let zero_kept = self
-            .zero_kept_3to4
-            .as_ref()
-            .ok_or_else(|| Abort::recoverable(self.data.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase4 called before phase3".into() }))?;
-        let mul_kept = self
-            .mul_kept_3to4
-            .as_ref()
-            .ok_or_else(|| Abort::recoverable(self.data.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase4 called before phase3".into() }))?;
+        let poly_point = self.poly_point.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase4 called before phase2".into(),
+                },
+            )
+        })?;
+        let zero_kept = self.zero_kept_3to4.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase4 called before phase3".into(),
+                },
+            )
+        })?;
+        let mul_kept = self.mul_kept_3to4.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase4 called before phase3".into(),
+                },
+            )
+        })?;
 
         dkg::phase4(
             &self.data,

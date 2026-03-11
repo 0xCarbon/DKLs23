@@ -221,38 +221,68 @@ pub enum AbortKind {
 #[non_exhaustive]
 pub enum AbortReason {
     // --- Input validation (all Recoverable) ---
-    InvalidPartyIndex { index: PartyIndex },
-    WrongCounterpartyCount { expected: usize, got: usize },
-    DuplicateCounterparty { index: PartyIndex },
+    InvalidPartyIndex {
+        index: PartyIndex,
+    },
+    WrongCounterpartyCount {
+        expected: usize,
+        got: usize,
+    },
+    DuplicateCounterparty {
+        index: PartyIndex,
+    },
     SelfInCounterparties,
-    MissingMulState { counterparty: PartyIndex },
+    MissingMulState {
+        counterparty: PartyIndex,
+    },
 
     // --- Message routing (all Recoverable) ---
     MisroutedMessage {
         expected_receiver: PartyIndex,
         actual_receiver: PartyIndex,
     },
-    UnexpectedSender { sender: PartyIndex },
-    DuplicateSender { sender: PartyIndex },
-    WrongMessageCount { expected: usize, got: usize },
-    MissingMessageFromParty { party: PartyIndex },
+    UnexpectedSender {
+        sender: PartyIndex,
+    },
+    DuplicateSender {
+        sender: PartyIndex,
+    },
+    WrongMessageCount {
+        expected: usize,
+        got: usize,
+    },
+    MissingMessageFromParty {
+        party: PartyIndex,
+    },
 
     // --- Cryptographic verification (severity varies) ---
-    ProofVerificationFailed { counterparty: PartyIndex },
-    CommitmentMismatch { counterparty: PartyIndex },
+    ProofVerificationFailed {
+        counterparty: PartyIndex,
+    },
+    CommitmentMismatch {
+        counterparty: PartyIndex,
+    },
     PolynomialInconsistency,
-    TrivialInstancePoint { counterparty: PartyIndex },
+    TrivialInstancePoint {
+        counterparty: PartyIndex,
+    },
     TrivialPublicKey,
     TrivialKeyShare,
-    MissingCommittedPoint { party: PartyIndex },
+    MissingCommittedPoint {
+        party: PartyIndex,
+    },
 
     // --- OT/Multiplication failures (typically BanCounterparty) ---
-    OtConsistencyCheckFailed { counterparty: PartyIndex },
+    OtConsistencyCheckFailed {
+        counterparty: PartyIndex,
+    },
     MultiplicationVerificationFailed {
         counterparty: PartyIndex,
         detail: String,
     },
-    GammaUInconsistency { counterparty: PartyIndex },
+    GammaUInconsistency {
+        counterparty: PartyIndex,
+    },
 
     // --- Signature assembly ---
     SignatureVerificationFailed,
@@ -261,16 +291,24 @@ pub enum AbortReason {
     InvalidXCoordinateHex,
 
     // --- Zero-share initialization ---
-    ZeroShareDecommitFailed { counterparty: PartyIndex },
+    ZeroShareDecommitFailed {
+        counterparty: PartyIndex,
+    },
 
     // --- Chain code / BIP derivation ---
-    ChainCodeCommitmentFailed { party: PartyIndex },
+    ChainCodeCommitmentFailed {
+        party: PartyIndex,
+    },
 
     // --- Session state machine ---
-    PhaseCalledOutOfOrder { phase: String },
+    PhaseCalledOutOfOrder {
+        phase: String,
+    },
 
     // --- Hex parsing ---
-    InvalidHex { detail: String },
+    InvalidHex {
+        detail: String,
+    },
 }
 
 impl fmt::Display for AbortReason {
@@ -280,7 +318,10 @@ impl fmt::Display for AbortReason {
                 write!(f, "party index {index} is out of valid range")
             }
             Self::WrongCounterpartyCount { expected, got } => {
-                write!(f, "wrong counterparty count: expected {expected}, got {got}")
+                write!(
+                    f,
+                    "wrong counterparty count: expected {expected}, got {got}"
+                )
             }
             Self::DuplicateCounterparty { index } => {
                 write!(f, "duplicate counterparty: {index}")
@@ -343,10 +384,7 @@ impl fmt::Display for AbortReason {
             }
             Self::InvalidXCoordinateHex => write!(f, "invalid x-coordinate hex"),
             Self::ZeroShareDecommitFailed { counterparty } => {
-                write!(
-                    f,
-                    "zero-share decommitment failed for party {counterparty}"
-                )
+                write!(f, "zero-share decommitment failed for party {counterparty}")
             }
             Self::ChainCodeCommitmentFailed { party } => {
                 write!(f, "chain code commitment failed for party {party}")

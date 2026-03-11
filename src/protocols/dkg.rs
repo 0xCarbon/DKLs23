@@ -337,7 +337,9 @@ pub(crate) fn step5(
             if !verification {
                 return Err(Abort::recoverable(
                     party_index,
-                    AbortReason::ProofVerificationFailed { counterparty: party_j.index },
+                    AbortReason::ProofVerificationFailed {
+                        counterparty: party_j.index,
+                    },
                 ));
             }
         }
@@ -373,7 +375,9 @@ pub(crate) fn step5(
                 .ok_or_else(|| {
                     Abort::recoverable(
                         party_index,
-                        AbortReason::MissingCommittedPoint { party: PartyIndex::new(j).unwrap() },
+                        AbortReason::MissingCommittedPoint {
+                            party: PartyIndex::new(j).unwrap(),
+                        },
                     )
                 })?;
             let lj_times_point = *point_j * lj;
@@ -739,13 +743,18 @@ pub(crate) fn phase4(
         if message.parties.receiver != data.party_index {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::MisroutedMessage { expected_receiver: data.party_index, actual_receiver: message.parties.receiver },
+                AbortReason::MisroutedMessage {
+                    expected_receiver: data.party_index,
+                    actual_receiver: message.parties.receiver,
+                },
             ));
         }
         if !zero_kept.contains_key(&message.parties.sender) {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::UnexpectedSender { sender: message.parties.sender },
+                AbortReason::UnexpectedSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
         if zero_received_phase2_by_sender
@@ -754,7 +763,9 @@ pub(crate) fn phase4(
         {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::DuplicateSender { sender: message.parties.sender },
+                AbortReason::DuplicateSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
     }
@@ -764,13 +775,18 @@ pub(crate) fn phase4(
         if message.parties.receiver != data.party_index {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::MisroutedMessage { expected_receiver: data.party_index, actual_receiver: message.parties.receiver },
+                AbortReason::MisroutedMessage {
+                    expected_receiver: data.party_index,
+                    actual_receiver: message.parties.receiver,
+                },
             ));
         }
         if !zero_kept.contains_key(&message.parties.sender) {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::UnexpectedSender { sender: message.parties.sender },
+                AbortReason::UnexpectedSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
         if zero_received_phase3_by_sender
@@ -779,20 +795,28 @@ pub(crate) fn phase4(
         {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::DuplicateSender { sender: message.parties.sender },
+                AbortReason::DuplicateSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
     }
     if zero_received_phase2_by_sender.len() != zero_kept.len() {
         return Err(Abort::recoverable(
             data.party_index,
-            AbortReason::WrongMessageCount { expected: zero_kept.len(), got: zero_received_phase2_by_sender.len() },
+            AbortReason::WrongMessageCount {
+                expected: zero_kept.len(),
+                got: zero_received_phase2_by_sender.len(),
+            },
         ));
     }
     if zero_received_phase3_by_sender.len() != zero_kept.len() {
         return Err(Abort::recoverable(
             data.party_index,
-            AbortReason::WrongMessageCount { expected: zero_kept.len(), got: zero_received_phase3_by_sender.len() },
+            AbortReason::WrongMessageCount {
+                expected: zero_kept.len(),
+                got: zero_received_phase3_by_sender.len(),
+            },
         ));
     }
 
@@ -804,7 +828,9 @@ pub(crate) fn phase4(
             .ok_or_else(|| {
                 Abort::recoverable(
                     data.party_index,
-                    AbortReason::MissingMessageFromParty { party: *target_party },
+                    AbortReason::MissingMessageFromParty {
+                        party: *target_party,
+                    },
                 )
             })?;
         let message_received_3 = zero_received_phase3_by_sender
@@ -812,7 +838,9 @@ pub(crate) fn phase4(
             .ok_or_else(|| {
                 Abort::recoverable(
                     data.party_index,
-                    AbortReason::MissingMessageFromParty { party: *target_party },
+                    AbortReason::MissingMessageFromParty {
+                        party: *target_party,
+                    },
                 )
             })?;
 
@@ -825,7 +853,9 @@ pub(crate) fn phase4(
         if !verification {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::ZeroShareDecommitFailed { counterparty: *target_party },
+                AbortReason::ZeroShareDecommitFailed {
+                    counterparty: *target_party,
+                },
             ));
         }
 
@@ -850,13 +880,18 @@ pub(crate) fn phase4(
         if message.parties.receiver != data.party_index {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::MisroutedMessage { expected_receiver: data.party_index, actual_receiver: message.parties.receiver },
+                AbortReason::MisroutedMessage {
+                    expected_receiver: data.party_index,
+                    actual_receiver: message.parties.receiver,
+                },
             ));
         }
         if !mul_kept.contains_key(&message.parties.sender) {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::UnexpectedSender { sender: message.parties.sender },
+                AbortReason::UnexpectedSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
         if mul_received_by_sender
@@ -865,14 +900,19 @@ pub(crate) fn phase4(
         {
             return Err(Abort::recoverable(
                 data.party_index,
-                AbortReason::DuplicateSender { sender: message.parties.sender },
+                AbortReason::DuplicateSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
     }
     if mul_received_by_sender.len() != mul_kept.len() {
         return Err(Abort::recoverable(
             data.party_index,
-            AbortReason::WrongMessageCount { expected: mul_kept.len(), got: mul_received_by_sender.len() },
+            AbortReason::WrongMessageCount {
+                expected: mul_kept.len(),
+                got: mul_received_by_sender.len(),
+            },
         ));
     }
 
@@ -880,7 +920,9 @@ pub(crate) fn phase4(
         let message_received = mul_received_by_sender.get(target_party).ok_or_else(|| {
             Abort::recoverable(
                 data.party_index,
-                AbortReason::MissingMessageFromParty { party: *target_party },
+                AbortReason::MissingMessageFromParty {
+                    party: *target_party,
+                },
             )
         })?;
 
@@ -912,7 +954,10 @@ pub(crate) fn phase4(
                 // so we keep abort classification recoverable.
                 return Err(Abort::recoverable(
                     data.party_index,
-                    AbortReason::MultiplicationVerificationFailed { counterparty: *target_party, detail: error.description.clone() },
+                    AbortReason::MultiplicationVerificationFailed {
+                        counterparty: *target_party,
+                        detail: error.description.clone(),
+                    },
                 ));
             }
         };
@@ -946,7 +991,10 @@ pub(crate) fn phase4(
                 // so we keep abort classification recoverable.
                 return Err(Abort::recoverable(
                     data.party_index,
-                    AbortReason::MultiplicationVerificationFailed { counterparty: *target_party, detail: error.description.clone() },
+                    AbortReason::MultiplicationVerificationFailed {
+                        counterparty: *target_party,
+                        detail: error.description.clone(),
+                    },
                 ));
             }
         };
@@ -1253,7 +1301,10 @@ mod tests {
             &data.bip_broadcast_3to4,
         );
         let abort = result.expect_err("missing multiplication-init message should be rejected");
-        assert!(matches!(abort.reason, AbortReason::WrongMessageCount { .. }));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::WrongMessageCount { .. }
+        ));
     }
 
     // DISTRIBUTED KEY GENERATION (without initializations)
