@@ -5,7 +5,7 @@ use crate::protocols::signing::{
     Broadcast3to4, KeepPhase1to2, KeepPhase2to3, SignData, TransmitPhase1to2, TransmitPhase2to3,
     UniqueKeep1to2, UniqueKeep2to3,
 };
-use crate::protocols::{Abort, Party, PartyIndex};
+use crate::protocols::{Abort, AbortReason, Party, PartyIndex};
 
 pub struct SignSession<'a> {
     party: &'a Party,
@@ -38,7 +38,7 @@ impl<'a> SignSession<'a> {
         let (unique_kept, kept) = self
             .phase1_to_2
             .take()
-            .ok_or_else(|| Abort::new(self.party.party_index, "phase2 called out of order"))?;
+            .ok_or_else(|| Abort::recoverable(self.party.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase2 called out of order".into() }))?;
         let (new_unique, new_kept, transmit) =
             self.party
                 .sign_phase2(&self.data, &unique_kept, &kept, received)?;
@@ -53,7 +53,7 @@ impl<'a> SignSession<'a> {
         let (unique_kept, kept) = self
             .phase2_to_3
             .take()
-            .ok_or_else(|| Abort::new(self.party.party_index, "phase3 called out of order"))?;
+            .ok_or_else(|| Abort::recoverable(self.party.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase3 called out of order".into() }))?;
         let (x_coord, broadcast) =
             self.party
                 .sign_phase3(&self.data, &unique_kept, &kept, received)?;
@@ -69,7 +69,7 @@ impl<'a> SignSession<'a> {
         let x_coord = self
             .x_coord
             .take()
-            .ok_or_else(|| Abort::new(self.party.party_index, "phase4 called out of order"))?;
+            .ok_or_else(|| Abort::recoverable(self.party.party_index, AbortReason::PhaseCalledOutOfOrder { phase: "phase4 called out of order".into() }))?;
         let (s_hex, recovery_id) = self
             .party
             .sign_phase4(&self.data, &x_coord, received, normalize)?;
@@ -77,9 +77,9 @@ impl<'a> SignSession<'a> {
         let mut r = [0u8; 32];
         let mut s = [0u8; 32];
         hex::decode_to_slice(&x_coord, &mut r)
-            .map_err(|e| Abort::new(self.party.party_index, &format!("invalid r hex: {e}")))?;
+            .map_err(|e| Abort::recoverable(self.party.party_index, AbortReason::InvalidHex { detail: format!("invalid r hex: {e}") }))?;
         hex::decode_to_slice(&s_hex, &mut s)
-            .map_err(|e| Abort::new(self.party.party_index, &format!("invalid s hex: {e}")))?;
+            .map_err(|e| Abort::recoverable(self.party.party_index, AbortReason::InvalidHex { detail: format!("invalid s hex: {e}") }))?;
         Ok(EcdsaSignature { r, s, recovery_id })
     }
 }
