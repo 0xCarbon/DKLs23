@@ -57,7 +57,9 @@ use rand::RngExt;
 use sha3::{Digest, Keccak256};
 
 use crate::protocols::derivation::{ChainCode, DerivData, CHAIN_CODE_LEN};
-use crate::protocols::{Abort, Parameters, PartiesMessage, Party, PartyIndex, PublicKeyPackage};
+use crate::protocols::{
+    Abort, AbortReason, Parameters, PartiesMessage, Party, PartyIndex, PublicKeyPackage,
+};
 
 use crate::utilities::commits;
 use crate::utilities::hashes::HashOutput;
@@ -333,9 +335,11 @@ pub(crate) fn step5(
             let verification =
                 DLogProof::decommit_verify(&party_j.proof, &party_j.commitment, session_id);
             if !verification {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     party_index,
-                    &format!("Proof from Party {} failed!", party_j.index),
+                    AbortReason::ProofVerificationFailed {
+                        counterparty: party_j.index,
+                    },
                 ));
             }
         }
@@ -369,9 +373,11 @@ pub(crate) fn step5(
             let point_j = committed_points
                 .get(&PartyIndex::new(j).unwrap())
                 .ok_or_else(|| {
-                    Abort::new(
+                    Abort::recoverable(
                         party_index,
-                        &format!("Missing committed point for party {j}"),
+                        AbortReason::MissingCommittedPoint {
+                            party: PartyIndex::new(j).unwrap(),
+                        },
                     )
                 })?;
             let lj_times_point = *point_j * lj;
@@ -383,9 +389,9 @@ pub(crate) fn step5(
         if i == 1 {
             pk = current_pk;
         } else if pk != current_pk {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 party_index,
-                &format!("Verification for public key reconstruction failed in iteration {i}"),
+                AbortReason::PolynomialInconsistency,
             ));
         }
     }
@@ -714,9 +720,9 @@ pub(crate) fn phase4(
     // We also verify that pk is not the generator point, because
     // otherwise it would be trivial to find the "total" secret key.
     if pk == AffinePoint::IDENTITY || pk == AffinePoint::GENERATOR {
-        return Err(Abort::new(
+        return Err(Abort::recoverable(
             data.party_index,
-            "Initialization failed because the resulting public key was trivial! (Very improbable)",
+            AbortReason::TrivialPublicKey,
         ));
     }
 
@@ -724,9 +730,9 @@ pub(crate) fn phase4(
     // Note that the other parties can deduce the triviality from
     // the corresponding proof in proofs_commitments.
     if *poly_point == Scalar::ZERO || *poly_point == Scalar::ONE {
-        return Err(Abort::new(
+        return Err(Abort::recoverable(
             data.party_index,
-            "Initialization failed because the resulting key share was trivial! (Very improbable)",
+            AbortReason::TrivialKeyShare,
         ));
     }
 
@@ -735,30 +741,31 @@ pub(crate) fn phase4(
         BTreeMap::new();
     for message in zero_received_phase2 {
         if message.parties.receiver != data.party_index {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                "Received a zero-share phase-2 message not meant for me!",
+                AbortReason::MisroutedMessage {
+                    expected_receiver: data.party_index,
+                    actual_receiver: message.parties.receiver,
+                },
             ));
         }
         if !zero_kept.contains_key(&message.parties.sender) {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Unexpected zero-share phase-2 sender {}",
-                    message.parties.sender
-                ),
+                AbortReason::UnexpectedSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
         if zero_received_phase2_by_sender
             .insert(message.parties.sender, message)
             .is_some()
         {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Duplicate zero-share phase-2 message from Party {}",
-                    message.parties.sender
-                ),
+                AbortReason::DuplicateSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
     }
@@ -766,39 +773,50 @@ pub(crate) fn phase4(
         BTreeMap::new();
     for message in zero_received_phase3 {
         if message.parties.receiver != data.party_index {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                "Received a zero-share phase-3 message not meant for me!",
+                AbortReason::MisroutedMessage {
+                    expected_receiver: data.party_index,
+                    actual_receiver: message.parties.receiver,
+                },
             ));
         }
         if !zero_kept.contains_key(&message.parties.sender) {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Unexpected zero-share phase-3 sender {}",
-                    message.parties.sender
-                ),
+                AbortReason::UnexpectedSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
         if zero_received_phase3_by_sender
             .insert(message.parties.sender, message)
             .is_some()
         {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Duplicate zero-share phase-3 message from Party {}",
-                    message.parties.sender
-                ),
+                AbortReason::DuplicateSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
     }
-    if zero_received_phase2_by_sender.len() != zero_kept.len()
-        || zero_received_phase3_by_sender.len() != zero_kept.len()
-    {
-        return Err(Abort::new(
+    if zero_received_phase2_by_sender.len() != zero_kept.len() {
+        return Err(Abort::recoverable(
             data.party_index,
-            "Missing zero-share initialization messages from one or more parties",
+            AbortReason::WrongMessageCount {
+                expected: zero_kept.len(),
+                got: zero_received_phase2_by_sender.len(),
+            },
+        ));
+    }
+    if zero_received_phase3_by_sender.len() != zero_kept.len() {
+        return Err(Abort::recoverable(
+            data.party_index,
+            AbortReason::WrongMessageCount {
+                expected: zero_kept.len(),
+                got: zero_received_phase3_by_sender.len(),
+            },
         ));
     }
 
@@ -808,17 +826,21 @@ pub(crate) fn phase4(
         let message_received_2 = zero_received_phase2_by_sender
             .get(target_party)
             .ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     data.party_index,
-                    &format!("Missing zero-share phase-2 message from Party {target_party}"),
+                    AbortReason::MissingMessageFromParty {
+                        party: *target_party,
+                    },
                 )
             })?;
         let message_received_3 = zero_received_phase3_by_sender
             .get(target_party)
             .ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     data.party_index,
-                    &format!("Missing zero-share phase-3 message from Party {target_party}"),
+                    AbortReason::MissingMessageFromParty {
+                        party: *target_party,
+                    },
                 )
             })?;
 
@@ -829,11 +851,11 @@ pub(crate) fn phase4(
             &message_received_3.salt,
         );
         if !verification {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Initialization for zero shares protocol failed: invalid seed decommitment from Party {target_party}."
-                ),
+                AbortReason::ZeroShareDecommitFailed {
+                    counterparty: *target_party,
+                },
             ));
         }
 
@@ -856,45 +878,51 @@ pub(crate) fn phase4(
         BTreeMap::new();
     for message in mul_received {
         if message.parties.receiver != data.party_index {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                "Received a multiplication-init message not meant for me!",
+                AbortReason::MisroutedMessage {
+                    expected_receiver: data.party_index,
+                    actual_receiver: message.parties.receiver,
+                },
             ));
         }
         if !mul_kept.contains_key(&message.parties.sender) {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Unexpected multiplication-init sender {}",
-                    message.parties.sender
-                ),
+                AbortReason::UnexpectedSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
         if mul_received_by_sender
             .insert(message.parties.sender, message)
             .is_some()
         {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Duplicate multiplication-init message from Party {}",
-                    message.parties.sender
-                ),
+                AbortReason::DuplicateSender {
+                    sender: message.parties.sender,
+                },
             ));
         }
     }
     if mul_received_by_sender.len() != mul_kept.len() {
-        return Err(Abort::new(
+        return Err(Abort::recoverable(
             data.party_index,
-            "Missing multiplication initialization messages from one or more parties",
+            AbortReason::WrongMessageCount {
+                expected: mul_kept.len(),
+                got: mul_received_by_sender.len(),
+            },
         ));
     }
 
     for (target_party, message_kept) in mul_kept {
         let message_received = mul_received_by_sender.get(target_party).ok_or_else(|| {
-            Abort::new(
+            Abort::recoverable(
                 data.party_index,
-                &format!("Missing multiplication-init message from Party {target_party}"),
+                AbortReason::MissingMessageFromParty {
+                    party: *target_party,
+                },
             )
         })?;
 
@@ -924,12 +952,12 @@ pub(crate) fn phase4(
             Err(error) => {
                 // In DKG this failed run does not produce reusable OT state,
                 // so we keep abort classification recoverable.
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     data.party_index,
-                    &format!(
-                        "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                        target_party, error.description
-                    ),
+                    AbortReason::MultiplicationVerificationFailed {
+                        counterparty: *target_party,
+                        detail: error.description.clone(),
+                    },
                 ));
             }
         };
@@ -961,12 +989,12 @@ pub(crate) fn phase4(
             Err(error) => {
                 // In DKG this failed run does not produce reusable OT state,
                 // so we keep abort classification recoverable.
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     data.party_index,
-                    &format!(
-                        "Initialization for multiplication protocol failed because of Party {}: {:?}",
-                        target_party, error.description
-                    ),
+                    AbortReason::MultiplicationVerificationFailed {
+                        counterparty: *target_party,
+                        detail: error.description.clone(),
+                    },
                 ));
             }
         };
@@ -984,15 +1012,15 @@ pub(crate) fn phase4(
         let i_idx = PartyIndex::new(i).unwrap();
         // We take the messages in the correct order (that's why the BTreeMap).
         let phase3_msg = bip_received_phase3.get(&i_idx).ok_or_else(|| {
-            Abort::new(
+            Abort::recoverable(
                 data.party_index,
-                &format!("Missing BIP phase 3 message from party {i}"),
+                AbortReason::MissingMessageFromParty { party: i_idx },
             )
         })?;
         let phase2_msg = bip_received_phase2.get(&i_idx).ok_or_else(|| {
-            Abort::new(
+            Abort::recoverable(
                 data.party_index,
-                &format!("Missing BIP phase 2 message from party {i}"),
+                AbortReason::MissingMessageFromParty { party: i_idx },
             )
         })?;
         let verification = commits::verify_commitment(
@@ -1001,11 +1029,9 @@ pub(crate) fn phase4(
             &phase3_msg.cc_salt,
         );
         if !verification {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 data.party_index,
-                &format!(
-                    "Initialization for key derivation failed because Party {i} cheated when sending the auxiliary chain code!"
-                ),
+                AbortReason::ChainCodeCommitmentFailed { party: i_idx },
             ));
         }
 
@@ -1275,9 +1301,10 @@ mod tests {
             &data.bip_broadcast_3to4,
         );
         let abort = result.expect_err("missing multiplication-init message should be rejected");
-        assert!(abort
-            .description
-            .contains("Missing multiplication initialization messages"));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::WrongMessageCount { .. }
+        ));
     }
 
     // DISTRIBUTED KEY GENERATION (without initializations)
@@ -1594,7 +1621,7 @@ mod tests {
                 &proofs_commitments,
             )
             .unwrap_or_else(|abort| {
-                panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                panic!("Party {} aborted: {:?}", abort.index, abort.description());
             });
             public_keys.push(pk);
         }
@@ -1791,7 +1818,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((party, pkg)) => {
                     parties.push(party);

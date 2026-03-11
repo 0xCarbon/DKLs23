@@ -35,7 +35,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use hex;
 
-use crate::protocols::{Abort, PartiesMessage, Party, PartyIndex};
+use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 
 use crate::utilities::commits::{commit_point, verify_commitment_point};
 use crate::utilities::hashes::HashOutput;
@@ -194,51 +194,56 @@ impl Party {
     > {
         // Step 4 - Check if we have the correct number of counter parties.
         if data.counterparties.len() != (self.parameters.threshold - 1) as usize {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "The number of signing parties is not right!",
+                AbortReason::WrongCounterpartyCount {
+                    expected: (self.parameters.threshold - 1) as usize,
+                    got: data.counterparties.len(),
+                },
             ));
         }
 
         // Validate party index ranges and uniqueness.
         if self.party_index.as_u8() > self.parameters.share_count {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                &format!(
-                    "Own party index {} is out of range [1, {}]",
-                    self.party_index, self.parameters.share_count
-                ),
+                AbortReason::InvalidPartyIndex {
+                    index: self.party_index,
+                },
             ));
         }
         let mut seen_counterparties: BTreeSet<PartyIndex> = BTreeSet::new();
         for counterparty in &data.counterparties {
             if counterparty.as_u8() > self.parameters.share_count {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Counterparty index {} is out of range [1, {}]",
-                        counterparty, self.parameters.share_count
-                    ),
+                    AbortReason::InvalidPartyIndex {
+                        index: *counterparty,
+                    },
                 ));
             }
             if !seen_counterparties.insert(*counterparty) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Counterparty index {counterparty} appears more than once"),
+                    AbortReason::DuplicateCounterparty {
+                        index: *counterparty,
+                    },
                 ));
             }
             if *counterparty == self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Counterparty list must not contain our own index",
+                    AbortReason::SelfInCounterparties,
                 ));
             }
             if !self.mul_senders.contains_key(counterparty)
                 || !self.mul_receivers.contains_key(counterparty)
             {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication state for counterparty {counterparty}"),
+                    AbortReason::MissingMulState {
+                        counterparty: *counterparty,
+                    },
                 ));
             }
         }
@@ -277,20 +282,22 @@ impl Party {
 
             // We run the first phase.
             let mul_receiver = self.mul_receivers.get(counterparty).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication receiver state for party {counterparty}"),
+                    AbortReason::MissingMulState {
+                        counterparty: *counterparty,
+                    },
                 )
             })?;
             let (chi, mul_keep, mul_transmit) = match mul_receiver.run_phase1(&mul_sid) {
                 Ok(values) => values,
                 Err(error) => {
-                    return Err(Abort::new(
+                    return Err(Abort::recoverable(
                         self.party_index,
-                        &format!(
-                            "Two-party multiplication setup failed with Party {counterparty}: {}",
-                            error.description
-                        ),
+                        AbortReason::MultiplicationVerificationFailed {
+                            counterparty: *counterparty,
+                            detail: error.description.clone(),
+                        },
                     ));
                 }
             };
@@ -394,9 +401,9 @@ impl Party {
         let l_denominator_inverse = match Option::<Scalar>::from(l_denominator.invert()) {
             Some(inv) => inv,
             None => {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Failed to compute Lagrange coefficient (duplicate/invalid counterparties)",
+                    AbortReason::LagrangeCoefficientFailed,
                 ));
             }
         };
@@ -414,9 +421,12 @@ impl Party {
         let mut transmit: Vec<TransmitPhase2to3> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         if received.len() != data.counterparties.len() {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Received an unexpected number of round-1 messages",
+                AbortReason::WrongMessageCount {
+                    expected: data.counterparties.len(),
+                    got: received.len(),
+                },
             ));
         }
         let mut seen_senders: BTreeSet<PartyIndex> = BTreeSet::new();
@@ -424,30 +434,34 @@ impl Party {
             // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
             if !data.counterparties.contains(&counterparty) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Received message from unknown sender {counterparty}"),
+                    AbortReason::UnexpectedSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Received message addressed to {}, but we are {}",
-                        message.parties.receiver, self.party_index
-                    ),
+                    AbortReason::MisroutedMessage {
+                        expected_receiver: self.party_index,
+                        actual_receiver: message.parties.receiver,
+                    },
                 ));
             }
             if !seen_senders.insert(counterparty) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Duplicate round-1 message from sender {counterparty}"),
+                    AbortReason::DuplicateSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing local kept state for counterparty {counterparty}"),
+                    AbortReason::MissingMulState { counterparty },
                 )
             })?;
 
@@ -467,9 +481,9 @@ impl Party {
             .concat();
 
             let mul_sender = self.mul_senders.get(&counterparty).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication sender state for party {counterparty}"),
+                    AbortReason::MissingMulState { counterparty },
                 )
             })?;
             let mul_result = mul_sender.run(&mul_sid, &input, &message.mul_transmit);
@@ -482,10 +496,10 @@ impl Party {
                     return Err(Abort::ban(
                         self.party_index,
                         counterparty,
-                        &format!(
-                            "Two-party multiplication protocol failed because of Party {}: {:?}",
-                            counterparty, error.description
-                        ),
+                        AbortReason::MultiplicationVerificationFailed {
+                            counterparty,
+                            detail: error.description.clone(),
+                        },
                     ));
                 }
                 Ok((c_values, data_to_receiver)) => {
@@ -583,9 +597,12 @@ impl Party {
         let mut second_sum_v = Scalar::ZERO;
 
         if received.len() != data.counterparties.len() {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Received an unexpected number of round-2 messages",
+                AbortReason::WrongMessageCount {
+                    expected: data.counterparties.len(),
+                    got: received.len(),
+                },
             ));
         }
         let mut seen_senders: BTreeSet<PartyIndex> = BTreeSet::new();
@@ -593,36 +610,40 @@ impl Party {
             // Validate sender identity before processing (defense-in-depth against misrouting).
             let counterparty = message.parties.sender;
             if !data.counterparties.contains(&counterparty) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Received message from unknown sender {counterparty}"),
+                    AbortReason::UnexpectedSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             if message.parties.receiver != self.party_index {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!(
-                        "Received message addressed to {}, but we are {}",
-                        message.parties.receiver, self.party_index
-                    ),
+                    AbortReason::MisroutedMessage {
+                        expected_receiver: self.party_index,
+                        actual_receiver: message.parties.receiver,
+                    },
                 ));
             }
             if message.instance_point == AffinePoint::IDENTITY {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Party {counterparty} sent identity as instance point"),
+                    AbortReason::TrivialInstancePoint { counterparty },
                 ));
             }
             if !seen_senders.insert(counterparty) {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Duplicate round-2 message from sender {counterparty}"),
+                    AbortReason::DuplicateSender {
+                        sender: counterparty,
+                    },
                 ));
             }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing local kept state for counterparty {counterparty}"),
+                    AbortReason::MissingMulState { counterparty },
                 )
             })?;
 
@@ -633,9 +654,9 @@ impl Party {
                 &message.salt,
             );
             if !verification {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    &format!("Failed to verify commitment from Party {counterparty}!"),
+                    AbortReason::CommitmentMismatch { counterparty },
                 ));
             }
 
@@ -655,9 +676,9 @@ impl Party {
             .concat();
 
             let mul_receiver = self.mul_receivers.get(&counterparty).ok_or_else(|| {
-                Abort::new(
+                Abort::recoverable(
                     self.party_index,
-                    &format!("Missing multiplication receiver state for party {counterparty}"),
+                    AbortReason::MissingMulState { counterparty },
                 )
             })?;
             let mul_result =
@@ -670,10 +691,10 @@ impl Party {
                     return Err(Abort::ban(
                         self.party_index,
                         counterparty,
-                        &format!(
-                            "Two-party multiplication protocol failed because of Party {}: {:?}",
-                            counterparty, error.description
-                        ),
+                        AbortReason::MultiplicationVerificationFailed {
+                            counterparty,
+                            detail: error.description.clone(),
+                        },
                     ));
                 }
                 Ok(d_values) => {
@@ -690,7 +711,7 @@ impl Party {
                 return Err(Abort::ban(
                     self.party_index,
                     counterparty,
-                    &format!("Consistency check with u-variables failed for Party {counterparty}!"),
+                    AbortReason::GammaUInconsistency { counterparty },
                 ));
             }
 
@@ -702,7 +723,7 @@ impl Party {
                 return Err(Abort::ban(
                     self.party_index,
                     counterparty,
-                    &format!("Consistency check with v-variables failed for Party {counterparty}!"),
+                    AbortReason::OtConsistencyCheckFailed { counterparty },
                 ));
             }
 
@@ -720,9 +741,9 @@ impl Party {
 
         // Second consistency check.
         if expected_public_key != self.pk {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Consistency check for public key reconstruction failed!",
+                AbortReason::PolynomialInconsistency,
             ));
         }
 
@@ -731,9 +752,9 @@ impl Party {
         // DKLs23 but actually on ECDSA itself). In any case, the probability
         // of this happening is very low.
         if total_instance_point == AffinePoint::IDENTITY {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Total instance point was trivial! (Very improbable)",
+                AbortReason::PolynomialInconsistency,
             ));
         }
 
@@ -795,9 +816,9 @@ impl Party {
         let denominator_inverse = match Option::<Scalar>::from(denominator.invert()) {
             Some(inv) => inv,
             None => {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Zero denominator in signature assembly — possible adversarial u-values",
+                    AbortReason::ZeroDenominator,
                 ));
             }
         };
@@ -814,9 +835,9 @@ impl Party {
         let verification =
             verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
         if !verification {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.party_index,
-                "Invalid ECDSA signature at the end of the protocol!",
+                AbortReason::SignatureVerificationFailed,
             ));
         }
 
@@ -827,9 +848,9 @@ impl Party {
         let x_as_int = match parse_u256_from_hex_32bytes(x_coord) {
             Some(value) => value,
             None => {
-                return Err(Abort::new(
+                return Err(Abort::recoverable(
                     self.party_index,
-                    "Invalid x-coordinate hex while assembling signature",
+                    AbortReason::InvalidXCoordinateHex,
                 ));
             }
         };
@@ -1019,7 +1040,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1056,7 +1077,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1084,7 +1105,7 @@ mod tests {
             true,
         );
         if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            panic!("Party {} aborted: {:?}", abort.index, abort.description());
         }
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
     }
@@ -1179,7 +1200,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1216,7 +1237,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1245,7 +1266,7 @@ mod tests {
         );
         let signature = match result {
             Err(abort) => {
-                panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                panic!("Party {} aborted: {:?}", abort.index, abort.description());
             }
             Ok(s) => s,
         };
@@ -1468,7 +1489,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((party, _)) => {
                     parties.push(party);
@@ -1554,7 +1575,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1591,7 +1612,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1619,7 +1640,7 @@ mod tests {
             true,
         );
         if let Err(abort) = result {
-            panic!("Party {} aborted: {:?}", abort.index, abort.description);
+            panic!("Party {} aborted: {:?}", abort.index, abort.description());
         }
         // We could call verify_ecdsa_signature here, but it is already called during Phase 4.
     }
@@ -1650,9 +1671,7 @@ mod tests {
         let result = parties[0].sign_phase4(&data, "01", &received, true);
         let abort = result.expect_err("zero denominator should return abort");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Zero denominator in signature assembly"));
+        assert!(matches!(abort.reason, AbortReason::ZeroDenominator));
     }
 
     /// Tests that malformed hex inputs are rejected without panicking.
@@ -1694,7 +1713,10 @@ mod tests {
             .sign_phase1(&data)
             .expect_err("duplicate counterparty should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort.description.contains("appears more than once"));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::DuplicateCounterparty { .. }
+        ));
     }
 
     /// Tests if phase 1 rejects missing multiplication state.
@@ -1712,9 +1734,7 @@ mod tests {
             )
             .expect_err("missing multiplication state should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Missing multiplication state for counterparty 2"));
+        assert!(matches!(abort.reason, AbortReason::MissingMulState { .. }));
     }
 
     #[allow(clippy::type_complexity)]
@@ -1764,7 +1784,7 @@ mod tests {
             {
                 Ok(result) => result,
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
             };
 
@@ -1818,7 +1838,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((unique_keep, keep, transmit)) => {
                     unique_kept_2to3.insert(party_index, unique_keep);
@@ -1860,7 +1880,7 @@ mod tests {
             );
             match result {
                 Err(abort) => {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description);
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description());
                 }
                 Ok((x_coord, broadcast)) => {
                     x_coords.push(x_coord);
@@ -1893,9 +1913,7 @@ mod tests {
         );
         let abort = result.expect_err("unknown sender should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("Received message from unknown sender"));
+        assert!(matches!(abort.reason, AbortReason::UnexpectedSender { .. }));
     }
 
     /// Tests if phase 2 rejects messages addressed to a different receiver.
@@ -1918,7 +1936,7 @@ mod tests {
         );
         let abort = result.expect_err("wrong receiver should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort.description.contains("Received message addressed to"));
+        assert!(matches!(abort.reason, AbortReason::MisroutedMessage { .. }));
     }
 
     /// Tests if phase 2 rejects message vectors with unexpected size.
@@ -1934,9 +1952,10 @@ mod tests {
         );
         let abort = result.expect_err("wrong message count should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("unexpected number of round-1 messages"));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::WrongMessageCount { .. }
+        ));
     }
 
     /// Tests if phase 3 rejects invalid decommitment data.
@@ -1970,7 +1989,10 @@ mod tests {
         );
         let abort = result.expect_err("invalid decommit should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort.description.contains("Failed to verify commitment"));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::CommitmentMismatch { .. }
+        ));
     }
 
     /// Tests if phase 3 rejects message vectors with unexpected size.
@@ -1994,9 +2016,10 @@ mod tests {
         );
         let abort = result.expect_err("wrong message count should be rejected");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort
-            .description
-            .contains("unexpected number of round-2 messages"));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::WrongMessageCount { .. }
+        ));
     }
 
     /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
@@ -2030,9 +2053,10 @@ mod tests {
             abort.kind,
             AbortKind::BanCounterparty(PartyIndex::new(2).unwrap())
         );
-        assert!(abort
-            .description
-            .contains("Consistency check with u-variables failed"));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::GammaUInconsistency { .. }
+        ));
     }
 
     /// Tests if phase 4 rejects tampered broadcast values that invalidate signature assembly.
@@ -2065,6 +2089,9 @@ mod tests {
         );
         let abort = result.expect_err("tampered broadcast should fail signature validation");
         assert_eq!(abort.kind, AbortKind::Recoverable);
-        assert!(abort.description.contains("Invalid ECDSA signature"));
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SignatureVerificationFailed
+        ));
     }
 }

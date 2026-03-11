@@ -10,7 +10,7 @@ use crate::protocols::dkg::{
     TransmitInitMulPhase3to4, TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
     UniqueKeepDerivationPhase2to3,
 };
-use crate::protocols::{Abort, Parameters, Party, PartyIndex, PublicKeyPackage};
+use crate::protocols::{Abort, AbortReason, Parameters, Party, PartyIndex, PublicKeyPackage};
 
 pub struct DkgSession {
     data: SessionData,
@@ -57,9 +57,11 @@ impl DkgSession {
         Abort,
     > {
         if self.poly_point.is_some() {
-            return Err(Abort::new(
+            return Err(Abort::recoverable(
                 self.data.party_index,
-                "phase2 already called on this session",
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase2 already called on this session".into(),
+                },
             ));
         }
 
@@ -84,14 +86,22 @@ impl DkgSession {
         ),
         Abort,
     > {
-        let zero_kept = self
-            .zero_kept_2to3
-            .as_ref()
-            .ok_or_else(|| Abort::new(self.data.party_index, "phase3 called before phase2"))?;
-        let bip_kept = self
-            .bip_kept_2to3
-            .as_ref()
-            .ok_or_else(|| Abort::new(self.data.party_index, "phase3 called before phase2"))?;
+        let zero_kept = self.zero_kept_2to3.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase3 called before phase2".into(),
+                },
+            )
+        })?;
+        let bip_kept = self.bip_kept_2to3.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase3 called before phase2".into(),
+                },
+            )
+        })?;
 
         let (zero_keep_3to4, zero_transmit, mul_keep, mul_transmit, bip_broadcast) =
             dkg::phase3(&self.data, zero_kept, bip_kept);
@@ -125,18 +135,30 @@ impl DkgSession {
         bip_received_phase2: &BTreeMap<PartyIndex, BroadcastDerivationPhase2to4>,
         bip_received_phase3: &BTreeMap<PartyIndex, BroadcastDerivationPhase3to4>,
     ) -> Result<(Party, PublicKeyPackage), Abort> {
-        let poly_point = self
-            .poly_point
-            .as_ref()
-            .ok_or_else(|| Abort::new(self.data.party_index, "phase4 called before phase2"))?;
-        let zero_kept = self
-            .zero_kept_3to4
-            .as_ref()
-            .ok_or_else(|| Abort::new(self.data.party_index, "phase4 called before phase3"))?;
-        let mul_kept = self
-            .mul_kept_3to4
-            .as_ref()
-            .ok_or_else(|| Abort::new(self.data.party_index, "phase4 called before phase3"))?;
+        let poly_point = self.poly_point.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase4 called before phase2".into(),
+                },
+            )
+        })?;
+        let zero_kept = self.zero_kept_3to4.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase4 called before phase3".into(),
+                },
+            )
+        })?;
+        let mul_kept = self.mul_kept_3to4.as_ref().ok_or_else(|| {
+            Abort::recoverable(
+                self.data.party_index,
+                AbortReason::PhaseCalledOutOfOrder {
+                    phase: "phase4 called before phase3".into(),
+                },
+            )
+        })?;
 
         dkg::phase4(
             &self.data,
@@ -227,6 +249,7 @@ impl Drop for DkgSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::AbortReason;
     use crate::utilities::rng;
     use rand::RngExt;
 
@@ -357,7 +380,7 @@ mod tests {
                     &bip_broadcast_3to4,
                 )
                 .unwrap_or_else(|abort| {
-                    panic!("Party {} aborted: {:?}", abort.index, abort.description)
+                    panic!("Party {} aborted: {:?}", abort.index, abort.description())
                 });
             parties.push(party);
         }
@@ -383,19 +406,19 @@ mod tests {
         let mut session = DkgSession::new(parameters.clone(), pi, session_id.to_vec());
         let result = session.phase3();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .description
-            .contains("phase3 called before phase2"));
+        assert!(matches!(
+            result.unwrap_err().reason,
+            AbortReason::PhaseCalledOutOfOrder { ref phase } if phase.contains("phase3 called before phase2")
+        ));
 
         // phase4 before phase2
         let session = DkgSession::new(parameters.clone(), pi, session_id.to_vec());
         let result = session.phase4(&[], &[], &[], &[], &BTreeMap::new(), &BTreeMap::new());
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .description
-            .contains("phase4 called before phase2"));
+        assert!(matches!(
+            result.unwrap_err().reason,
+            AbortReason::PhaseCalledOutOfOrder { ref phase } if phase.contains("phase4 called before phase2")
+        ));
 
         // phase4 after phase2 but before phase3
         let mut session = DkgSession::new(parameters, pi, session_id.to_vec());
@@ -403,10 +426,10 @@ mod tests {
         session.phase2(&fragments).unwrap();
         let result = session.phase4(&[], &[], &[], &[], &BTreeMap::new(), &BTreeMap::new());
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .description
-            .contains("phase4 called before phase3"));
+        assert!(matches!(
+            result.unwrap_err().reason,
+            AbortReason::PhaseCalledOutOfOrder { ref phase } if phase.contains("phase4 called before phase3")
+        ));
     }
 
     #[test]
@@ -425,9 +448,9 @@ mod tests {
 
         let result = session.phase2(&fragments);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .description
-            .contains("phase2 already called"));
+        assert!(matches!(
+            result.unwrap_err().reason,
+            AbortReason::PhaseCalledOutOfOrder { .. }
+        ));
     }
 }

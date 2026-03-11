@@ -215,24 +215,207 @@ pub enum AbortKind {
     BanCounterparty(PartyIndex),
 }
 
-#[derive(Debug, Clone)]
+/// Machine-readable reason for a protocol abort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum AbortReason {
+    // --- Input validation (all Recoverable) ---
+    InvalidPartyIndex {
+        index: PartyIndex,
+    },
+    WrongCounterpartyCount {
+        expected: usize,
+        got: usize,
+    },
+    DuplicateCounterparty {
+        index: PartyIndex,
+    },
+    SelfInCounterparties,
+    MissingMulState {
+        counterparty: PartyIndex,
+    },
+
+    // --- Message routing (all Recoverable) ---
+    MisroutedMessage {
+        expected_receiver: PartyIndex,
+        actual_receiver: PartyIndex,
+    },
+    UnexpectedSender {
+        sender: PartyIndex,
+    },
+    DuplicateSender {
+        sender: PartyIndex,
+    },
+    WrongMessageCount {
+        expected: usize,
+        got: usize,
+    },
+    MissingMessageFromParty {
+        party: PartyIndex,
+    },
+
+    // --- Cryptographic verification (severity varies) ---
+    ProofVerificationFailed {
+        counterparty: PartyIndex,
+    },
+    CommitmentMismatch {
+        counterparty: PartyIndex,
+    },
+    PolynomialInconsistency,
+    TrivialInstancePoint {
+        counterparty: PartyIndex,
+    },
+    TrivialPublicKey,
+    TrivialKeyShare,
+    MissingCommittedPoint {
+        party: PartyIndex,
+    },
+
+    // --- OT/Multiplication failures (typically BanCounterparty) ---
+    OtConsistencyCheckFailed {
+        counterparty: PartyIndex,
+    },
+    MultiplicationVerificationFailed {
+        counterparty: PartyIndex,
+        detail: String,
+    },
+    GammaUInconsistency {
+        counterparty: PartyIndex,
+    },
+
+    // --- Signature assembly ---
+    SignatureVerificationFailed,
+    ZeroDenominator,
+    LagrangeCoefficientFailed,
+    InvalidXCoordinateHex,
+
+    // --- Zero-share initialization ---
+    ZeroShareDecommitFailed {
+        counterparty: PartyIndex,
+    },
+
+    // --- Chain code / BIP derivation ---
+    ChainCodeCommitmentFailed {
+        party: PartyIndex,
+    },
+
+    // --- Session state machine ---
+    PhaseCalledOutOfOrder {
+        phase: String,
+    },
+
+    // --- Hex parsing ---
+    InvalidHex {
+        detail: String,
+    },
+}
+
+impl fmt::Display for AbortReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPartyIndex { index } => {
+                write!(f, "party index {index} is out of valid range")
+            }
+            Self::WrongCounterpartyCount { expected, got } => {
+                write!(
+                    f,
+                    "wrong counterparty count: expected {expected}, got {got}"
+                )
+            }
+            Self::DuplicateCounterparty { index } => {
+                write!(f, "duplicate counterparty: {index}")
+            }
+            Self::SelfInCounterparties => write!(f, "own index in counterparty list"),
+            Self::MissingMulState { counterparty } => {
+                write!(f, "missing multiplication state for party {counterparty}")
+            }
+            Self::MisroutedMessage {
+                expected_receiver,
+                actual_receiver,
+            } => write!(
+                f,
+                "message addressed to {actual_receiver}, expected {expected_receiver}"
+            ),
+            Self::UnexpectedSender { sender } => write!(f, "unexpected sender: {sender}"),
+            Self::DuplicateSender { sender } => {
+                write!(f, "duplicate message from party {sender}")
+            }
+            Self::WrongMessageCount { expected, got } => {
+                write!(f, "wrong message count: expected {expected}, got {got}")
+            }
+            Self::MissingMessageFromParty { party } => {
+                write!(f, "missing message from party {party}")
+            }
+            Self::ProofVerificationFailed { counterparty } => {
+                write!(f, "proof verification failed for party {counterparty}")
+            }
+            Self::CommitmentMismatch { counterparty } => {
+                write!(f, "commitment mismatch for party {counterparty}")
+            }
+            Self::PolynomialInconsistency => write!(f, "polynomial inconsistency"),
+            Self::TrivialInstancePoint { counterparty } => {
+                write!(f, "trivial instance point from party {counterparty}")
+            }
+            Self::TrivialPublicKey => write!(f, "trivial public key"),
+            Self::TrivialKeyShare => write!(f, "trivial key share"),
+            Self::MissingCommittedPoint { party } => {
+                write!(f, "missing committed point for party {party}")
+            }
+            Self::OtConsistencyCheckFailed { counterparty } => {
+                write!(f, "OT consistency check failed for party {counterparty}")
+            }
+            Self::MultiplicationVerificationFailed {
+                counterparty,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "multiplication verification failed for party {counterparty}: {detail}"
+                )
+            }
+            Self::GammaUInconsistency { counterparty } => {
+                write!(f, "gamma-u inconsistency for party {counterparty}")
+            }
+            Self::SignatureVerificationFailed => write!(f, "signature verification failed"),
+            Self::ZeroDenominator => write!(f, "zero denominator in signature assembly"),
+            Self::LagrangeCoefficientFailed => {
+                write!(f, "failed to compute Lagrange coefficient")
+            }
+            Self::InvalidXCoordinateHex => write!(f, "invalid x-coordinate hex"),
+            Self::ZeroShareDecommitFailed { counterparty } => {
+                write!(f, "zero-share decommitment failed for party {counterparty}")
+            }
+            Self::ChainCodeCommitmentFailed { party } => {
+                write!(f, "chain code commitment failed for party {party}")
+            }
+            Self::PhaseCalledOutOfOrder { phase } => {
+                write!(f, "{phase}")
+            }
+            Self::InvalidHex { detail } => write!(f, "invalid hex: {detail}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Abort {
     /// Index of the party generating the abort message.
     pub index: PartyIndex,
     /// Indicates whether the abort requires permanently banning a counterparty.
     pub kind: AbortKind,
-    pub description: String,
+    /// Machine-readable reason for the abort.
+    pub reason: AbortReason,
 }
 
 impl Abort {
     /// Creates a recoverable `Abort`.
     #[must_use]
-    pub fn new(index: PartyIndex, description: &str) -> Abort {
+    pub fn recoverable(index: PartyIndex, reason: AbortReason) -> Abort {
         Abort {
             index,
             kind: AbortKind::Recoverable,
-            description: String::from(description),
+            reason,
         }
     }
 
@@ -243,12 +426,18 @@ impl Abort {
     /// has either cheated or been compromised, and continuing to sign with
     /// them leaks information enabling key extraction.
     #[must_use]
-    pub fn ban(index: PartyIndex, counterparty: PartyIndex, description: &str) -> Abort {
+    pub fn ban(index: PartyIndex, counterparty: PartyIndex, reason: AbortReason) -> Abort {
         Abort {
             index,
             kind: AbortKind::BanCounterparty(counterparty),
-            description: String::from(description),
+            reason,
         }
+    }
+
+    /// Human-readable description for logging/debugging.
+    #[must_use]
+    pub fn description(&self) -> String {
+        self.reason.to_string()
     }
 }
 
