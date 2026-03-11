@@ -142,7 +142,7 @@ impl OTSender {
         enc_proofs: &[EncProof],
     ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
         let batch_size =
-            u16::try_from(enc_proofs.len()).expect("The batch sizes used always fit into an u16!");
+            u16::try_from(enc_proofs.len()).map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
@@ -197,14 +197,17 @@ impl OTReceiver {
     // Phase 1 batch version: used for multiple executions (e.g. OT extension).
 
     /// Executes `run_phase1` for each choice bit in `bits`.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the batch size exceeds the maximum (65535).
     pub fn run_phase1_batch(
         &self,
         session_id: &[u8],
         bits: &[bool],
-    ) -> (Vec<Scalar>, Vec<EncProof>) {
+    ) -> Result<(Vec<Scalar>, Vec<EncProof>), ErrorOT> {
         let batch_size =
-            u16::try_from(bits.len()).expect("The batch sizes used always fit into an u16!");
+            u16::try_from(bits.len()).map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size as usize);
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size as usize);
@@ -218,7 +221,7 @@ impl OTReceiver {
             vec_proof.push(proof);
         }
 
-        (vec_r, vec_proof)
+        Ok((vec_r, vec_proof))
     }
 
     // Communication round
@@ -287,7 +290,7 @@ impl OTReceiver {
 
         // Step 2
         let batch_size =
-            u16::try_from(vec_r.len()).expect("The batch sizes used always fit into an u16!");
+            u16::try_from(vec_r.len()).map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
@@ -415,7 +418,7 @@ mod tests {
             bits.push(rng::get_rng().random());
         }
 
-        let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits);
+        let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits).unwrap();
 
         // Communication round - The parties exchange the proofs.
         // The receiver also sends his seed.

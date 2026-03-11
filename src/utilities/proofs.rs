@@ -45,6 +45,7 @@ use crate::utilities::oracle_tags::{
     TAG_DLOG_PROOF_COMMITMENT, TAG_DLOG_PROOF_FISCHLIN, TAG_ENCPROOF_FS,
 };
 use crate::utilities::rng;
+use subtle::ConstantTimeEq;
 
 /// Constants for the randomized Fischlin transform.
 pub const R: u16 = 64;
@@ -466,7 +467,7 @@ impl DLogProof {
             &[session_id, &msg_for_commitment],
         );
 
-        (*commitment == expected_commitment) && Self::verify(proof, session_id)
+        bool::from(commitment.ct_eq(&expected_commitment)) && Self::verify(proof, session_id)
     }
 }
 

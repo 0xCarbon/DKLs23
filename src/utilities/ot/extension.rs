@@ -163,7 +163,10 @@ impl OTESender {
             correlation.push(rng::get_rng().random());
         }
 
-        let (vec_r, enc_proofs) = ot_receiver.run_phase1_batch(session_id, &correlation);
+        // KAPPA is a compile-time u16 constant, so this never fails.
+        let (vec_r, enc_proofs) = ot_receiver
+            .run_phase1_batch(session_id, &correlation)
+            .expect("KAPPA is a u16 constant and always fits");
 
         (ot_receiver, correlation, vec_r, enc_proofs)
     }
