@@ -141,8 +141,8 @@ impl OTSender {
         seed: &Seed,
         enc_proofs: &[EncProof],
     ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
-        let batch_size =
-            u16::try_from(enc_proofs.len()).map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
+        let batch_size = u16::try_from(enc_proofs.len())
+            .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_m0: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         let mut vec_m1: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
@@ -206,8 +206,8 @@ impl OTReceiver {
         session_id: &[u8],
         bits: &[bool],
     ) -> Result<(Vec<Scalar>, Vec<EncProof>), ErrorOT> {
-        let batch_size =
-            u16::try_from(bits.len()).map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
+        let batch_size = u16::try_from(bits.len())
+            .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size as usize);
         let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size as usize);
@@ -289,8 +289,8 @@ impl OTReceiver {
         let z = self.run_phase2_step1(session_id, dlog_proof)?;
 
         // Step 2
-        let batch_size =
-            u16::try_from(vec_r.len()).map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
+        let batch_size = u16::try_from(vec_r.len())
+            .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
         let mut vec_mb: Vec<HashOutput> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
