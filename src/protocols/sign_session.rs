@@ -16,10 +16,7 @@ pub struct SignSession<'a> {
 }
 
 impl<'a> SignSession<'a> {
-    pub(crate) fn new(
-        party: &'a Party,
-        data: SignData,
-    ) -> Result<(Self, Vec<TransmitPhase1to2>), Abort> {
+    pub fn new(party: &'a Party, data: SignData) -> Result<(Self, Vec<TransmitPhase1to2>), Abort> {
         let (unique_kept, kept, transmit) = party.sign_phase1(&data)?;
         let session = Self {
             party,
@@ -31,7 +28,7 @@ impl<'a> SignSession<'a> {
         Ok((session, transmit))
     }
 
-    pub(crate) fn phase2(
+    pub fn phase2(
         &mut self,
         received: &[TransmitPhase1to2],
     ) -> Result<Vec<TransmitPhase2to3>, Abort> {
@@ -50,10 +47,7 @@ impl<'a> SignSession<'a> {
         Ok(transmit)
     }
 
-    pub(crate) fn phase3(
-        &mut self,
-        received: &[TransmitPhase2to3],
-    ) -> Result<Broadcast3to4, Abort> {
+    pub fn phase3(&mut self, received: &[TransmitPhase2to3]) -> Result<Broadcast3to4, Abort> {
         let (unique_kept, kept) = self.phase2_to_3.take().ok_or_else(|| {
             Abort::recoverable(
                 self.party.party_index,
@@ -69,7 +63,7 @@ impl<'a> SignSession<'a> {
         Ok(broadcast)
     }
 
-    pub(crate) fn phase4(
+    pub fn phase4(
         mut self,
         received: &[Broadcast3to4],
         normalize: bool,
