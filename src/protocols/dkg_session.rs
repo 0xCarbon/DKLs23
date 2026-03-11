@@ -45,7 +45,7 @@ impl DkgSession {
         dkg::phase1(&self.data)
     }
 
-    pub(crate) fn phase2(
+    pub fn phase2(
         &mut self,
         poly_fragments: &[Scalar],
     ) -> Result<
@@ -76,7 +76,7 @@ impl DkgSession {
         Ok((proof_commitment, zero_transmit, bip_broadcast))
     }
 
-    pub(crate) fn phase3(
+    pub fn phase3(
         &mut self,
     ) -> Result<
         (
@@ -126,7 +126,7 @@ impl DkgSession {
         Ok((zero_transmit, mul_transmit, bip_broadcast))
     }
 
-    pub(crate) fn phase4(
+    pub fn phase4(
         self,
         proofs_commitments: &[ProofCommitment],
         zero_received_phase2: &[TransmitInitZeroSharePhase2to4],

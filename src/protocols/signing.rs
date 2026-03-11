@@ -61,7 +61,7 @@ pub struct SignData {
 /// The message is produced/sent during Phase 1 and used in Phase 2.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct TransmitPhase1to2 {
+pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
     pub mul_transmit: OTEDataToSender,
@@ -72,7 +72,7 @@ pub(crate) struct TransmitPhase1to2 {
 /// The message is produced/sent during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct TransmitPhase2to3 {
+pub struct TransmitPhase2to3 {
     pub parties: PartiesMessage,
     pub gamma_u: AffinePoint,
     pub gamma_v: AffinePoint,
@@ -88,7 +88,7 @@ pub(crate) struct TransmitPhase2to3 {
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct Broadcast3to4 {
+pub struct Broadcast3to4 {
     pub u: Scalar,
     pub w: Scalar,
 }
