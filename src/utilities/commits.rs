@@ -9,6 +9,7 @@ use crate::utilities::oracle_tags::TAG_COMMITMENT;
 use crate::utilities::rng;
 use k256::AffinePoint;
 use rand::RngExt;
+use subtle::ConstantTimeEq;
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
 use crate::SECURITY;
@@ -38,7 +39,7 @@ pub fn commit(msg: &[u8]) -> (HashOutput, Vec<u8>) {
 #[must_use]
 pub fn verify_commitment(msg: &[u8], commitment: &HashOutput, salt: &[u8]) -> bool {
     let expected_commitment = tagged_hash(TAG_COMMITMENT, &[salt, msg]);
-    *commitment == expected_commitment
+    commitment.ct_eq(&expected_commitment).into()
 }
 
 /// Commits to a given point.
