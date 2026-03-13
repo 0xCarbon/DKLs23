@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::curve::DklsCurve;
 use crate::protocols::signature::EcdsaSignature;
 use crate::protocols::signing::{
     Broadcast3to4, KeepPhase1to2, KeepPhase2to3, SignData, TransmitPhase1to2, TransmitPhase2to3,
@@ -7,16 +8,19 @@ use crate::protocols::signing::{
 };
 use crate::protocols::{Abort, AbortReason, Party, PartyIndex};
 
-pub struct SignSession<'a> {
-    party: &'a Party,
+pub struct SignSession<'a, C: DklsCurve> {
+    party: &'a Party<C>,
     data: SignData,
-    phase1_to_2: Option<(UniqueKeep1to2, BTreeMap<PartyIndex, KeepPhase1to2>)>,
-    phase2_to_3: Option<(UniqueKeep2to3, BTreeMap<PartyIndex, KeepPhase2to3>)>,
+    phase1_to_2: Option<(UniqueKeep1to2<C>, BTreeMap<PartyIndex, KeepPhase1to2<C>>)>,
+    phase2_to_3: Option<(UniqueKeep2to3<C>, BTreeMap<PartyIndex, KeepPhase2to3<C>>)>,
     x_coord: Option<String>,
 }
 
-impl<'a> SignSession<'a> {
-    pub fn new(party: &'a Party, data: SignData) -> Result<(Self, Vec<TransmitPhase1to2>), Abort> {
+impl<'a, C: DklsCurve> SignSession<'a, C> {
+    pub fn new(
+        party: &'a Party<C>,
+        data: SignData,
+    ) -> Result<(Self, Vec<TransmitPhase1to2>), Abort> {
         let (unique_kept, kept, transmit) = party.sign_phase1(&data)?;
         let session = Self {
             party,
@@ -31,7 +35,7 @@ impl<'a> SignSession<'a> {
     pub fn phase2(
         &mut self,
         received: &[TransmitPhase1to2],
-    ) -> Result<Vec<TransmitPhase2to3>, Abort> {
+    ) -> Result<Vec<TransmitPhase2to3<C>>, Abort> {
         let (unique_kept, kept) = self.phase1_to_2.take().ok_or_else(|| {
             Abort::recoverable(
                 self.party.party_index,
@@ -47,7 +51,7 @@ impl<'a> SignSession<'a> {
         Ok(transmit)
     }
 
-    pub fn phase3(&mut self, received: &[TransmitPhase2to3]) -> Result<Broadcast3to4, Abort> {
+    pub fn phase3(&mut self, received: &[TransmitPhase2to3<C>]) -> Result<Broadcast3to4<C>, Abort> {
         let (unique_kept, kept) = self.phase2_to_3.take().ok_or_else(|| {
             Abort::recoverable(
                 self.party.party_index,
@@ -65,7 +69,7 @@ impl<'a> SignSession<'a> {
 
     pub fn phase4(
         mut self,
-        received: &[Broadcast3to4],
+        received: &[Broadcast3to4<C>],
         normalize: bool,
     ) -> Result<EcdsaSignature, Abort> {
         let x_coord = self.x_coord.take().ok_or_else(|| {
@@ -107,6 +111,7 @@ mod tests {
     use super::*;
     use k256::elliptic_curve::Field;
     use k256::Scalar;
+    use k256::Secp256k1;
 
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::{verify_ecdsa_signature, SignData};
@@ -126,7 +131,9 @@ mod tests {
 
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        });
 
         let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = tagged_hash(b"test-sign", &["Message to sign!".as_bytes()]);
@@ -151,7 +158,7 @@ mod tests {
         }
 
         // Phase 1 — create sessions.
-        let mut sessions: BTreeMap<u8, SignSession> = BTreeMap::new();
+        let mut sessions: BTreeMap<u8, SignSession<'_, Secp256k1>> = BTreeMap::new();
         let mut transmit_1to2: BTreeMap<u8, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let (session, transmit) = SignSession::new(
@@ -177,7 +184,7 @@ mod tests {
         }
 
         // Phase 2.
-        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<u8, Vec<TransmitPhase2to3<Secp256k1>>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
             let transmit = sessions
                 .get_mut(&party_index)
@@ -188,10 +195,10 @@ mod tests {
         }
 
         // Route round 2 messages.
-        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<u8, Vec<TransmitPhase2to3<Secp256k1>>> = BTreeMap::new();
         for &party_index in &executing_parties {
             let pi = PartyIndex::new(party_index).unwrap();
-            let msgs: Vec<TransmitPhase2to3> = transmit_2to3
+            let msgs: Vec<TransmitPhase2to3<Secp256k1>> = transmit_2to3
                 .values()
                 .flatten()
                 .filter(|m| m.parties.receiver == pi)
@@ -201,7 +208,8 @@ mod tests {
         }
 
         // Phase 3.
-        let mut broadcasts: Vec<Broadcast3to4> = Vec::with_capacity(parameters.threshold as usize);
+        let mut broadcasts: Vec<Broadcast3to4<Secp256k1>> =
+            Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let broadcast = sessions
                 .get_mut(&party_index)
@@ -223,7 +231,7 @@ mod tests {
         // Cross-check with verify_ecdsa_signature.
         let r_hex = hex::encode(signature.r);
         let s_hex = hex::encode(signature.s);
-        assert!(verify_ecdsa_signature(
+        assert!(verify_ecdsa_signature::<Secp256k1>(
             &message_to_sign,
             &parties[0].pk,
             &r_hex,
@@ -239,7 +247,9 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        });
 
         let data = SignData {
             sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),

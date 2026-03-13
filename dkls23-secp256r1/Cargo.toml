@@ -1,0 +1,25 @@
+[package]
+name = "dkls23-secp256r1"
+version = "0.3.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "DKLs23 Threshold ECDSA — secp256r1 / NEO3"
+repository = "https://github.com/0xCarbon/DKLs23"
+
+[dependencies]
+dkls23-core = { path = "../dkls23-core" }
+elliptic-curve = { version = "0.14.0-rc.4", features = ["sec1"] }
+p256 = { version = "0.14.0-rc.3" }
+ripemd = "0.1"
+sha2 = "0.10"
+blake2 = "0.10"
+bs58 = "0.5"
+hex = "0.4"
+
+[dev-dependencies]
+rustcrypto-group = "0.14.0-rc.0"
+
+[features]
+default = ["serde"]
+serde = ["dkls23-core/serde", "p256/serde"]
+insecure-rng = ["dkls23-core/insecure-rng"]

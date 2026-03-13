@@ -5,6 +5,7 @@
 #![recursion_limit = "512"]
 #![forbid(unsafe_code)]
 
+pub mod curve;
 pub mod protocols;
 pub mod utilities;
 

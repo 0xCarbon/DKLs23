@@ -10,9 +10,10 @@ use crate::utilities::commits;
 use crate::utilities::hashes::{tagged_hash_as_scalar, HashOutput};
 use crate::utilities::oracle_tags::TAG_ZERO_SHARE_FRAGMENT;
 
+use crate::curve::DklsCurve;
 use crate::utilities::rng;
-use k256::Scalar;
 use rand::RngExt;
+use rustcrypto_ff::Field;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
@@ -101,8 +102,12 @@ impl ZeroShare {
     /// Moreover, not all parties need to participate in this step, so we need to provide a
     /// list of counterparties.
     #[must_use]
-    pub fn compute(&self, counterparties: &[PartyIndex], session_id: &[u8]) -> Scalar {
-        let mut share = Scalar::ZERO;
+    pub fn compute<C: DklsCurve>(
+        &self,
+        counterparties: &[PartyIndex],
+        session_id: &[u8],
+    ) -> C::Scalar {
+        let mut share = <C::Scalar as Field>::ZERO;
         let seeds = self.seeds.clone();
         for seed_pair in seeds {
             // We ignore if this seed pair comes from a counterparty not in the current list of counterparties
@@ -112,7 +117,7 @@ impl ZeroShare {
 
             // Seeds generate fragments that add up to the share that will be returned.
             let fragment =
-                tagged_hash_as_scalar(TAG_ZERO_SHARE_FRAGMENT, &[session_id, &seed_pair.seed]);
+                tagged_hash_as_scalar::<C>(TAG_ZERO_SHARE_FRAGMENT, &[session_id, &seed_pair.seed]);
 
             // This sign guarantees that the shares from different parties add up to zero.
             if seed_pair.lowest_index {
@@ -128,6 +133,11 @@ impl ZeroShare {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use elliptic_curve::CurveArithmetic;
+    use k256::Secp256k1;
+
+    type TestCurve = Secp256k1;
+    type Scalar = <TestCurve as CurveArithmetic>::Scalar;
 
     /// Tests if the shares returned by the zero shares
     /// protocol indeed add up to zero.
@@ -191,8 +201,8 @@ mod tests {
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party);
             //Compute the share (there is a -1 because indexes for parties start at 1).
-            let share =
-                zero_shares[(party.as_u8() as usize) - 1].compute(&counterparties, &session_id);
+            let share = zero_shares[(party.as_u8() as usize) - 1]
+                .compute::<TestCurve>(&counterparties, &session_id);
             shares.push(share);
         }
 

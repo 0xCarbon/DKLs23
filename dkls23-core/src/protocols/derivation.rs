@@ -14,14 +14,15 @@
 
 use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacEngine};
 
-use k256::elliptic_curve::{ops::Reduce, Curve};
-use k256::{AffinePoint, Scalar, Secp256k1, U256};
+use elliptic_curve::ops::Reduce;
+use rustcrypto_ff::Field;
+use rustcrypto_group::prime::PrimeCurveAffine;
+use rustcrypto_group::Curve;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::curve::DklsCurve;
 use crate::protocols::{Party, PublicKeyPackage};
 use crate::utilities::hashes::point_to_bytes;
-
-use super::dkg::compute_eth_address;
 
 /// Fingerprint of a key as in BIP-32.
 ///
@@ -59,7 +60,14 @@ impl ErrorDeriv {
 /// network, but it can be easily inferred from context.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DerivData {
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct DerivData<C: DklsCurve> {
     /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,
     /// Index used to obtain this key from its parent.
@@ -67,10 +75,10 @@ pub struct DerivData {
     /// Identifier of the parent key.
     pub parent_fingerprint: Fingerprint,
     /// Behaves as the secret key share.
-    pub poly_point: Scalar,
+    pub poly_point: C::Scalar,
     /// Public key.
     #[zeroize(skip)]
-    pub pk: AffinePoint,
+    pub pk: C::AffinePoint,
     /// Extra entropy given by BIP-32.
     pub chain_code: ChainCode,
 }
@@ -82,7 +90,7 @@ pub const MAX_DEPTH: u8 = u8::MAX;
 /// This is the limit since we are not implementing hardened derivation.
 pub const MAX_CHILD_NUMBER: u32 = i32::MAX as u32; // This avoids a magic number warning
 
-impl DerivData {
+impl<C: DklsCurve> DerivData<C> {
     /// Computes the "tweak" needed to derive a secret key. In the process,
     /// it also produces the chain code and the parent fingerprint.
     ///
@@ -95,24 +103,36 @@ impl DerivData {
     pub fn child_tweak(
         &self,
         child_number: u32,
-    ) -> Result<(Scalar, ChainCode, Fingerprint), ErrorDeriv> {
+    ) -> Result<(C::Scalar, ChainCode, Fingerprint), ErrorDeriv> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
 
-        let pk_as_bytes = point_to_bytes(&self.pk);
+        let pk_as_bytes = point_to_bytes::<C>(&self.pk);
         hmac_engine.input(&pk_as_bytes);
         hmac_engine.input(&child_number.to_be_bytes());
 
         let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
         let hmac_bytes = hmac_result.to_byte_array();
 
-        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..CHAIN_CODE_LEN]);
-        if number_for_tweak.ge(&Secp256k1::ORDER) {
-            return Err(ErrorDeriv::new(
-                "Very improbable: Child index results in value not allowed by BIP-32!",
-            ));
+        // Use Reduce to convert the HMAC left half directly to a scalar.
+        // The probability of the result being zero (which would indicate
+        // the original value was >= ORDER) is negligible.
+        let tweak_bytes: [u8; CHAIN_CODE_LEN] = hmac_bytes[..CHAIN_CODE_LEN]
+            .try_into()
+            .expect("Half of hmac is guaranteed to be 32 bytes!");
+        let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
+        let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
+
+        // If the tweak is zero after reduction, the original value was likely >= ORDER.
+        // This is extremely unlikely but we check for BIP-32 compliance.
+        if tweak == <C::Scalar as Field>::ZERO {
+            // Check if the original bytes were all zeros (legitimate zero) vs >= ORDER
+            if tweak_bytes.iter().any(|&b| b != 0) {
+                return Err(ErrorDeriv::new(
+                    "Very improbable: Child index results in value not allowed by BIP-32!",
+                ));
+            }
         }
 
-        let tweak = Scalar::reduce(&number_for_tweak);
         let chain_code: ChainCode = hmac_bytes[CHAIN_CODE_LEN..]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
@@ -135,7 +155,7 @@ impl DerivData {
     /// Will return `Err` if the depth is already at the maximum value,
     /// if the child number is invalid or if `child_tweak` fails.
     /// It will also fail if the new public key is invalid (very unlikely).
-    pub fn derive_child(&self, child_number: u32) -> Result<DerivData, ErrorDeriv> {
+    pub fn derive_child(&self, child_number: u32) -> Result<DerivData<C>, ErrorDeriv> {
         if self.depth == MAX_DEPTH {
             return Err(ErrorDeriv::new("We are already at maximum depth!"));
         }
@@ -152,9 +172,11 @@ impl DerivData {
         // the resulting secret key also shifts by the same amount.
         // Note that the tweak depends only on public data.
         let new_poly_point = self.poly_point + tweak;
-        let new_pk = ((AffinePoint::GENERATOR * tweak) + self.pk).to_affine();
+        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let new_pk = ((generator * tweak) + self.pk).to_affine();
 
-        if new_pk == AffinePoint::IDENTITY {
+        let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+        if new_pk == identity {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
             ));
@@ -180,7 +202,7 @@ impl DerivData {
     /// # Errors
     ///
     /// Will return `Err` if the path is invalid or if `derive_child` fails.
-    pub fn derive_from_path(&self, path: &str) -> Result<DerivData, ErrorDeriv> {
+    pub fn derive_from_path(&self, path: &str) -> Result<DerivData<C>, ErrorDeriv> {
         let path_parsed = parse_path(path)?;
 
         let mut final_data = self.clone();
@@ -195,18 +217,24 @@ impl DerivData {
 // We implement the derivation functions for Party as well.
 
 /// Implementations related to BIP-32 derivation ([read more](self)).
-impl Party {
+impl<C: DklsCurve> Party<C> {
     /// Derives an instance of `Party` given a child number.
+    ///
+    /// The `address_fn` parameter computes the address from the derived public key.
     ///
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_child` fails.
-    pub fn derive_child(&self, child_number: u32) -> Result<Party, ErrorDeriv> {
+    pub fn derive_child(
+        &self,
+        child_number: u32,
+        address_fn: impl Fn(&C::AffinePoint) -> String,
+    ) -> Result<Party<C>, ErrorDeriv> {
         let new_derivation_data = self.derivation_data.derive_child(child_number)?;
 
         // We don't change information relating other parties,
         // we only update our key share, our public key and the address.
-        let new_address = compute_eth_address(&new_derivation_data.pk);
+        let new_address = address_fn(&new_derivation_data.pk);
 
         Ok(Party {
             parameters: self.parameters.clone(),
@@ -223,7 +251,7 @@ impl Party {
 
             derivation_data: new_derivation_data,
 
-            eth_address: new_address,
+            address: new_address,
         })
     }
 
@@ -237,12 +265,16 @@ impl Party {
     /// # Errors
     ///
     /// Will return `Err` if the `DerivData::derive_from_path` fails.
-    pub fn derive_from_path(&self, path: &str) -> Result<Party, ErrorDeriv> {
+    pub fn derive_from_path(
+        &self,
+        path: &str,
+        address_fn: impl Fn(&C::AffinePoint) -> String,
+    ) -> Result<Party<C>, ErrorDeriv> {
         let new_derivation_data = self.derivation_data.derive_from_path(path)?;
 
         // We don't change information relating other parties,
         // we only update our key share, our public key and the address.
-        let new_address = compute_eth_address(&new_derivation_data.pk);
+        let new_address = address_fn(&new_derivation_data.pk);
 
         Ok(Party {
             parameters: self.parameters.clone(),
@@ -259,13 +291,13 @@ impl Party {
 
             derivation_data: new_derivation_data,
 
-            eth_address: new_address,
+            address: new_address,
         })
     }
 }
 
 /// Implementations related to BIP-32 derivation for [`PublicKeyPackage`].
-impl PublicKeyPackage {
+impl<C: DklsCurve> PublicKeyPackage<C> {
     /// Derives a child [`PublicKeyPackage`] given a chain code and child number.
     ///
     /// # Errors
@@ -276,7 +308,7 @@ impl PublicKeyPackage {
         &self,
         chain_code: &ChainCode,
         child_number: u32,
-    ) -> Result<PublicKeyPackage, ErrorDeriv> {
+    ) -> Result<PublicKeyPackage<C>, ErrorDeriv> {
         if child_number > MAX_CHILD_NUMBER {
             return Err(ErrorDeriv::new(
                 "Child index should be between 0 and 2^31 - 1!",
@@ -284,24 +316,30 @@ impl PublicKeyPackage {
         }
 
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&chain_code[..]);
-        let pk_as_bytes = point_to_bytes(self.verifying_key());
+        let pk_as_bytes = point_to_bytes::<C>(self.verifying_key());
         hmac_engine.input(&pk_as_bytes);
         hmac_engine.input(&child_number.to_be_bytes());
         let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
         let hmac_bytes = hmac_result.to_byte_array();
 
-        let number_for_tweak = U256::from_be_slice(&hmac_bytes[..CHAIN_CODE_LEN]);
-        if number_for_tweak.ge(&Secp256k1::ORDER) {
+        let tweak_bytes: [u8; CHAIN_CODE_LEN] = hmac_bytes[..CHAIN_CODE_LEN]
+            .try_into()
+            .expect("Half of hmac is guaranteed to be 32 bytes!");
+        let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
+        let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
+
+        if tweak == <C::Scalar as Field>::ZERO && tweak_bytes.iter().any(|&b| b != 0) {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
             ));
         }
-        let tweak = Scalar::reduce(&number_for_tweak);
 
-        let tweak_point = AffinePoint::GENERATOR * tweak;
+        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let tweak_point = generator * tweak;
         let new_verifying_key = (tweak_point + *self.verifying_key()).to_affine();
 
-        if new_verifying_key == AffinePoint::IDENTITY {
+        let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+        if new_verifying_key == identity {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
             ));
@@ -360,6 +398,8 @@ mod tests {
 
     use super::*;
 
+    type TestCurve = k256::Secp256k1;
+
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
     use crate::protocols::{Parameters, PartyIndex};
@@ -367,10 +407,17 @@ mod tests {
     use crate::utilities::hashes::*;
 
     use crate::utilities::rng;
+    use elliptic_curve::CurveArithmetic;
     use hex;
+    use k256::elliptic_curve::ops::Reduce;
     use k256::elliptic_curve::Field;
+    use k256::{AffinePoint, Scalar, U256};
     use rand::RngExt;
     use std::collections::BTreeMap;
+
+    fn no_address(_pk: &<TestCurve as CurveArithmetic>::AffinePoint) -> String {
+        String::new()
+    }
 
     /// Tests if the method `derive_from_path` from [`DerivData`]
     /// works properly by checking its output against a known value.
@@ -391,7 +438,7 @@ mod tests {
                 .try_into()
                 .unwrap();
 
-        let data = DerivData {
+        let data = DerivData::<TestCurve> {
             depth: 0,
             child_number: 0,
             parent_fingerprint: [0u8; 4],
@@ -413,11 +460,11 @@ mod tests {
                 assert_eq!(child.child_number, 3);
                 assert_eq!(hex::encode(child.parent_fingerprint), "9502bb8b");
                 assert_eq!(
-                    hex::encode(scalar_to_bytes(&child.poly_point)),
+                    hex::encode(scalar_to_bytes::<TestCurve>(&child.poly_point)),
                     "bdebf4ed48fae0b5b3ed6671496f7e1d741996dbb30d79f990933892c8ed316a"
                 );
                 assert_eq!(
-                    hex::encode(point_to_bytes(&child.pk)),
+                    hex::encode(point_to_bytes::<TestCurve>(&child.pk)),
                     "037c892dca96d4c940aafb3a1e65f470e43fba57b3146efeb312c2a39a208fffaa"
                 );
                 assert_eq!(
@@ -443,15 +490,17 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         // DERIVATION
 
         let path = "m/0/1/2/3";
 
-        let mut derived_parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
+        let mut derived_parties: Vec<Party<TestCurve>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let result = parties[i as usize].derive_from_path(path);
+            let result = parties[i as usize].derive_from_path(path, no_address);
             match result {
                 Err(error) => {
                     panic!("Error for Party {}: {:?}", i, error.description);
@@ -492,8 +541,8 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>> =
             BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
@@ -525,10 +574,11 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -549,11 +599,12 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         // Use references to avoid cloning executing_parties
         for &party_index in &executing_parties {
-            let filtered_messages: Vec<TransmitPhase2to3> = transmit_2to3
+            let filtered_messages: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
                 .iter()
                 .flat_map(|(_, messages)| {
                     messages
@@ -568,7 +619,7 @@ mod tests {
 
         // Phase 3
         let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
-        let mut broadcast_3to4: Vec<Broadcast3to4> =
+        let mut broadcast_3to4: Vec<Broadcast3to4<TestCurve>> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
@@ -620,7 +671,8 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, pkg) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, pkg) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let chain_code = parties[0].derivation_data.chain_code;
         const TEST_CHILD_NUMBER: u32 = 42;
@@ -630,7 +682,7 @@ mod tests {
 
         // Derive each party individually and verify consistency.
         for party in &parties {
-            let derived_party = party.derive_child(child_number).unwrap();
+            let derived_party = party.derive_child(child_number, no_address).unwrap();
             assert_eq!(*derived_pkg.verifying_key(), derived_party.pk);
 
             let expected_share = (AffinePoint::GENERATOR * derived_party.poly_point).to_affine();
