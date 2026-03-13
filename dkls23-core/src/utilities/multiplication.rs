@@ -9,6 +9,7 @@
 
 use rustcrypto_ff::Field;
 use std::marker::PhantomData;
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::curve::DklsCurve;
@@ -639,8 +640,9 @@ impl<C: DklsCurve> MulReceiver<C> {
         // We transform r into a hash.
         let expected_verify_r: HashOutput = tagged_hash(TAG_MUL_VERIFY, &[session_id, &r_as_bytes]);
 
-        // We compare the values.
-        if data_received.verify_r != expected_verify_r {
+        // Constant-time comparison to prevent timing side-channels that
+        // could help an adversary forge valid consistency-check values.
+        if !bool::from(data_received.verify_r.ct_eq(&expected_verify_r)) {
             return Err(ErrorMul::new(
                 "Sender cheated in multiplication protocol: Consistency check failed!",
             ));

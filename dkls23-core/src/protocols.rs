@@ -33,6 +33,18 @@ impl fmt::Display for InvalidPartyIndex {
     }
 }
 
+/// Error returned when constructing [`Parameters`] with invalid values.
+#[derive(Debug, Clone)]
+pub struct InvalidParameters;
+
+impl fmt::Display for InvalidParameters {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "parameters must satisfy 1 < threshold <= share_count")
+    }
+}
+
+impl std::error::Error for InvalidParameters {}
+
 impl std::error::Error for InvalidPartyIndex {}
 
 /// Strongly-typed 1-based participant identifier.
@@ -82,6 +94,21 @@ impl fmt::Display for PartyIndex {
 pub struct Parameters {
     pub threshold: u8,   //t
     pub share_count: u8, //n
+}
+
+impl Parameters {
+    /// Creates validated parameters.
+    ///
+    /// Requires `1 < threshold <= share_count`.
+    pub fn new(threshold: u8, share_count: u8) -> Result<Self, InvalidParameters> {
+        if threshold < 2 || threshold > share_count {
+            return Err(InvalidParameters);
+        }
+        Ok(Self {
+            threshold,
+            share_count,
+        })
+    }
 }
 
 /// Represents a party after key generation ready to sign a message.
@@ -525,5 +552,21 @@ mod tests {
 
         let keys: Vec<u8> = map.keys().map(|k| k.as_u8()).collect();
         assert_eq!(keys, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn parameters_new_valid() {
+        assert!(Parameters::new(2, 3).is_ok());
+        assert!(Parameters::new(2, 2).is_ok());
+        assert!(Parameters::new(5, 10).is_ok());
+    }
+
+    #[test]
+    fn parameters_new_rejects_invalid() {
+        // threshold < 2
+        assert!(Parameters::new(0, 3).is_err());
+        assert!(Parameters::new(1, 3).is_err());
+        // threshold > share_count
+        assert!(Parameters::new(4, 3).is_err());
     }
 }

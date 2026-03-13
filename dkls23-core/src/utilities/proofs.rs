@@ -391,7 +391,9 @@ impl<C: DklsCurve> DLogProof<C> {
             let second_hash = &tagged_hash(TAG_DLOG_PROOF_FISCHLIN, &[session_id, &second_msg])
                 [0..(L / 4) as usize];
 
-            if *first_hash != *second_hash {
+            // Constant-time comparison to prevent timing side-channels
+            // from leaking information about the proof structure.
+            if !bool::from(first_hash.ct_eq(second_hash)) {
                 return false;
             }
 
@@ -713,17 +715,20 @@ impl<C: DklsCurve> EncProof<C> {
         // v = h*bit + g*scalar.
         // The other possible value for v will be used in a simulated proof.
         // See below for a better explanation.
+        //
+        // Both branches are computed unconditionally to avoid timing
+        // side-channels that could leak the OT choice bit.
         let base_h_proj = C::ProjectivePoint::from(*base_h);
+        let g_times_scalar = base_g * scalar;
+        let v_if_true = (g_times_scalar + base_h_proj).to_affine();
+        let v_if_false = g_times_scalar.to_affine();
+        let fake_v_if_true = v_if_true;
+        let fake_v_if_false = (g_times_scalar - base_h_proj).to_affine();
+
         let (v, fake_v) = if bit {
-            (
-                ((base_g * scalar) + base_h_proj).to_affine(),
-                ((base_g * scalar) + base_h_proj).to_affine(),
-            )
+            (v_if_true, fake_v_if_true)
         } else {
-            (
-                (base_g * scalar).to_affine(),
-                ((base_g * scalar) - base_h_proj).to_affine(),
-            )
+            (v_if_false, fake_v_if_false)
         };
 
         // STEP 1
