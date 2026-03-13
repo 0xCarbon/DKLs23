@@ -25,16 +25,18 @@
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
 
-use k256::ecdsa::RecoveryId;
-use k256::elliptic_curve::scalar::IsHigh;
-use k256::elliptic_curve::sec1::ToSec1Point;
-use k256::elliptic_curve::{bigint::Encoding, ops::Reduce, point::AffineCoordinates, Curve, Field};
-use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
+use elliptic_curve::ops::Reduce;
+use elliptic_curve::point::AffineCoordinates;
+use elliptic_curve::scalar::IsHigh;
+use rustcrypto_ff::{Field, PrimeField};
+use rustcrypto_group::prime::PrimeCurveAffine;
+use rustcrypto_group::Curve;
 use std::collections::{BTreeMap, BTreeSet};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use hex;
 
+use crate::curve::DklsCurve;
 use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 
 use crate::utilities::commits::{commit_point, verify_commitment_point};
@@ -44,7 +46,7 @@ use crate::utilities::ot::extension::OTEDataToSender;
 use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignData {
     pub sign_id: Vec<u8>,
@@ -59,38 +61,58 @@ pub struct SignData {
 /// Transmit - Signing.
 ///
 /// The message is produced/sent during Phase 1 and used in Phase 2.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
+    #[zeroize(skip)]
     pub mul_transmit: OTEDataToSender,
 }
 
 /// Transmit - Signing.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 3.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TransmitPhase2to3 {
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct TransmitPhase2to3<C: DklsCurve> {
     pub parties: PartiesMessage,
-    pub gamma_u: AffinePoint,
-    pub gamma_v: AffinePoint,
-    pub psi: Scalar,
-    pub public_share: AffinePoint,
-    pub instance_point: AffinePoint,
+    #[zeroize(skip)]
+    pub gamma_u: C::AffinePoint,
+    #[zeroize(skip)]
+    pub gamma_v: C::AffinePoint,
+    pub psi: C::Scalar,
+    #[zeroize(skip)]
+    pub public_share: C::AffinePoint,
+    #[zeroize(skip)]
+    pub instance_point: C::AffinePoint,
     pub salt: Vec<u8>,
-    pub mul_transmit: MulDataToReceiver,
+    #[zeroize(skip)]
+    pub mul_transmit: MulDataToReceiver<C>,
 }
 
 /// Broadcast - Signing.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Broadcast3to4 {
-    pub u: Scalar,
-    pub w: Scalar,
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct Broadcast3to4<C: DklsCurve> {
+    pub u: C::Scalar,
+    pub w: C::Scalar,
 }
 
 // STRUCTS FOR MESSAGES TO KEEP BETWEEN PHASES.
@@ -100,10 +122,17 @@ pub struct Broadcast3to4 {
 /// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct KeepPhase1to2 {
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub(crate) struct KeepPhase1to2<C: DklsCurve> {
     pub salt: Vec<u8>,
-    pub chi: Scalar,
-    pub mul_keep: MulDataToKeepReceiver,
+    pub chi: C::Scalar,
+    pub mul_keep: MulDataToKeepReceiver<C>,
 }
 
 /// Keep - Signing.
@@ -111,12 +140,19 @@ pub(crate) struct KeepPhase1to2 {
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct KeepPhase2to3 {
-    pub c_u: Scalar,
-    pub c_v: Scalar,
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub(crate) struct KeepPhase2to3<C: DklsCurve> {
+    pub c_u: C::Scalar,
+    pub c_v: C::Scalar,
     pub commitment: HashOutput,
-    pub mul_keep: MulDataToKeepReceiver,
-    pub chi: Scalar,
+    pub mul_keep: MulDataToKeepReceiver<C>,
+    pub chi: C::Scalar,
 }
 
 /// Unique keep - Signing.
@@ -124,12 +160,19 @@ pub(crate) struct KeepPhase2to3 {
 /// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct UniqueKeep1to2 {
-    pub instance_key: Scalar,
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub(crate) struct UniqueKeep1to2<C: DklsCurve> {
+    pub instance_key: C::Scalar,
     #[zeroize(skip)]
-    pub instance_point: AffinePoint,
-    pub inversion_mask: Scalar,
-    pub zeta: Scalar,
+    pub instance_point: C::AffinePoint,
+    pub inversion_mask: C::Scalar,
+    pub zeta: C::Scalar,
 }
 
 /// Unique keep - Signing.
@@ -137,14 +180,21 @@ pub(crate) struct UniqueKeep1to2 {
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct UniqueKeep2to3 {
-    pub instance_key: Scalar,
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub(crate) struct UniqueKeep2to3<C: DklsCurve> {
+    pub instance_key: C::Scalar,
     #[zeroize(skip)]
-    pub instance_point: AffinePoint,
-    pub inversion_mask: Scalar,
-    pub key_share: Scalar,
+    pub instance_point: C::AffinePoint,
+    pub inversion_mask: C::Scalar,
+    pub key_share: C::Scalar,
     #[zeroize(skip)]
-    pub public_share: AffinePoint,
+    pub public_share: C::AffinePoint,
 }
 
 // MessageTag implementations.
@@ -156,10 +206,18 @@ mod message_tags {
     impl MessageTag for TransmitPhase1to2 {
         const TAG: u8 = 0x10;
     }
-    impl MessageTag for TransmitPhase2to3 {
+    impl<C: DklsCurve> MessageTag for TransmitPhase2to3<C>
+    where
+        C::AffinePoint: serde::Serialize + serde::de::DeserializeOwned,
+        C::Scalar: serde::Serialize + serde::de::DeserializeOwned,
+    {
         const TAG: u8 = 0x11;
     }
-    impl MessageTag for Broadcast3to4 {
+    impl<C: DklsCurve> MessageTag for Broadcast3to4<C>
+    where
+        C::AffinePoint: serde::Serialize + serde::de::DeserializeOwned,
+        C::Scalar: serde::Serialize + serde::de::DeserializeOwned,
+    {
         const TAG: u8 = 0x12;
     }
 }
@@ -168,7 +226,7 @@ mod message_tags {
 // We now follow Protocol 3.6 of DKLs23.
 
 /// Implementations related to the `DKLs23` signing protocol ([read more](self)).
-impl Party {
+impl<C: DklsCurve> Party<C> {
     /// Phase 1 for signing: Steps 4, 5 and 6 from
     /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
     ///
@@ -186,8 +244,8 @@ impl Party {
         data: &SignData,
     ) -> Result<
         (
-            UniqueKeep1to2,
-            BTreeMap<PartyIndex, KeepPhase1to2>,
+            UniqueKeep1to2<C>,
+            BTreeMap<PartyIndex, KeepPhase1to2<C>>,
             Vec<TransmitPhase1to2>,
         ),
         Abort,
@@ -249,19 +307,20 @@ impl Party {
         }
 
         // Step 5 - Sample secret data.
-        let instance_key = Scalar::random(&mut rng::get_rng());
-        let inversion_mask = Scalar::random(&mut rng::get_rng());
+        let instance_key = C::Scalar::random(&mut rng::get_rng());
+        let inversion_mask = C::Scalar::random(&mut rng::get_rng());
 
-        let instance_point = (AffinePoint::GENERATOR * instance_key).to_affine();
+        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let instance_point = (generator * instance_key).to_affine();
 
         // Step 6 - Prepare the messages to keep and to send.
 
-        let mut keep: BTreeMap<PartyIndex, KeepPhase1to2> = BTreeMap::new();
+        let mut keep: BTreeMap<PartyIndex, KeepPhase1to2<C>> = BTreeMap::new();
         let mut transmit: Vec<TransmitPhase1to2> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for counterparty in &data.counterparties {
             // Commit functionality.
-            let (commitment, salt) = commit_point(&instance_point);
+            let (commitment, salt) = commit_point::<C>(&instance_point);
 
             // Two-party multiplication functionality.
             // We start as the receiver.
@@ -336,7 +395,9 @@ impl Party {
         ]
         .concat();
 
-        let zeta = self.zero_share.compute(&data.counterparties, &zero_sid);
+        let zeta = self
+            .zero_share
+            .compute::<C>(&data.counterparties, &zero_sid);
 
         // "Unique" because it is only one message referring to all counter parties.
         let unique_keep = UniqueKeep1to2 {
@@ -374,14 +435,14 @@ impl Party {
     pub(crate) fn sign_phase2(
         &self,
         data: &SignData,
-        unique_kept: &UniqueKeep1to2,
-        kept: &BTreeMap<PartyIndex, KeepPhase1to2>,
+        unique_kept: &UniqueKeep1to2<C>,
+        kept: &BTreeMap<PartyIndex, KeepPhase1to2<C>>,
         received: &[TransmitPhase1to2],
     ) -> Result<
         (
-            UniqueKeep2to3,
-            BTreeMap<PartyIndex, KeepPhase2to3>,
-            Vec<TransmitPhase2to3>,
+            UniqueKeep2to3<C>,
+            BTreeMap<PartyIndex, KeepPhase2to3<C>>,
+            Vec<TransmitPhase2to3<C>>,
         ),
         Abort,
     > {
@@ -391,14 +452,14 @@ impl Party {
 
         // We find the Lagrange coefficient associated to us.
         // It is the same as the one calculated during DKG.
-        let mut l_numerator = Scalar::ONE;
-        let mut l_denominator = Scalar::ONE;
+        let mut l_numerator = <C::Scalar as Field>::ONE;
+        let mut l_denominator = <C::Scalar as Field>::ONE;
         for counterparty in &data.counterparties {
-            l_numerator *= Scalar::from(u32::from(counterparty.as_u8()));
-            l_denominator *= Scalar::from(u32::from(counterparty.as_u8()))
-                - Scalar::from(u32::from(self.party_index.as_u8()));
+            l_numerator *= C::Scalar::from(u64::from(counterparty.as_u8()));
+            l_denominator *= C::Scalar::from(u64::from(counterparty.as_u8()))
+                - C::Scalar::from(u64::from(self.party_index.as_u8()));
         }
-        let l_denominator_inverse = match Option::<Scalar>::from(l_denominator.invert()) {
+        let l_denominator_inverse = match Option::<C::Scalar>::from(l_denominator.invert()) {
             Some(inv) => inv,
             None => {
                 return Err(Abort::recoverable(
@@ -411,14 +472,15 @@ impl Party {
 
         // These are sk_i and pk_i from the paper.
         let key_share = (self.poly_point * l) + unique_kept.zeta;
-        let public_share = (AffinePoint::GENERATOR * key_share).to_affine();
+        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let public_share = (generator * key_share).to_affine();
 
         // This is the input for the multiplication protocol.
         let input = vec![unique_kept.instance_key, key_share];
 
         // Now, we compute the variables related to each counter party.
-        let mut keep: BTreeMap<PartyIndex, KeepPhase2to3> = BTreeMap::new();
-        let mut transmit: Vec<TransmitPhase2to3> =
+        let mut keep: BTreeMap<PartyIndex, KeepPhase2to3<C>> = BTreeMap::new();
+        let mut transmit: Vec<TransmitPhase2to3<C>> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         if received.len() != data.counterparties.len() {
             return Err(Abort::recoverable(
@@ -488,9 +550,9 @@ impl Party {
             })?;
             let mul_result = mul_sender.run(&mul_sid, &input, &message.mul_transmit);
 
-            let c_u: Scalar;
-            let c_v: Scalar;
-            let mul_transmit: MulDataToReceiver;
+            let c_u: C::Scalar;
+            let c_v: C::Scalar;
+            let mul_transmit: MulDataToReceiver<C>;
             match mul_result {
                 Err(error) => {
                     return Err(Abort::ban(
@@ -510,8 +572,8 @@ impl Party {
             }
 
             // We compute the remaining values.
-            let gamma_u = (AffinePoint::GENERATOR * c_u).to_affine();
-            let gamma_v = (AffinePoint::GENERATOR * c_v).to_affine();
+            let gamma_u = (generator * c_u).to_affine();
+            let gamma_v = (generator * c_v).to_affine();
 
             let psi = unique_kept.inversion_mask - current_kept.chi;
 
@@ -581,10 +643,10 @@ impl Party {
     pub(crate) fn sign_phase3(
         &self,
         data: &SignData,
-        unique_kept: &UniqueKeep2to3,
-        kept: &BTreeMap<PartyIndex, KeepPhase2to3>,
-        received: &[TransmitPhase2to3],
-    ) -> Result<(String, Broadcast3to4), Abort> {
+        unique_kept: &UniqueKeep2to3<C>,
+        kept: &BTreeMap<PartyIndex, KeepPhase2to3<C>>,
+        received: &[TransmitPhase2to3<C>],
+    ) -> Result<(String, Broadcast3to4<C>), Abort> {
         // Steps 8 and 9
 
         // The following values will represent the sums calculated in this step.
@@ -593,8 +655,8 @@ impl Party {
 
         let mut first_sum_u_v = unique_kept.inversion_mask;
 
-        let mut second_sum_u = Scalar::ZERO;
-        let mut second_sum_v = Scalar::ZERO;
+        let mut second_sum_u = <C::Scalar as Field>::ZERO;
+        let mut second_sum_v = <C::Scalar as Field>::ZERO;
 
         if received.len() != data.counterparties.len() {
             return Err(Abort::recoverable(
@@ -626,7 +688,8 @@ impl Party {
                     },
                 ));
             }
-            if message.instance_point == AffinePoint::IDENTITY {
+            let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+            if message.instance_point == identity {
                 return Err(Abort::recoverable(
                     self.party_index,
                     AbortReason::TrivialInstancePoint { counterparty },
@@ -648,7 +711,7 @@ impl Party {
             })?;
 
             // Checking the committed value.
-            let verification = verify_commitment_point(
+            let verification = verify_commitment_point::<C>(
                 &message.instance_point,
                 &current_kept.commitment,
                 &message.salt,
@@ -684,8 +747,8 @@ impl Party {
             let mul_result =
                 mul_receiver.run_phase2(&mul_sid, &current_kept.mul_keep, &message.mul_transmit);
 
-            let d_u: Scalar;
-            let d_v: Scalar;
+            let d_u: C::Scalar;
+            let d_v: C::Scalar;
             match mul_result {
                 Err(error) => {
                     return Err(Abort::ban(
@@ -704,7 +767,7 @@ impl Party {
             }
 
             // First consistency checks.
-            let generator = AffinePoint::GENERATOR;
+            let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
 
             if (message.instance_point * current_kept.chi) != ((generator * d_u) + message.gamma_u)
             {
@@ -729,9 +792,10 @@ impl Party {
 
             // We add the current summand to our sums.
             expected_public_key =
-                (ProjectivePoint::from(expected_public_key) + message.public_share).to_affine();
-            total_instance_point =
-                (ProjectivePoint::from(total_instance_point) + message.instance_point).to_affine();
+                (C::ProjectivePoint::from(expected_public_key) + message.public_share).to_affine();
+            total_instance_point = (C::ProjectivePoint::from(total_instance_point)
+                + message.instance_point)
+                .to_affine();
 
             first_sum_u_v += &message.psi;
 
@@ -751,7 +815,7 @@ impl Party {
         // should not be the point at infinity (this is not specified on
         // DKLs23 but actually on ECDSA itself). In any case, the probability
         // of this happening is very low.
-        if total_instance_point == AffinePoint::IDENTITY {
+        if total_instance_point == <C::AffinePoint as PrimeCurveAffine>::identity() {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::PolynomialInconsistency,
@@ -764,9 +828,9 @@ impl Party {
 
         let x_coord = hex::encode(total_instance_point.x());
         // There is no salt because the hash function here is always the same.
-        let w = (Scalar::reduce(&U256::from_be_bytes(data.message_hash.into()))
-            * unique_kept.inversion_mask)
-            + (v * Scalar::reduce(&U256::from_be_hex(&x_coord)));
+        let msg_scalar = reduce_hash_bytes::<C>(&data.message_hash);
+        let rx_scalar = reduce_hex_bytes::<C>(&x_coord);
+        let w = (msg_scalar * unique_kept.inversion_mask) + (v * rx_scalar);
 
         let broadcast = Broadcast3to4 { u, w };
 
@@ -801,19 +865,19 @@ impl Party {
         &self,
         data: &SignData,
         x_coord: &str,
-        received: &[Broadcast3to4],
+        received: &[Broadcast3to4<C>],
         normalize: bool,
     ) -> Result<(String, u8), Abort> {
         // Step 10
 
-        let mut numerator = Scalar::ZERO;
-        let mut denominator = Scalar::ZERO;
+        let mut numerator = <C::Scalar as Field>::ZERO;
+        let mut denominator = <C::Scalar as Field>::ZERO;
         for message in received {
             numerator += &message.w;
             denominator += &message.u;
         }
 
-        let denominator_inverse = match Option::<Scalar>::from(denominator.invert()) {
+        let denominator_inverse = match Option::<C::Scalar>::from(denominator.invert()) {
             Some(inv) => inv,
             None => {
                 return Err(Abort::recoverable(
@@ -830,10 +894,11 @@ impl Party {
             s = -s;
         }
 
-        let signature = hex::encode(s.to_bytes());
+        let s_bytes: elliptic_curve::FieldBytes<C> = s.into();
+        let signature = hex::encode(&s_bytes);
 
         let verification =
-            verify_ecdsa_signature(&data.message_hash, &self.pk, x_coord, &signature);
+            verify_ecdsa_signature::<C>(&data.message_hash, &self.pk, x_coord, &signature);
         if !verification {
             return Err(Abort::recoverable(
                 self.party_index,
@@ -845,107 +910,131 @@ impl Party {
         // This is necessary because we need to check if y is even or odd to calculate the
         // recovery id. We compute R in the same way that we did in verify_ecdsa_signature:
         // R = (G * msg_hash + pk * r_x) / s
-        let x_as_int = match parse_u256_from_hex_32bytes(x_coord) {
-            Some(value) => value,
-            None => {
-                return Err(Abort::recoverable(
-                    self.party_index,
-                    AbortReason::InvalidXCoordinateHex,
-                ));
-            }
-        };
-        let rx_as_scalar = Scalar::reduce(&x_as_int);
-        let hashed_msg_as_scalar = Scalar::reduce(&U256::from_be_bytes(data.message_hash.into()));
-        let first = AffinePoint::GENERATOR * hashed_msg_as_scalar;
-        let second = self.pk * rx_as_scalar;
+        let rx_scalar = reduce_hex_bytes::<C>(x_coord);
+        let msg_scalar = reduce_hash_bytes::<C>(&data.message_hash);
+        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let first = generator * msg_scalar;
+        let second = self.pk * rx_scalar;
         let s_inverse = s.invert().unwrap();
         let signature_point = ((first + second) * s_inverse).to_affine();
 
-        // Now the recovery id can be calculated using the following conditions:
-        // - If R.y is even and R.x < n (curve order): recovery_id = 0
-        // - If R.y is odd  and R.x < n:               recovery_id = 1
-        // - If R.y is even and R.x >= n:               recovery_id = 2
-        // - If R.y is odd  and R.x >= n:               recovery_id = 3
+        // Compute recovery id from the signature point R.
         //
-        // is_x_reduced is true when R.x (as a field element) >= the curve order n,
-        // meaning Scalar::reduce(&R.x) lost information. For secp256k1, n < p, so
-        // this can happen in the range [n, p-1] with negligible probability.
-        let is_x_reduced = x_as_int >= Secp256k1::ORDER;
-        const SEC1_Y_COORD_LAST_BYTE_INDEX: usize = 31;
-        let is_y_odd =
-            signature_point.to_sec1_point(false).y().unwrap()[SEC1_Y_COORD_LAST_BYTE_INDEX] & 1
-                == 1;
-        let rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
+        // y-parity: determined from the compressed SEC1 prefix byte (0x02=even, 0x03=odd).
+        let compressed = rustcrypto_group::GroupEncoding::to_bytes(&signature_point);
+        let is_y_odd = compressed.as_ref()[0] == 0x03;
+
+        // is_x_reduced: true when R.x (as a field element) >= the curve order n,
+        // meaning Scalar::reduce(&R.x) lost information. This is negligibly rare
+        // but must be correct for downstream key-recovery flows.
+        let x_bytes_original = {
+            let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
+            hex::decode_to_slice(x_coord, &mut bytes).expect("valid hex");
+            bytes
+        };
+        let rx_repr = rx_scalar.to_repr();
+        let rx_repr_slice: &[u8] = rx_repr.as_ref();
+        let is_x_reduced = x_bytes_original.as_slice() != rx_repr_slice;
+
+        let rec_id = ecdsa::RecoveryId::new(is_y_odd, is_x_reduced);
 
         Ok((signature, rec_id.into()))
     }
 }
 
-/// Parses a 32-byte hex string (64 hex chars) as `U256`.
-fn parse_u256_from_hex_32bytes(hex_value: &str) -> Option<U256> {
-    const HASH_BYTES_LEN: usize = 32;
-    let mut bytes = [0u8; HASH_BYTES_LEN];
+/// Parses a hex string as a canonical scalar for curve `C` (value must be < curve order n).
+///
+/// Returns `None` if the hex string is invalid or represents a value >= n.
+/// This enforces strict ECDSA range requirements for signature verification.
+fn parse_hex_to_scalar<C: DklsCurve>(hex_value: &str) -> Option<C::Scalar> {
+    let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
         return None;
     }
-    Some(U256::from_be_bytes(bytes.into()))
+    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&bytes);
+    Option::from(<C::Scalar as PrimeField>::from_repr(field_bytes.clone()))
+}
+
+/// Reduces a 32-byte hash output into a scalar for curve `C`.
+fn reduce_hash_bytes<C: DklsCurve>(hash: &HashOutput) -> C::Scalar {
+    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(hash);
+    <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes)
+}
+
+/// Reduces a hex string into a scalar for curve `C`.
+fn reduce_hex_bytes<C: DklsCurve>(hex_value: &str) -> C::Scalar {
+    let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
+    hex::decode_to_slice(hex_value, &mut bytes).expect("valid hex");
+    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&bytes);
+    <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes)
 }
 
 /// Usual verifying function from ECDSA.
 ///
 /// It receives a message already in bytes.
 #[must_use]
-pub fn verify_ecdsa_signature(
+pub fn verify_ecdsa_signature<C: DklsCurve>(
     msg: &HashOutput,
-    pk: &AffinePoint,
+    pk: &C::AffinePoint,
     x_coord: &str,
     signature: &str,
 ) -> bool {
-    let rx_as_int = match parse_u256_from_hex_32bytes(x_coord) {
+    let rx_as_scalar = match parse_hex_to_scalar::<C>(x_coord) {
         Some(value) => value,
         None => return false,
     };
-    let s_as_int = match parse_u256_from_hex_32bytes(signature) {
+    let s_as_scalar = match parse_hex_to_scalar::<C>(signature) {
         Some(value) => value,
         None => return false,
     };
 
-    // Verify if the numbers are in the correct range.
-    if !(U256::ZERO < rx_as_int
-        && rx_as_int < Secp256k1::ORDER
-        && U256::ZERO < s_as_int
-        && s_as_int < Secp256k1::ORDER)
-    {
+    // Verify if the numbers are non-zero (valid ECDSA range check).
+    if rx_as_scalar == <C::Scalar as Field>::ZERO || s_as_scalar == <C::Scalar as Field>::ZERO {
         return false;
     }
 
-    let rx_as_scalar = Scalar::reduce(&rx_as_int);
-    let s_as_scalar = Scalar::reduce(&s_as_int);
+    let inverse_s = match Option::<C::Scalar>::from(s_as_scalar.invert()) {
+        Some(inv) => inv,
+        None => return false,
+    };
 
-    let inverse_s = s_as_scalar.invert().unwrap();
-
-    let first = Scalar::reduce(&U256::from_be_bytes((*msg).into())) * inverse_s;
+    let msg_scalar = reduce_hash_bytes::<C>(msg);
+    let first = msg_scalar * inverse_s;
     let second = rx_as_scalar * inverse_s;
 
-    let point_to_check = ((AffinePoint::GENERATOR * first) + (*pk * second)).to_affine();
-    if point_to_check == AffinePoint::IDENTITY {
+    let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+    let point_to_check = ((generator * first) + (*pk * second)).to_affine();
+    let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+    if point_to_check == identity {
         return false;
     }
 
-    let x_check = Scalar::reduce(&U256::from_be_slice(point_to_check.x().as_ref()));
+    let x_bytes = point_to_check.x();
+    let x_field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(x_bytes.as_ref());
+    let x_check = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(x_field_bytes);
 
     x_check == rx_as_scalar
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::protocols::dkg::*;
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
-    use crate::utilities::hashes::hash;
+    use crate::utilities::hashes::tagged_hash;
+    use ecdsa::RecoveryId;
+    use elliptic_curve::sec1::ToSec1Point;
+    use elliptic_curve::Curve as _;
+    use elliptic_curve::CurveArithmetic;
+    use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
     use rand::RngExt;
+
+    type TestCurve = k256::Secp256k1;
+
+    fn no_address(_pk: &<TestCurve as CurveArithmetic>::AffinePoint) -> String {
+        String::new()
+    }
 
     /// Tests if the signing protocol generates a valid ECDSA signature.
     ///
@@ -968,12 +1057,13 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         // SIGNING
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -998,8 +1088,8 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>> =
             BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
@@ -1027,10 +1117,11 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1051,10 +1142,11 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
-            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+            let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
                 .values()
                 .flatten()
                 .filter(|message| message.parties.receiver == party_index)
@@ -1066,7 +1158,7 @@ mod tests {
 
         // Phase 3
         let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
-        let mut broadcast_3to4: Vec<Broadcast3to4> =
+        let mut broadcast_3to4: Vec<Broadcast3to4<TestCurve>> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
@@ -1128,12 +1220,13 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1158,8 +1251,8 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>> =
             BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
@@ -1187,10 +1280,11 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1211,10 +1305,11 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
-            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+            let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
                 .values()
                 .flatten()
                 .filter(|message| message.parties.receiver == party_index)
@@ -1226,7 +1321,7 @@ mod tests {
 
         // Phase 3
         let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
-        let mut broadcast_3to4: Vec<Broadcast3to4> =
+        let mut broadcast_3to4: Vec<Broadcast3to4<TestCurve>> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
@@ -1286,11 +1381,11 @@ mod tests {
         assert_eq!(x_coord, expected_x_coord);
 
         // The hash of the message:
-        let hashed_message = Scalar::reduce(&U256::from_be_bytes(message_to_sign.into()));
+        let hashed_message = Scalar::reduce(&U256::from_be_slice(&message_to_sign));
         assert_eq!(
             hashed_message,
             Scalar::reduce(&U256::from_be_hex(
-                "ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d"
+                "c73f9dea26b12228c23b66686b090b61bd6a61a80c665e058320eb7c2433c9ac"
             ))
         );
 
@@ -1344,7 +1439,7 @@ mod tests {
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let out1 = phase1(&all_data[i as usize]);
+            let out1 = phase1::<TestCurve>(&all_data[i as usize]);
 
             dkg_1.push(out1);
         }
@@ -1363,7 +1458,7 @@ mod tests {
 
         // Phase 2
         let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<TestCurve>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_kept_2to3: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1414,9 +1509,9 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>> =
+        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> =
             BTreeMap::new();
@@ -1437,7 +1532,7 @@ mod tests {
         // Communication round 3
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             // We don't need to transmit the proofs because proofs_commitments is already what we need.
@@ -1456,7 +1551,7 @@ mod tests {
             }
             zero_received_3to4.push(new_row);
 
-            let mut new_row: Vec<TransmitInitMulPhase3to4> =
+            let mut new_row: Vec<TransmitInitMulPhase3to4<TestCurve>> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
@@ -1473,7 +1568,8 @@ mod tests {
         // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
-        let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
+        let mut parties: Vec<Party<TestCurve>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = phase4(
                 &all_data[i as usize],
@@ -1486,6 +1582,7 @@ mod tests {
                 &mul_received_3to4[i as usize],
                 &bip_broadcast_2to4,
                 &bip_broadcast_3to4,
+                no_address,
             );
             match result {
                 Err(abort) => {
@@ -1508,7 +1605,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1533,8 +1630,8 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>> =
             BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
@@ -1562,10 +1659,11 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1586,10 +1684,11 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
-            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+            let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
                 .values()
                 .flatten()
                 .filter(|message| message.parties.receiver == party_index)
@@ -1601,7 +1700,7 @@ mod tests {
 
         // Phase 3
         let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
-        let mut broadcast_3to4: Vec<Broadcast3to4> =
+        let mut broadcast_3to4: Vec<Broadcast3to4<TestCurve>> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
@@ -1654,14 +1753,15 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let data = SignData {
             sign_id: rng::get_rng()
                 .random::<[u8; crate::utilities::ID_LEN]>()
                 .to_vec(),
             counterparties: vec![PartyIndex::new(2).unwrap()],
-            message_hash: hash("Message to sign!".as_bytes(), &[]),
+            message_hash: tagged_hash(b"test-sign", &[b"Message to sign!"]),
         };
 
         let received = vec![Broadcast3to4 {
@@ -1677,12 +1777,15 @@ mod tests {
     /// Tests that malformed hex inputs are rejected without panicking.
     #[test]
     fn test_verify_ecdsa_signature_rejects_malformed_hex() {
-        let message = hash("Message to sign!".as_bytes(), &[]);
+        use k256::AffinePoint;
+        let message = tagged_hash(b"test-sign", &[b"Message to sign!"]);
         let pk = AffinePoint::GENERATOR;
 
-        assert!(!verify_ecdsa_signature(&message, &pk, "zz", "11"));
-        assert!(!verify_ecdsa_signature(&message, &pk, "", ""));
-        assert!(!verify_ecdsa_signature(
+        assert!(!verify_ecdsa_signature::<TestCurve>(
+            &message, &pk, "zz", "11"
+        ));
+        assert!(!verify_ecdsa_signature::<TestCurve>(&message, &pk, "", ""));
+        assert!(!verify_ecdsa_signature::<TestCurve>(
             &message,
             &pk,
             "010203",
@@ -1699,14 +1802,15 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let data = SignData {
             sign_id: rng::get_rng()
                 .random::<[u8; crate::utilities::ID_LEN]>()
                 .to_vec(),
             counterparties: vec![PartyIndex::new(2).unwrap(), PartyIndex::new(2).unwrap()],
-            message_hash: hash("Message to sign!".as_bytes(), &[]),
+            message_hash: tagged_hash(b"test-sign", &[b"Message to sign!"]),
         };
 
         let abort = parties[0]
@@ -1739,10 +1843,10 @@ mod tests {
 
     #[allow(clippy::type_complexity)]
     fn setup_two_party_signing_phase1() -> (
-        Vec<Party>,
+        Vec<Party<TestCurve>>,
         BTreeMap<PartyIndex, SignData>,
-        BTreeMap<PartyIndex, UniqueKeep1to2>,
-        BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>>,
+        BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>>,
+        BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>>,
         BTreeMap<PartyIndex, Vec<TransmitPhase1to2>>,
     ) {
         let parameters = Parameters {
@@ -1751,10 +1855,11 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
         all_data.insert(
@@ -1774,8 +1879,8 @@ mod tests {
             },
         );
 
-        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>> =
             BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
@@ -1815,20 +1920,21 @@ mod tests {
 
     #[allow(clippy::type_complexity)]
     fn run_two_party_phase2(
-        parties: &[Party],
+        parties: &[Party<TestCurve>],
         all_data: &BTreeMap<PartyIndex, SignData>,
-        unique_kept_1to2: &BTreeMap<PartyIndex, UniqueKeep1to2>,
-        kept_1to2: &BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>>,
+        unique_kept_1to2: &BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>>,
+        kept_1to2: &BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>>,
         received_1to2: &BTreeMap<PartyIndex, Vec<TransmitPhase1to2>>,
     ) -> (
-        BTreeMap<PartyIndex, UniqueKeep2to3>,
-        BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>>,
-        BTreeMap<PartyIndex, Vec<TransmitPhase2to3>>,
+        BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>>,
+        BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>>,
+        BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>>,
     ) {
-        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1848,9 +1954,10 @@ mod tests {
             }
         }
 
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
-            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+            let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
                 .values()
                 .flatten()
                 .filter(|message| message.parties.receiver == party_index)
@@ -1863,14 +1970,14 @@ mod tests {
     }
 
     fn run_two_party_phase3(
-        parties: &[Party],
+        parties: &[Party<TestCurve>],
         all_data: &BTreeMap<PartyIndex, SignData>,
-        unique_kept_2to3: &BTreeMap<PartyIndex, UniqueKeep2to3>,
-        kept_2to3: &BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>>,
-        received_2to3: &BTreeMap<PartyIndex, Vec<TransmitPhase2to3>>,
-    ) -> (String, Vec<Broadcast3to4>) {
+        unique_kept_2to3: &BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>>,
+        kept_2to3: &BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>>,
+        received_2to3: &BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>>,
+    ) -> (String, Vec<Broadcast3to4<TestCurve>>) {
         let mut x_coords: Vec<String> = Vec::with_capacity(2);
-        let mut broadcasts: Vec<Broadcast3to4> = Vec::with_capacity(2);
+        let mut broadcasts: Vec<Broadcast3to4<TestCurve>> = Vec::with_capacity(2);
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),

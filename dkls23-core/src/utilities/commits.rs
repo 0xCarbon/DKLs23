@@ -7,8 +7,9 @@
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, HashOutput};
 use crate::utilities::oracle_tags::TAG_COMMITMENT;
 use crate::utilities::rng;
-use k256::AffinePoint;
+use elliptic_curve::CurveArithmetic;
 use rand::RngExt;
+use rustcrypto_group::GroupEncoding;
 use subtle::ConstantTimeEq;
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)
@@ -46,8 +47,11 @@ pub fn verify_commitment(msg: &[u8], commitment: &HashOutput, salt: &[u8]) -> bo
 ///
 ///  This is the same as [`commit`], but it receives a point on the elliptic curve instead.
 #[must_use]
-pub fn commit_point(point: &AffinePoint) -> (HashOutput, Vec<u8>) {
-    let point_as_bytes = point_to_bytes(point);
+pub fn commit_point<C: CurveArithmetic>(point: &C::AffinePoint) -> (HashOutput, Vec<u8>)
+where
+    C::AffinePoint: GroupEncoding,
+{
+    let point_as_bytes = point_to_bytes::<C>(point);
     commit(&point_as_bytes)
 }
 
@@ -55,8 +59,15 @@ pub fn commit_point(point: &AffinePoint) -> (HashOutput, Vec<u8>) {
 ///
 /// This is the same as [`verify_commitment`], but it receives a point on the elliptic curve instead.
 #[must_use]
-pub fn verify_commitment_point(point: &AffinePoint, commitment: &HashOutput, salt: &[u8]) -> bool {
-    let point_as_bytes = point_to_bytes(point);
+pub fn verify_commitment_point<C: CurveArithmetic>(
+    point: &C::AffinePoint,
+    commitment: &HashOutput,
+    salt: &[u8],
+) -> bool
+where
+    C::AffinePoint: GroupEncoding,
+{
+    let point_as_bytes = point_to_bytes::<C>(point);
     verify_commitment(&point_as_bytes, commitment, salt)
 }
 

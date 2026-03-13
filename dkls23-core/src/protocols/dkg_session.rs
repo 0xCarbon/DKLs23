@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use k256::Scalar;
 use zeroize::Zeroize;
 
+use crate::curve::DklsCurve;
 use crate::protocols::dkg::{
     self, BroadcastDerivationPhase2to4, BroadcastDerivationPhase3to4, KeepInitMulPhase3to4,
     KeepInitZeroSharePhase2to3, KeepInitZeroSharePhase3to4, ProofCommitment, SessionData,
@@ -12,17 +12,17 @@ use crate::protocols::dkg::{
 };
 use crate::protocols::{Abort, AbortReason, Parameters, Party, PartyIndex, PublicKeyPackage};
 
-pub struct DkgSession {
+pub struct DkgSession<C: DklsCurve> {
     data: SessionData,
-    poly_point: Option<Scalar>,
-    proof_commitment: Option<ProofCommitment>,
+    poly_point: Option<C::Scalar>,
+    proof_commitment: Option<ProofCommitment<C>>,
     zero_kept_2to3: Option<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>>,
     bip_kept_2to3: Option<UniqueKeepDerivationPhase2to3>,
     zero_kept_3to4: Option<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>>,
-    mul_kept_3to4: Option<BTreeMap<PartyIndex, KeepInitMulPhase3to4>>,
+    mul_kept_3to4: Option<BTreeMap<PartyIndex, KeepInitMulPhase3to4<C>>>,
 }
 
-impl DkgSession {
+impl<C: DklsCurve> DkgSession<C> {
     #[must_use]
     pub fn new(parameters: Parameters, party_index: PartyIndex, session_id: Vec<u8>) -> Self {
         DkgSession {
@@ -41,16 +41,16 @@ impl DkgSession {
     }
 
     #[must_use]
-    pub fn phase1(&self) -> Vec<Scalar> {
-        dkg::phase1(&self.data)
+    pub fn phase1(&self) -> Vec<C::Scalar> {
+        dkg::phase1::<C>(&self.data)
     }
 
     pub fn phase2(
         &mut self,
-        poly_fragments: &[Scalar],
+        poly_fragments: &[C::Scalar],
     ) -> Result<
         (
-            ProofCommitment,
+            ProofCommitment<C>,
             Vec<TransmitInitZeroSharePhase2to4>,
             BroadcastDerivationPhase2to4,
         ),
@@ -66,7 +66,7 @@ impl DkgSession {
         }
 
         let (poly_point, proof_commitment, zero_keep, zero_transmit, bip_keep, bip_broadcast) =
-            dkg::phase2(&self.data, poly_fragments);
+            dkg::phase2::<C>(&self.data, poly_fragments);
 
         self.poly_point = Some(poly_point);
         self.proof_commitment = Some(proof_commitment.clone());
@@ -81,7 +81,7 @@ impl DkgSession {
     ) -> Result<
         (
             Vec<TransmitInitZeroSharePhase3to4>,
-            Vec<TransmitInitMulPhase3to4>,
+            Vec<TransmitInitMulPhase3to4<C>>,
             BroadcastDerivationPhase3to4,
         ),
         Abort,
@@ -104,7 +104,7 @@ impl DkgSession {
         })?;
 
         let (zero_keep_3to4, zero_transmit, mul_keep, mul_transmit, bip_broadcast) =
-            dkg::phase3(&self.data, zero_kept, bip_kept);
+            dkg::phase3::<C>(&self.data, zero_kept, bip_kept);
 
         if let Some(ref mut map) = self.zero_kept_2to3 {
             for v in map.values_mut() {
@@ -128,13 +128,14 @@ impl DkgSession {
 
     pub fn phase4(
         self,
-        proofs_commitments: &[ProofCommitment],
+        proofs_commitments: &[ProofCommitment<C>],
         zero_received_phase2: &[TransmitInitZeroSharePhase2to4],
         zero_received_phase3: &[TransmitInitZeroSharePhase3to4],
-        mul_received: &[TransmitInitMulPhase3to4],
+        mul_received: &[TransmitInitMulPhase3to4<C>],
         bip_received_phase2: &BTreeMap<PartyIndex, BroadcastDerivationPhase2to4>,
         bip_received_phase3: &BTreeMap<PartyIndex, BroadcastDerivationPhase3to4>,
-    ) -> Result<(Party, PublicKeyPackage), Abort> {
+        address_fn: impl Fn(&C::AffinePoint) -> String,
+    ) -> Result<(Party<C>, PublicKeyPackage<C>), Abort> {
         let poly_point = self.poly_point.as_ref().ok_or_else(|| {
             Abort::recoverable(
                 self.data.party_index,
@@ -160,7 +161,7 @@ impl DkgSession {
             )
         })?;
 
-        dkg::phase4(
+        dkg::phase4::<C>(
             &self.data,
             poly_point,
             proofs_commitments,
@@ -171,11 +172,12 @@ impl DkgSession {
             mul_received,
             bip_received_phase2,
             bip_received_phase3,
+            address_fn,
         )
     }
 }
 
-impl fmt::Debug for DkgSession {
+impl<C: DklsCurve> fmt::Debug for DkgSession<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let phase = if self.mul_kept_3to4.is_some() {
             "phase3 complete"
@@ -193,7 +195,7 @@ impl fmt::Debug for DkgSession {
     }
 }
 
-impl Zeroize for DkgSession {
+impl<C: DklsCurve> Zeroize for DkgSession<C> {
     fn zeroize(&mut self) {
         self.data.session_id.zeroize();
 
@@ -240,7 +242,7 @@ impl Zeroize for DkgSession {
     }
 }
 
-impl Drop for DkgSession {
+impl<C: DklsCurve> Drop for DkgSession<C> {
     fn drop(&mut self) {
         self.zeroize();
     }
@@ -251,6 +253,7 @@ mod tests {
     use super::*;
     use crate::protocols::AbortReason;
     use crate::utilities::rng;
+    use k256::Secp256k1;
     use rand::RngExt;
 
     const SESSION_ID_LEN: usize = 32;
@@ -269,7 +272,7 @@ mod tests {
         let n = parameters.share_count as usize;
 
         // Create sessions for each party.
-        let mut sessions: Vec<DkgSession> = (0..parameters.share_count)
+        let mut sessions: Vec<DkgSession<Secp256k1>> = (0..parameters.share_count)
             .map(|i| {
                 DkgSession::new(
                     parameters.clone(),
@@ -280,13 +283,13 @@ mod tests {
             .collect();
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(n);
+        let mut dkg_1: Vec<Vec<k256::Scalar>> = Vec::with_capacity(n);
         for session in &sessions {
             dkg_1.push(session.phase1());
         }
 
         // Communication round 1: transpose poly fragments.
-        let mut poly_fragments = vec![Vec::<Scalar>::with_capacity(n); n];
+        let mut poly_fragments = vec![Vec::<k256::Scalar>::with_capacity(n); n];
         for row in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row[j as usize]);
@@ -294,7 +297,7 @@ mod tests {
         }
 
         // Phase 2
-        let mut proofs_commitments: Vec<ProofCommitment> = Vec::with_capacity(n);
+        let mut proofs_commitments: Vec<ProofCommitment<Secp256k1>> = Vec::with_capacity(n);
         let mut zero_transmit_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> =
             Vec::with_capacity(n);
         let mut bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> =
@@ -328,7 +331,8 @@ mod tests {
         // Phase 3
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(n);
-        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(n);
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>> =
+            Vec::with_capacity(n);
         let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> =
             BTreeMap::new();
 
@@ -343,7 +347,8 @@ mod tests {
         // Communication round 3: route zero-share and mul messages.
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(n);
-        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> = Vec::with_capacity(n);
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>> =
+            Vec::with_capacity(n);
         for i in 1..=parameters.share_count {
             let pi = PartyIndex::new(i).unwrap();
             let mut zero_row = Vec::with_capacity(n - 1);
@@ -368,7 +373,7 @@ mod tests {
         }
 
         // Phase 4
-        let mut parties: Vec<Party> = Vec::with_capacity(n);
+        let mut parties: Vec<Party<Secp256k1>> = Vec::with_capacity(n);
         for (i, session) in sessions.into_iter().enumerate() {
             let (party, _pkg) = session
                 .phase4(
@@ -378,6 +383,7 @@ mod tests {
                     &mul_received_3to4[i],
                     &bip_broadcast_2to4,
                     &bip_broadcast_3to4,
+                    |_| String::new(),
                 )
                 .unwrap_or_else(|abort| {
                     panic!("Party {} aborted: {:?}", abort.index, abort.description())
@@ -403,7 +409,7 @@ mod tests {
         let pi = PartyIndex::new(1).unwrap();
 
         // phase3 before phase2
-        let mut session = DkgSession::new(parameters.clone(), pi, session_id.to_vec());
+        let mut session = DkgSession::<Secp256k1>::new(parameters.clone(), pi, session_id.to_vec());
         let result = session.phase3();
         assert!(result.is_err());
         assert!(matches!(
@@ -412,8 +418,16 @@ mod tests {
         ));
 
         // phase4 before phase2
-        let session = DkgSession::new(parameters.clone(), pi, session_id.to_vec());
-        let result = session.phase4(&[], &[], &[], &[], &BTreeMap::new(), &BTreeMap::new());
+        let session = DkgSession::<Secp256k1>::new(parameters.clone(), pi, session_id.to_vec());
+        let result = session.phase4(
+            &[],
+            &[],
+            &[],
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_| String::new(),
+        );
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err().reason,
@@ -421,10 +435,18 @@ mod tests {
         ));
 
         // phase4 after phase2 but before phase3
-        let mut session = DkgSession::new(parameters, pi, session_id.to_vec());
+        let mut session = DkgSession::<Secp256k1>::new(parameters, pi, session_id.to_vec());
         let fragments = session.phase1();
         session.phase2(&fragments).unwrap();
-        let result = session.phase4(&[], &[], &[], &[], &BTreeMap::new(), &BTreeMap::new());
+        let result = session.phase4(
+            &[],
+            &[],
+            &[],
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_| String::new(),
+        );
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err().reason,
@@ -441,7 +463,7 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let pi = PartyIndex::new(1).unwrap();
 
-        let mut session = DkgSession::new(parameters.clone(), pi, session_id.to_vec());
+        let mut session = DkgSession::<Secp256k1>::new(parameters.clone(), pi, session_id.to_vec());
 
         let fragments = session.phase1();
         session.phase2(&fragments).unwrap();

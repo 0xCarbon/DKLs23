@@ -8,15 +8,17 @@
 //! need any communication.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
-use k256::elliptic_curve::Field;
-use k256::{AffinePoint, Scalar};
+use rustcrypto_ff::Field;
+use rustcrypto_group::prime::PrimeCurveAffine;
+use rustcrypto_group::Curve;
 
+use crate::curve::DklsCurve;
 use crate::utilities::rng;
 use rand::RngExt;
 
 use crate::protocols::derivation::{ChainCode, DerivData};
-use crate::protocols::dkg::compute_eth_address;
 use crate::protocols::{Parameters, Party, PartyIndex, PublicKeyPackage};
 
 use crate::utilities::hashes::HashOutput;
@@ -35,22 +37,27 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 ///
 /// We also include an option to put a chain code if the original
 /// wallet followed BIP-32 for key derivation ([read more](super::derivation)).
+///
+/// The `address_fn` parameter computes a human-readable address
+/// from the public key (e.g. Ethereum address, NEO3 address, etc.).
 #[must_use]
-pub fn re_key(
+pub fn re_key<C: DklsCurve>(
     parameters: &Parameters,
     session_id: &[u8],
-    secret_key: &Scalar,
+    secret_key: &C::Scalar,
     option_chain_code: Option<ChainCode>,
-) -> (Vec<Party>, PublicKeyPackage) {
+    address_fn: impl Fn(&C::AffinePoint) -> String,
+) -> (Vec<Party<C>>, PublicKeyPackage<C>) {
     // Public key.
-    let pk = (AffinePoint::GENERATOR * secret_key).to_affine();
+    let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+    let pk = (generator * *secret_key).to_affine();
 
     // We will compute "poly_point" for each party with this polynomial
     // via Shamir's secret sharing.
-    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
+    let mut polynomial: Vec<C::Scalar> = Vec::with_capacity(parameters.threshold as usize);
     polynomial.push(*secret_key);
     for _ in 1..parameters.threshold {
-        polynomial.push(Scalar::random(&mut rng::get_rng()));
+        polynomial.push(C::Scalar::random(&mut rng::get_rng()));
     }
 
     // Zero shares.
@@ -108,9 +115,9 @@ pub fn re_key(
     // Two-party multiplication.
 
     // These will store the result of initialization for each party.
-    let mut all_mul_receivers: Vec<BTreeMap<PartyIndex, MulReceiver>> =
+    let mut all_mul_receivers: Vec<BTreeMap<PartyIndex, MulReceiver<C>>> =
         vec![BTreeMap::new(); parameters.share_count as usize];
-    let mut all_mul_senders: Vec<BTreeMap<PartyIndex, MulSender>> =
+    let mut all_mul_senders: Vec<BTreeMap<PartyIndex, MulSender<C>>> =
         vec![BTreeMap::new(); parameters.share_count as usize];
 
     for receiver in 1..=parameters.share_count {
@@ -148,21 +155,23 @@ pub fn re_key(
             let ote_sender = OTESender { correlation, seeds };
 
             // We sample the public gadget vector.
-            let mut public_gadget: Vec<Scalar> =
+            let mut public_gadget: Vec<C::Scalar> =
                 Vec::with_capacity(ot::extension::BATCH_SIZE as usize);
             for _ in 0..ot::extension::BATCH_SIZE {
-                public_gadget.push(Scalar::random(&mut rng::get_rng()));
+                public_gadget.push(C::Scalar::random(&mut rng::get_rng()));
             }
 
             // We finish the initialization.
             let mul_receiver = MulReceiver {
                 public_gadget: public_gadget.clone(),
                 ote_receiver,
+                _curve: PhantomData,
             };
 
             let mul_sender = MulSender {
                 public_gadget,
                 ote_sender,
+                _curve: PhantomData,
             };
 
             // We save the results.
@@ -181,14 +190,14 @@ pub fn re_key(
     };
 
     // We create the parties.
-    let mut parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
+    let mut parties: Vec<Party<C>> = Vec::with_capacity(parameters.share_count as usize);
     for index in 1..=parameters.share_count {
         // poly_point is polynomial evaluated at index.
-        let mut poly_point = Scalar::ZERO;
-        let mut power_of_index = Scalar::ONE;
+        let mut poly_point = <C::Scalar as Field>::ZERO;
+        let mut power_of_index = <C::Scalar as Field>::ONE;
         for i in 0..parameters.threshold {
             poly_point += polynomial[i as usize] * power_of_index;
-            power_of_index *= Scalar::from(u32::from(index));
+            power_of_index *= C::Scalar::from(u64::from(index));
         }
 
         // Remark: There is a very tiny probability that poly_point is trivial.
@@ -216,18 +225,13 @@ pub fn re_key(
             mul_senders: all_mul_senders[(index - 1) as usize].clone(),
             mul_receivers: all_mul_receivers[(index - 1) as usize].clone(),
             derivation_data,
-            eth_address: compute_eth_address(&pk),
+            address: address_fn(&pk),
         });
     }
 
-    let verifying_shares: BTreeMap<PartyIndex, AffinePoint> = parties
+    let verifying_shares: BTreeMap<PartyIndex, C::AffinePoint> = parties
         .iter()
-        .map(|p| {
-            (
-                p.party_index,
-                (AffinePoint::GENERATOR * p.poly_point).to_affine(),
-            )
-        })
+        .map(|p| (p.party_index, (generator * p.poly_point).to_affine()))
         .collect();
 
     let public_key_package = PublicKeyPackage::new(pk, verifying_shares, parameters.clone());

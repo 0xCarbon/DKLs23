@@ -4,12 +4,12 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - 'Cargo.toml'
+      - '**/Cargo.toml'
   pull_request:
     branches: [main, dev]
     types: [opened, reopened, synchronize]
     paths:
-      - 'Cargo.toml'
+      - '**/Cargo.toml'
 jobs:
   cargo-unmaintained:
     name: Run cargo unmaintained
@@ -34,7 +34,7 @@ jobs:
           FILTERED=$(echo "$OUTPUT" \
             | sed 's/\x1b\[[0-9;]*m//g' \
             | grep -v '^\s*$' \
-            | grep -vE '^(warning:|Scanning |\*)' \
+            | grep -vE '^(warning:|Error:|Scanning |\*)' \
             | grep -vE "^($(echo $EXCEPTIONS | tr ' ' '|'))\b" \
             || true)
           if [ -n "$FILTERED" ]; then

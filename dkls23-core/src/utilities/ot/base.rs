@@ -16,10 +16,12 @@
 //! several times. As this will be our case for the OT extension, there are
 //! "batch" variants for each of the phases.
 
-use k256::elliptic_curve::Field;
-use k256::{AffinePoint, ProjectivePoint, Scalar};
 use rand::RngExt;
+use rustcrypto_ff::Field;
+use rustcrypto_group::prime::PrimeCurveAffine;
+use rustcrypto_group::Curve as GroupCurve;
 
+use crate::curve::DklsCurve;
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
 use crate::utilities::oracle_tags::{TAG_OT_BASE_H, TAG_OT_BASE_MSG};
 use crate::utilities::ot::ErrorOT;
@@ -32,9 +34,16 @@ use crate::SECURITY;
 /// Sender's data and methods for the base OT protocol.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct OTSender {
-    pub s: Scalar,
-    pub proof: DLogProof,
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct OTSender<C: DklsCurve> {
+    pub s: C::Scalar,
+    pub proof: DLogProof<C>,
 }
 
 // RECEIVER DATA
@@ -49,21 +58,27 @@ pub struct OTReceiver {
     pub seed: Seed,
 }
 
-impl OTSender {
+impl<C: DklsCurve> OTSender<C> {
     // According to first paragraph on page 18,
     // the sender can reuse the secret s and the proof of discrete
     // logarithm. Thus, we isolate this part from the rest for efficiency.
 
     /// Initializes the protocol for a given session id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Fischlin proof-of-work search is exhausted, which is
+    /// astronomically unlikely with a correct RNG.
     #[must_use]
-    pub fn init(session_id: &[u8]) -> OTSender {
+    pub fn init(session_id: &[u8]) -> OTSender<C> {
         // We sample a nonzero random scalar.
-        let mut s = Scalar::ZERO;
-        while s == Scalar::ZERO {
-            s = Scalar::random(&mut rng::get_rng());
+        let mut s = <C::Scalar as Field>::ZERO;
+        while s == <C::Scalar as Field>::ZERO {
+            s = <C::Scalar as Field>::random(&mut rng::get_rng());
         }
 
-        let proof = DLogProof::prove(&s, session_id);
+        let proof = DLogProof::<C>::prove(&s, session_id)
+            .expect("Fischlin proof-of-work search exhausted — RNG failure");
 
         OTSender { s, proof }
     }
@@ -73,7 +88,7 @@ impl OTSender {
 
     /// Generates a proof to be sent to the receiver.
     #[must_use]
-    pub fn run_phase1(&self) -> DLogProof {
+    pub fn run_phase1(&self) -> DLogProof<C> {
         self.proof.clone()
     }
 
@@ -95,12 +110,12 @@ impl OTSender {
         &self,
         session_id: &[u8],
         seed: &Seed,
-        enc_proof: &EncProof,
+        enc_proof: &EncProof<C>,
     ) -> Result<(HashOutput, HashOutput), ErrorOT> {
         // We reconstruct h from the seed (as in the paper).
-        let h = (AffinePoint::GENERATOR
-            * tagged_hash_as_scalar(TAG_OT_BASE_H, &[session_id, seed]))
-        .to_affine();
+        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let h = (generator * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, seed]))
+            .to_affine();
 
         // We verify the proof.
         let verification = enc_proof.verify(session_id);
@@ -117,10 +132,11 @@ impl OTSender {
         let (_, v) = enc_proof.get_u_and_v();
 
         let value_for_m0 = (v * self.s).to_affine();
-        let value_for_m1 = ((ProjectivePoint::from(v) - h) * self.s).to_affine();
+        let value_for_m1 = (C::ProjectivePoint::from(v) - C::ProjectivePoint::from(h)).to_affine();
+        let value_for_m1 = (value_for_m1 * self.s).to_affine();
 
-        let value_for_m0_bytes = point_to_bytes(&value_for_m0);
-        let value_for_m1_bytes = point_to_bytes(&value_for_m1);
+        let value_for_m0_bytes = point_to_bytes::<C>(&value_for_m0);
+        let value_for_m1_bytes = point_to_bytes::<C>(&value_for_m1);
 
         let m0 = tagged_hash(TAG_OT_BASE_MSG, &[session_id, &value_for_m0_bytes]);
         let m1 = tagged_hash(TAG_OT_BASE_MSG, &[session_id, &value_for_m1_bytes]);
@@ -139,7 +155,7 @@ impl OTSender {
         &self,
         session_id: &[u8],
         seed: &Seed,
-        enc_proofs: &[EncProof],
+        enc_proofs: &[EncProof<C>],
     ) -> Result<(Vec<HashOutput>, Vec<HashOutput>), ErrorOT> {
         let batch_size = u16::try_from(enc_proofs.len())
             .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
@@ -178,17 +194,21 @@ impl OTReceiver {
     /// Given a choice bit, returns a secret scalar (to be kept)
     /// and an encryption proof (to be sent to the sender).
     #[must_use]
-    pub fn run_phase1(&self, session_id: &[u8], bit: bool) -> (Scalar, EncProof) {
+    pub fn run_phase1<C: DklsCurve>(
+        &self,
+        session_id: &[u8],
+        bit: bool,
+    ) -> (C::Scalar, EncProof<C>) {
         // We sample the secret scalar r.
-        let r = Scalar::random(&mut rng::get_rng());
+        let r = <C::Scalar as Field>::random(&mut rng::get_rng());
 
         // We compute h as in the paper.
-        let h = (AffinePoint::GENERATOR
-            * tagged_hash_as_scalar(TAG_OT_BASE_H, &[session_id, &self.seed]))
-        .to_affine();
+        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let h = (generator * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, &self.seed]))
+            .to_affine();
 
         // We prove our data.
-        let proof = EncProof::prove(session_id, &h, &r, bit);
+        let proof = EncProof::<C>::prove(session_id, &h, &r, bit);
 
         // r should be kept and proof should be sent.
         (r, proof)
@@ -201,21 +221,21 @@ impl OTReceiver {
     /// # Errors
     ///
     /// Will return `Err` if the batch size exceeds the maximum (65535).
-    pub fn run_phase1_batch(
+    pub fn run_phase1_batch<C: DklsCurve>(
         &self,
         session_id: &[u8],
         bits: &[bool],
-    ) -> Result<(Vec<Scalar>, Vec<EncProof>), ErrorOT> {
+    ) -> Result<(Vec<C::Scalar>, Vec<EncProof<C>>), ErrorOT> {
         let batch_size = u16::try_from(bits.len())
             .map_err(|_| ErrorOT::new("Batch size exceeds maximum (65535)"))?;
 
-        let mut vec_r: Vec<Scalar> = Vec::with_capacity(batch_size as usize);
-        let mut vec_proof: Vec<EncProof> = Vec::with_capacity(batch_size as usize);
+        let mut vec_r: Vec<C::Scalar> = Vec::with_capacity(batch_size as usize);
+        let mut vec_proof: Vec<EncProof<C>> = Vec::with_capacity(batch_size as usize);
         for i in 0..batch_size {
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
-            let (r, proof) = self.run_phase1(&current_sid, bits[i as usize]);
+            let (r, proof) = self.run_phase1::<C>(&current_sid, bits[i as usize]);
 
             vec_r.push(r);
             vec_proof.push(proof);
@@ -239,13 +259,13 @@ impl OTReceiver {
     /// # Errors
     ///
     /// Will return `Err` if the proof fails.
-    pub fn run_phase2_step1(
+    pub fn run_phase2_step1<C: DklsCurve>(
         &self,
         session_id: &[u8],
-        dlog_proof: &DLogProof,
-    ) -> Result<AffinePoint, ErrorOT> {
+        dlog_proof: &DLogProof<C>,
+    ) -> Result<C::AffinePoint, ErrorOT> {
         // Verification of the proof.
-        let verification = DLogProof::verify(dlog_proof, session_id);
+        let verification = DLogProof::<C>::verify(dlog_proof, session_id);
 
         if !verification {
             return Err(ErrorOT::new(
@@ -261,11 +281,16 @@ impl OTReceiver {
     /// With the secret value `r` from Phase 1 and with the point `z`
     /// from the previous step, the output message is computed.
     #[must_use]
-    pub fn run_phase2_step2(&self, session_id: &[u8], r: &Scalar, z: &AffinePoint) -> HashOutput {
+    pub fn run_phase2_step2<C: DklsCurve>(
+        &self,
+        session_id: &[u8],
+        r: &C::Scalar,
+        z: &C::AffinePoint,
+    ) -> HashOutput {
         // We compute the message.
 
         let value_for_mb = (*z * r).to_affine();
-        let value_for_mb_bytes = point_to_bytes(&value_for_mb);
+        let value_for_mb_bytes = point_to_bytes::<C>(&value_for_mb);
 
         // We could return the bit as in the paper, but the receiver has this information.
         tagged_hash(TAG_OT_BASE_MSG, &[session_id, &value_for_mb_bytes])
@@ -279,14 +304,14 @@ impl OTReceiver {
     /// # Errors
     ///
     /// Will return `Err` if one of the executions fails.
-    pub fn run_phase2_batch(
+    pub fn run_phase2_batch<C: DklsCurve>(
         &self,
         session_id: &[u8],
-        vec_r: &[Scalar],
-        dlog_proof: &DLogProof,
+        vec_r: &[C::Scalar],
+        dlog_proof: &DLogProof<C>,
     ) -> Result<Vec<HashOutput>, ErrorOT> {
         // Step 1
-        let z = self.run_phase2_step1(session_id, dlog_proof)?;
+        let z = self.run_phase2_step1::<C>(session_id, dlog_proof)?;
 
         // Step 2
         let batch_size = u16::try_from(vec_r.len())
@@ -297,7 +322,7 @@ impl OTReceiver {
             // We use different ids for different iterations.
             let current_sid = [&i.to_be_bytes(), session_id].concat();
 
-            let mb = self.run_phase2_step2(&current_sid, &vec_r[i as usize], &z);
+            let mb = self.run_phase2_step2::<C>(&current_sid, &vec_r[i as usize], &z);
 
             vec_mb.push(mb);
         }
@@ -309,19 +334,23 @@ impl OTReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use k256::Secp256k1;
+
+    type TestCurve = Secp256k1;
+    type Scalar = <TestCurve as elliptic_curve::CurveArithmetic>::Scalar;
 
     /// Ensures receiver rejects a tampered DLogProof from sender.
     #[test]
     fn test_ot_base_rejects_tampered_dlog_proof() {
         let session_id = rng::get_rng().random::<[u8; 32]>();
 
-        let sender = OTSender::init(&session_id);
+        let sender = OTSender::<TestCurve>::init(&session_id);
         let receiver = OTReceiver::init();
 
         let mut dlog_proof = sender.run_phase1();
         dlog_proof.proofs[0].challenge_response += Scalar::ONE;
 
-        let result = receiver.run_phase2_step1(&session_id, &dlog_proof);
+        let result = receiver.run_phase2_step1::<TestCurve>(&session_id, &dlog_proof);
         let error = result.expect_err("tampered DLogProof should be rejected");
         assert!(error
             .description
@@ -333,11 +362,11 @@ mod tests {
     fn test_ot_base_rejects_tampered_enc_proof() {
         let session_id = rng::get_rng().random::<[u8; 32]>();
 
-        let sender = OTSender::init(&session_id);
+        let sender = OTSender::<TestCurve>::init(&session_id);
         let receiver = OTReceiver::init();
 
         let bit = rng::get_rng().random();
-        let (_, mut enc_proof) = receiver.run_phase1(&session_id, bit);
+        let (_, mut enc_proof) = receiver.run_phase1::<TestCurve>(&session_id, bit);
         let seed = receiver.seed;
 
         enc_proof.challenge0 += Scalar::ONE;
@@ -356,7 +385,7 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Initialization
-        let sender = OTSender::init(&session_id);
+        let sender = OTSender::<TestCurve>::init(&session_id);
         let receiver = OTReceiver::init();
 
         // Phase 1 - Sender
@@ -364,7 +393,7 @@ mod tests {
 
         // Phase 1 - Receiver
         let bit = rng::get_rng().random();
-        let (r, enc_proof) = receiver.run_phase1(&session_id, bit);
+        let (r, enc_proof) = receiver.run_phase1::<TestCurve>(&session_id, bit);
 
         // Communication round - The parties exchange the proofs.
         // The receiver also sends his seed.
@@ -380,14 +409,14 @@ mod tests {
         let (m0, m1) = result_sender.unwrap();
 
         // Phase 2 - Receiver
-        let result_receiver = receiver.run_phase2_step1(&session_id, &dlog_proof);
+        let result_receiver = receiver.run_phase2_step1::<TestCurve>(&session_id, &dlog_proof);
 
         if let Err(error) = result_receiver {
             panic!("OT error: {:?}", error.description);
         }
 
         let z = result_receiver.unwrap();
-        let mb = receiver.run_phase2_step2(&session_id, &r, &z);
+        let mb = receiver.run_phase2_step2::<TestCurve>(&session_id, &r, &z);
 
         // Verification that the protocol did what it should do.
         // Depending on the choice the receiver made, he should receive one of the pads.
@@ -404,7 +433,7 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; 32]>();
 
         // Initialization (unique)
-        let sender = OTSender::init(&session_id);
+        let sender = OTSender::<TestCurve>::init(&session_id);
         let receiver = OTReceiver::init();
 
         let batch_size = 256;
@@ -418,7 +447,9 @@ mod tests {
             bits.push(rng::get_rng().random());
         }
 
-        let (vec_r, enc_proofs) = receiver.run_phase1_batch(&session_id, &bits).unwrap();
+        let (vec_r, enc_proofs) = receiver
+            .run_phase1_batch::<TestCurve>(&session_id, &bits)
+            .unwrap();
 
         // Communication round - The parties exchange the proofs.
         // The receiver also sends his seed.
@@ -434,7 +465,8 @@ mod tests {
         let (vec_m0, vec_m1) = result_sender.unwrap();
 
         // Phase 2 - Receiver
-        let result_receiver = receiver.run_phase2_batch(&session_id, &vec_r, &dlog_proof);
+        let result_receiver =
+            receiver.run_phase2_batch::<TestCurve>(&session_id, &vec_r, &dlog_proof);
 
         if let Err(error) = result_receiver {
             panic!("OT error: {:?}", error.description);

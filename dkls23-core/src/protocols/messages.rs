@@ -1,3 +1,4 @@
+use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -77,7 +78,16 @@ fn find_in_stream<T: MessageTag>(stream: &[u8]) -> Result<T, MessageError> {
             return Err(MessageError::InvalidFrame("truncated payload".into()));
         }
         if tag == T::TAG {
-            return bincode::deserialize(&stream[offset..offset + len])
+            // Limit deserialization to the actual payload size to prevent
+            // internal length-prefix attacks (e.g. a tiny frame claiming a
+            // multi-GB string). We cap at the payload length already validated
+            // by the frame header.
+            let payload = &stream[offset..offset + len];
+            return bincode::options()
+                .with_fixint_encoding()
+                .with_limit(len as u64)
+                .allow_trailing_bytes()
+                .deserialize(payload)
                 .map_err(|e| MessageError::Deserialization(e.to_string()));
         }
         offset += len;
@@ -324,6 +334,29 @@ mod tests {
         let result = input.get_broadcast::<MsgA>(1);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), MessageError::InvalidFrame(_)));
+    }
+
+    #[test]
+    fn test_large_u32_round_trip() {
+        // Use a value > 250 to distinguish varint from fixint encoding.
+        let msg = MsgA { value: 100_000 };
+        let mut output = PhaseOutput::new();
+        output.add_broadcast(&msg).unwrap();
+
+        let mut input = PhaseInput {
+            broadcasts: BTreeMap::new(),
+            p2p: BTreeMap::new(),
+        };
+        for blob in &output.broadcasts {
+            input
+                .broadcasts
+                .entry(1)
+                .or_default()
+                .extend_from_slice(blob);
+        }
+
+        let decoded: MsgA = input.get_broadcast(1).unwrap();
+        assert_eq!(decoded, msg);
     }
 
     #[test]

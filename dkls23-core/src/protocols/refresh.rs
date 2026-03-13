@@ -85,9 +85,9 @@
 
 use std::collections::BTreeMap;
 
-use k256::elliptic_curve::Field;
-use k256::{AffinePoint, Scalar};
+use rustcrypto_ff::Field;
 
+use crate::curve::DklsCurve;
 use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::oracle_tags::{TAG_REFRESH_FAST_B, TAG_REFRESH_FAST_R0, TAG_REFRESH_FAST_R1};
@@ -165,7 +165,7 @@ mod message_tags {
 }
 
 /// Implementations related to refresh protocols ([read more](self)).
-impl Party {
+impl<C: DklsCurve> Party<C> {
     // COMPLETE REFRESH
 
     /// Works as [Phase 1](super::dkg::phase1) in DKG, but with
@@ -173,18 +173,18 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_complete_phase1(&self) -> Vec<Scalar> {
+    pub fn refresh_complete_phase1(&self) -> Vec<C::Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let mut secret_polynomial: Vec<Scalar> =
+        let mut secret_polynomial: Vec<C::Scalar> =
             Vec::with_capacity(self.parameters.threshold as usize);
-        secret_polynomial.push(Scalar::ZERO);
+        secret_polynomial.push(C::Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
-            secret_polynomial.push(Scalar::random(&mut rng::get_rng()));
+            secret_polynomial.push(C::Scalar::random(&mut rng::get_rng()));
         }
 
-        step2(&self.parameters, &secret_polynomial)
+        step2::<C>(&self.parameters, &secret_polynomial)
     }
 
     /// Works as [Phase 2](super::dkg::phase2) in DKG, but the
@@ -197,10 +197,10 @@ impl Party {
     pub fn refresh_complete_phase2(
         &self,
         refresh_sid: &[u8],
-        poly_fragments: &[Scalar],
+        poly_fragments: &[C::Scalar],
     ) -> (
-        Scalar,
-        ProofCommitment,
+        C::Scalar,
+        ProofCommitment<C>,
         BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
         Vec<TransmitInitZeroSharePhase2to4>,
     ) {
@@ -210,7 +210,7 @@ impl Party {
 
         // DKG
         let (correction_value, proof_commitment) =
-            step3(self.party_index, refresh_sid, poly_fragments);
+            step3::<C>(self.party_index, refresh_sid, poly_fragments);
 
         // Initialization - Zero shares.
 
@@ -257,8 +257,8 @@ impl Party {
     ) -> (
         BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>,
         Vec<TransmitInitZeroSharePhase3to4>,
-        BTreeMap<PartyIndex, KeepInitMulPhase3to4>,
-        Vec<TransmitInitMulPhase3to4>,
+        BTreeMap<PartyIndex, KeepInitMulPhase3to4<C>>,
+        Vec<TransmitInitMulPhase3to4<C>>,
     ) {
         // We run Phase 3 in DKG, but we omit the derivation part.
 
@@ -289,8 +289,8 @@ impl Party {
         // Initialization - Two-party multiplication.
         // Each party prepares initialization both as
         // a receiver and as a sender.
-        let mut mul_keep: BTreeMap<PartyIndex, KeepInitMulPhase3to4> = BTreeMap::new();
-        let mut mul_transmit: Vec<TransmitInitMulPhase3to4> =
+        let mut mul_keep: BTreeMap<PartyIndex, KeepInitMulPhase3to4<C>> = BTreeMap::new();
+        let mut mul_transmit: Vec<TransmitInitMulPhase3to4<C>> =
             Vec::with_capacity((self.parameters.share_count - 1) as usize);
         for i in 1..=self.parameters.share_count {
             let i_idx = PartyIndex::new(i).unwrap();
@@ -311,7 +311,7 @@ impl Party {
             ]
             .concat();
 
-            let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&mul_sid_receiver);
+            let (ot_sender, dlog_proof, nonce) = MulReceiver::<C>::init_phase1(&mul_sid_receiver);
 
             // SENDER
             // We are the sender and i = receiver.
@@ -327,7 +327,7 @@ impl Party {
             .concat();
 
             let (ot_receiver, correlation, vec_r, enc_proofs) =
-                MulSender::init_phase1(&mul_sid_sender);
+                MulSender::<C>::init_phase1(&mul_sid_sender);
 
             // We gather these values.
 
@@ -380,21 +380,21 @@ impl Party {
     pub fn refresh_complete_phase4(
         &self,
         refresh_sid: &[u8],
-        correction_value: &Scalar,
-        proofs_commitments: &[ProofCommitment],
+        correction_value: &C::Scalar,
+        proofs_commitments: &[ProofCommitment<C>],
         zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>,
         zero_received_phase2: &[TransmitInitZeroSharePhase2to4],
         zero_received_phase3: &[TransmitInitZeroSharePhase3to4],
-        mul_kept: &BTreeMap<PartyIndex, KeepInitMulPhase3to4>,
-        mul_received: &[TransmitInitMulPhase3to4],
-    ) -> Result<Party, Abort> {
+        mul_kept: &BTreeMap<PartyIndex, KeepInitMulPhase3to4<C>>,
+        mul_received: &[TransmitInitMulPhase3to4<C>],
+    ) -> Result<Party<C>, Abort> {
         // We run Phase 4, but now we don't check if the resulting public key is zero.
         // Actually, we have to do the opposite: it must be the zero point!
         // After this, we use the values computed to update our values.
         // Again, the derivation part is omitted.
 
         // DKG
-        let (verifying_pk, _) = step5(
+        let (verifying_pk, _) = step5::<C>(
             &self.parameters,
             self.party_index,
             refresh_sid,
@@ -402,7 +402,8 @@ impl Party {
         )?;
 
         // The public key calculated above should be the zero point on the curve.
-        if verifying_pk != AffinePoint::IDENTITY {
+        if verifying_pk != <C::AffinePoint as rustcrypto_group::prime::PrimeCurveAffine>::identity()
+        {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::PolynomialInconsistency,
@@ -549,9 +550,9 @@ impl Party {
         let zero_share = ZeroShare::initialize(seeds);
 
         // Initialization - Two-party multiplication.
-        let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver> = BTreeMap::new();
-        let mut mul_senders: BTreeMap<PartyIndex, MulSender> = BTreeMap::new();
-        let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4> =
+        let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver<C>> = BTreeMap::new();
+        let mut mul_senders: BTreeMap<PartyIndex, MulSender<C>> = BTreeMap::new();
+        let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4<C>> =
             BTreeMap::new();
         for message in mul_received {
             if message.parties.receiver != self.party_index {
@@ -616,7 +617,7 @@ impl Party {
             ]
             .concat();
 
-            let receiver_result = MulReceiver::init_phase2(
+            let receiver_result = MulReceiver::<C>::init_phase2(
                 &message_kept.ot_sender,
                 &mul_sid_receiver,
                 &message_received.seed,
@@ -624,7 +625,7 @@ impl Party {
                 &message_kept.nonce,
             );
 
-            let mul_receiver: MulReceiver = match receiver_result {
+            let mul_receiver: MulReceiver<C> = match receiver_result {
                 Ok(r) => r,
                 Err(error) => {
                     // Complete refresh builds fresh OT from scratch (no reused COTe state),
@@ -652,7 +653,7 @@ impl Party {
             ]
             .concat();
 
-            let sender_result = MulSender::init_phase2(
+            let sender_result = MulSender::<C>::init_phase2(
                 &message_kept.ot_receiver,
                 &mul_sid_sender,
                 message_kept.correlation.clone(),
@@ -661,7 +662,7 @@ impl Party {
                 &message_received.nonce,
             );
 
-            let mul_sender: MulSender = match sender_result {
+            let mul_sender: MulSender<C> = match sender_result {
                 Ok(s) => s,
                 Err(error) => {
                     // Complete refresh builds fresh OT from scratch (no reused COTe state),
@@ -706,7 +707,7 @@ impl Party {
 
             derivation_data,
 
-            eth_address: self.eth_address.clone(),
+            address: self.address.clone(),
         };
 
         Ok(party)
@@ -719,18 +720,18 @@ impl Party {
     ///
     /// The output should be dealt in the same way.
     #[must_use]
-    pub fn refresh_phase1(&self) -> Vec<Scalar> {
+    pub fn refresh_phase1(&self) -> Vec<C::Scalar> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let mut secret_polynomial: Vec<Scalar> =
+        let mut secret_polynomial: Vec<C::Scalar> =
             Vec::with_capacity(self.parameters.threshold as usize);
-        secret_polynomial.push(Scalar::ZERO);
+        secret_polynomial.push(C::Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
-            secret_polynomial.push(Scalar::random(&mut rng::get_rng()));
+            secret_polynomial.push(C::Scalar::random(&mut rng::get_rng()));
         }
 
-        step2(&self.parameters, &secret_polynomial)
+        step2::<C>(&self.parameters, &secret_polynomial)
     }
 
     /// Works as [Phase 2](super::dkg::phase2) in DKG, but the
@@ -743,10 +744,10 @@ impl Party {
     pub fn refresh_phase2(
         &self,
         refresh_sid: &[u8],
-        poly_fragments: &[Scalar],
+        poly_fragments: &[C::Scalar],
     ) -> (
-        Scalar,
-        ProofCommitment,
+        C::Scalar,
+        ProofCommitment<C>,
         BTreeMap<PartyIndex, KeepRefreshPhase2to3>,
         Vec<TransmitRefreshPhase2to4>,
     ) {
@@ -756,7 +757,7 @@ impl Party {
 
         // DKG
         let (correction_value, proof_commitment) =
-            step3(self.party_index, refresh_sid, poly_fragments);
+            step3::<C>(self.party_index, refresh_sid, poly_fragments);
 
         // Initialization - Zero shares.
 
@@ -848,19 +849,19 @@ impl Party {
     pub fn refresh_phase4(
         &self,
         refresh_sid: &[u8],
-        correction_value: &Scalar,
-        proofs_commitments: &[ProofCommitment],
+        correction_value: &C::Scalar,
+        proofs_commitments: &[ProofCommitment<C>],
         kept: &BTreeMap<PartyIndex, KeepRefreshPhase3to4>,
         received_phase2: &[TransmitRefreshPhase2to4],
         received_phase3: &[TransmitRefreshPhase3to4],
-    ) -> Result<Party, Abort> {
+    ) -> Result<Party<C>, Abort> {
         // We run Phase 4, but now we don't check if the resulting public key is zero.
         // Actually, we have to do the opposite: it must be the zero point!
         // After this, we use the values computed to update our values.
         // Again, the derivation part is omitted.
 
         // DKG
-        let (verifying_pk, _) = step5(
+        let (verifying_pk, _) = step5::<C>(
             &self.parameters,
             self.party_index,
             refresh_sid,
@@ -868,7 +869,8 @@ impl Party {
         )?;
 
         // The public key calculated above should be the zero point on the curve.
-        if verifying_pk != AffinePoint::IDENTITY {
+        if verifying_pk != <C::AffinePoint as rustcrypto_group::prime::PrimeCurveAffine>::identity()
+        {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::PolynomialInconsistency,
@@ -1007,8 +1009,8 @@ impl Party {
 
         // Having the seeds, we can update the data for multiplication.
 
-        let mut mul_senders: BTreeMap<PartyIndex, MulSender> = BTreeMap::new();
-        let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver> = BTreeMap::new();
+        let mut mul_senders: BTreeMap<PartyIndex, MulSender<C>> = BTreeMap::new();
+        let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver<C>> = BTreeMap::new();
 
         for seed_pair in &seeds {
             // This is the same as running through the counterparties.
@@ -1126,6 +1128,7 @@ impl Party {
                 MulSender {
                     public_gadget: mul_sender.public_gadget.clone(),
                     ote_sender: new_ote_sender,
+                    _curve: core::marker::PhantomData,
                 },
             );
             mul_receivers.insert(
@@ -1133,6 +1136,7 @@ impl Party {
                 MulReceiver {
                     public_gadget: mul_receiver.public_gadget.clone(),
                     ote_receiver: new_ote_receiver,
+                    _curve: core::marker::PhantomData,
                 },
             );
         }
@@ -1166,7 +1170,7 @@ impl Party {
 
             derivation_data,
 
-            eth_address: self.eth_address.clone(),
+            address: self.address.clone(),
         };
 
         Ok(party)
@@ -1174,30 +1178,31 @@ impl Party {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
 
     use super::*;
 
+    use k256::Secp256k1;
+
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
     use crate::protocols::{AbortKind, AbortReason, Parameters};
-    use crate::utilities::hashes::hash;
+    use crate::utilities::hashes::tagged_hash;
 
     use rand::RngExt;
 
     const SESSION_ID_LEN: usize = 32;
 
     struct CompleteRefreshPhase4Inputs {
-        parties: Vec<Party>,
+        parties: Vec<Party<Secp256k1>>,
         refresh_sid: [u8; SESSION_ID_LEN],
-        correction_values: Vec<Scalar>,
-        proofs_commitments: Vec<ProofCommitment>,
+        correction_values: Vec<k256::Scalar>,
+        proofs_commitments: Vec<ProofCommitment<Secp256k1>>,
         zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>>,
         zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>>,
         zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>>,
-        mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>>,
-        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>>,
+        mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4<Secp256k1>>>,
+        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>>,
     }
 
     fn setup_two_party_complete_refresh_phase4_inputs() -> CompleteRefreshPhase4Inputs {
@@ -1206,22 +1211,25 @@ mod tests {
             share_count: 2,
         };
         let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
-        let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let secret_key = k256::Scalar::random(&mut rng::get_rng());
+        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        });
 
         let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+        let mut dkg_1: Vec<Vec<k256::Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             dkg_1.push(parties[i as usize].refresh_complete_phase1());
         }
 
         // Communication round 1
-        let mut poly_fragments = vec![
-            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
-            parameters.share_count as usize
-        ];
+        let mut poly_fragments =
+            vec![
+                Vec::<k256::Scalar>::with_capacity(parameters.share_count as usize);
+                parameters.share_count as usize
+            ];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row_i[j as usize]);
@@ -1229,9 +1237,9 @@ mod tests {
         }
 
         // Phase 2
-        let mut correction_values: Vec<Scalar> =
+        let mut correction_values: Vec<k256::Scalar> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<Secp256k1>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_kept_2to3: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1269,9 +1277,9 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>> =
+        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4<Secp256k1>>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4) = parties[i as usize]
@@ -1286,7 +1294,7 @@ mod tests {
         // Communication round 3
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             let i_idx = PartyIndex::new(i).unwrap();
@@ -1301,7 +1309,7 @@ mod tests {
             }
             zero_received_3to4.push(zero_row);
 
-            let mut mul_row: Vec<TransmitInitMulPhase3to4> =
+            let mut mul_row: Vec<TransmitInitMulPhase3to4<Secp256k1>> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
@@ -1342,7 +1350,7 @@ mod tests {
             !tampered.enc_proofs.is_empty(),
             "expected non-empty enc_proofs in complete refresh test setup"
         );
-        tampered.enc_proofs[0].challenge0 += Scalar::ONE;
+        tampered.enc_proofs[0].challenge0 += k256::Scalar::ONE;
 
         let result = data.parties[0].refresh_complete_phase4(
             &data.refresh_sid,
@@ -1377,7 +1385,7 @@ mod tests {
             !tampered.dlog_proof.proofs.is_empty(),
             "expected non-empty DLog proof vector in complete refresh test setup"
         );
-        tampered.dlog_proof.proofs[0].challenge_response += Scalar::ONE;
+        tampered.dlog_proof.proofs[0].challenge_response += k256::Scalar::ONE;
 
         let result = data.parties[0].refresh_complete_phase4(
             &data.refresh_sid,
@@ -1440,15 +1448,17 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
-        let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let secret_key = k256::Scalar::random(&mut rng::get_rng());
+        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        });
 
         // REFRESH (it follows test_dkg_initialization closely)
 
         let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+        let mut dkg_1: Vec<Vec<k256::Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let out1 = parties[i as usize].refresh_complete_phase1();
 
@@ -1457,10 +1467,11 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments = vec![
-            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
-            parameters.share_count as usize
-        ];
+        let mut poly_fragments =
+            vec![
+                Vec::<k256::Scalar>::with_capacity(parameters.share_count as usize);
+                parameters.share_count as usize
+            ];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row_i[j as usize]);
@@ -1468,9 +1479,9 @@ mod tests {
         }
 
         // Phase 2
-        let mut correction_values: Vec<Scalar> =
+        let mut correction_values: Vec<k256::Scalar> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<Secp256k1>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_kept_2to3: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1512,9 +1523,9 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>> =
+        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4<Secp256k1>>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4) = parties[i as usize]
@@ -1529,7 +1540,7 @@ mod tests {
         // Communication round 3
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             // We don't need to transmit the proofs because proofs_commitments is already what we need.
@@ -1548,7 +1559,7 @@ mod tests {
             }
             zero_received_3to4.push(new_row);
 
-            let mut new_row: Vec<TransmitInitMulPhase3to4> =
+            let mut new_row: Vec<TransmitInitMulPhase3to4<Secp256k1>> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
@@ -1562,7 +1573,8 @@ mod tests {
         }
 
         // Phase 4
-        let mut refreshed_parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
+        let mut refreshed_parties: Vec<Party<Secp256k1>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = parties[i as usize].refresh_complete_phase4(
                 &refresh_sid,
@@ -1589,7 +1601,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1614,8 +1626,8 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2<Secp256k1>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<Secp256k1>>> =
             BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
@@ -1642,10 +1654,11 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<Secp256k1>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<Secp256k1>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<Secp256k1>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1666,7 +1679,8 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<Secp256k1>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
             let filtered_messages: Vec<_> = transmit_2to3
@@ -1681,7 +1695,7 @@ mod tests {
 
         // Phase 3
         let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
-        let mut broadcast_3to4: Vec<Broadcast3to4> =
+        let mut broadcast_3to4: Vec<Broadcast3to4<Secp256k1>> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
@@ -1739,15 +1753,17 @@ mod tests {
 
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
-        let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key(&parameters, &session_id, &secret_key, None);
+        let secret_key = k256::Scalar::random(&mut rng::get_rng());
+        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        });
 
         // REFRESH (faster version)
 
         let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1
-        let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
+        let mut dkg_1: Vec<Vec<k256::Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let out1 = parties[i as usize].refresh_phase1();
 
@@ -1756,10 +1772,11 @@ mod tests {
 
         // Communication round 1 - Each party receives a fragment from each counterparty.
         // They also produce a fragment for themselves.
-        let mut poly_fragments = vec![
-            Vec::<Scalar>::with_capacity(parameters.share_count as usize);
-            parameters.share_count as usize
-        ];
+        let mut poly_fragments =
+            vec![
+                Vec::<k256::Scalar>::with_capacity(parameters.share_count as usize);
+                parameters.share_count as usize
+            ];
         for row_i in dkg_1 {
             for j in 0..parameters.share_count {
                 poly_fragments[j as usize].push(row_i[j as usize]);
@@ -1767,9 +1784,9 @@ mod tests {
         }
 
         // Phase 2
-        let mut correction_values: Vec<Scalar> =
+        let mut correction_values: Vec<k256::Scalar> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<Secp256k1>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut kept_2to3: Vec<BTreeMap<PartyIndex, KeepRefreshPhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1840,7 +1857,8 @@ mod tests {
         }
 
         // Phase 4
-        let mut refreshed_parties: Vec<Party> = Vec::with_capacity(parameters.share_count as usize);
+        let mut refreshed_parties: Vec<Party<Secp256k1>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = parties[i as usize].refresh_phase4(
                 &refresh_sid,
@@ -1865,7 +1883,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1890,8 +1908,8 @@ mod tests {
         }
 
         // Phase 1
-        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2> = BTreeMap::new();
-        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2>> =
+        let mut unique_kept_1to2: BTreeMap<PartyIndex, UniqueKeep1to2<Secp256k1>> = BTreeMap::new();
+        let mut kept_1to2: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<Secp256k1>>> =
             BTreeMap::new();
         let mut transmit_1to2: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
         for party_index in executing_parties.clone() {
@@ -1919,10 +1937,11 @@ mod tests {
         }
 
         // Phase 2
-        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3> = BTreeMap::new();
-        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3>> =
+        let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<Secp256k1>> = BTreeMap::new();
+        let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<Secp256k1>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<Secp256k1>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1943,10 +1962,11 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<Secp256k1>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
-            let messages_for_party: Vec<TransmitPhase2to3> = transmit_2to3
+            let messages_for_party: Vec<TransmitPhase2to3<Secp256k1>> = transmit_2to3
                 .values()
                 .flatten()
                 .filter(|message| message.parties.receiver == party_index)
@@ -1958,7 +1978,7 @@ mod tests {
 
         // Phase 3
         let mut x_coords: Vec<String> = Vec::with_capacity(parameters.threshold as usize);
-        let mut broadcast_3to4: Vec<Broadcast3to4> =
+        let mut broadcast_3to4: Vec<Broadcast3to4<Secp256k1>> =
             Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(

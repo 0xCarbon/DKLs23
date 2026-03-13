@@ -3,12 +3,12 @@
 //! Some structs appearing in most of the protocols are defined here.
 use std::collections::BTreeMap;
 use std::fmt;
+use std::marker::PhantomData;
 
-use k256::{AffinePoint, Scalar};
 use zeroize::Zeroize;
 
+use crate::curve::DklsCurve;
 use crate::protocols::derivation::DerivData;
-pub use crate::protocols::dkg::compute_eth_address;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::zero_shares::ZeroShare;
 
@@ -32,6 +32,18 @@ impl fmt::Display for InvalidPartyIndex {
         write!(f, "party index must be > 0")
     }
 }
+
+/// Error returned when constructing [`Parameters`] with invalid values.
+#[derive(Debug, Clone)]
+pub struct InvalidParameters;
+
+impl fmt::Display for InvalidParameters {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "parameters must satisfy 1 < threshold <= share_count")
+    }
+}
+
+impl std::error::Error for InvalidParameters {}
 
 impl std::error::Error for InvalidPartyIndex {}
 
@@ -84,35 +96,57 @@ pub struct Parameters {
     pub share_count: u8, //n
 }
 
+impl Parameters {
+    /// Creates validated parameters.
+    ///
+    /// Requires `1 < threshold <= share_count`.
+    pub fn new(threshold: u8, share_count: u8) -> Result<Self, InvalidParameters> {
+        if threshold < 2 || threshold > share_count {
+            return Err(InvalidParameters);
+        }
+        Ok(Self {
+            threshold,
+            share_count,
+        })
+    }
+}
+
 /// Represents a party after key generation ready to sign a message.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Party {
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct Party<C: DklsCurve> {
     pub parameters: Parameters,
     pub party_index: PartyIndex,
     pub session_id: Vec<u8>,
 
     /// Behaves as the secret key share.
-    pub poly_point: Scalar,
+    pub poly_point: C::Scalar,
     /// Public key.
-    pub pk: AffinePoint,
+    pub pk: C::AffinePoint,
 
     /// Used for computing shares of zero during signing.
     pub zero_share: ZeroShare,
 
     /// Initializations for two-party multiplication.
     /// The key in the `BTreeMap` represents the other party.
-    pub mul_senders: BTreeMap<PartyIndex, MulSender>,
-    pub mul_receivers: BTreeMap<PartyIndex, MulReceiver>,
+    pub mul_senders: BTreeMap<PartyIndex, MulSender<C>>,
+    pub mul_receivers: BTreeMap<PartyIndex, MulReceiver<C>>,
 
     /// Data for BIP-32 derivation.
-    pub derivation_data: DerivData,
+    pub derivation_data: DerivData<C>,
 
-    /// Ethereum address calculated from the public key.
-    pub eth_address: String,
+    /// Address calculated from the public key.
+    pub address: String,
 }
 
-impl Zeroize for Party {
+impl<C: DklsCurve> Zeroize for Party<C> {
     fn zeroize(&mut self) {
         // `parameters`, `party_index`, and `pk` are public values — not zeroized.
         self.session_id.zeroize();
@@ -128,11 +162,11 @@ impl Zeroize for Party {
         }
         self.mul_receivers.clear();
         self.derivation_data.zeroize();
-        self.eth_address.zeroize();
+        self.address.zeroize();
     }
 }
 
-impl Drop for Party {
+impl<C: DklsCurve> Drop for Party<C> {
     fn drop(&mut self) {
         self.zeroize();
     }
@@ -142,33 +176,43 @@ impl Drop for Party {
 /// and threshold parameters produced by DKG or re-key.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct PublicKeyPackage {
-    verifying_key: AffinePoint,
-    verifying_shares: BTreeMap<PartyIndex, AffinePoint>,
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct PublicKeyPackage<C: DklsCurve> {
+    verifying_key: C::AffinePoint,
+    verifying_shares: BTreeMap<PartyIndex, C::AffinePoint>,
     parameters: Parameters,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    _curve: PhantomData<C>,
 }
 
-impl PublicKeyPackage {
+impl<C: DklsCurve> PublicKeyPackage<C> {
     #[must_use]
     pub fn new(
-        verifying_key: AffinePoint,
-        verifying_shares: BTreeMap<PartyIndex, AffinePoint>,
+        verifying_key: C::AffinePoint,
+        verifying_shares: BTreeMap<PartyIndex, C::AffinePoint>,
         parameters: Parameters,
     ) -> Self {
         Self {
             verifying_key,
             verifying_shares,
             parameters,
+            _curve: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn verifying_key(&self) -> &AffinePoint {
+    pub fn verifying_key(&self) -> &C::AffinePoint {
         &self.verifying_key
     }
 
     #[must_use]
-    pub fn verifying_share(&self, party: PartyIndex) -> Option<&AffinePoint> {
+    pub fn verifying_share(&self, party: PartyIndex) -> Option<&C::AffinePoint> {
         self.verifying_shares.get(&party)
     }
 
@@ -183,12 +227,7 @@ impl PublicKeyPackage {
     }
 
     #[must_use]
-    pub fn ethereum_address(&self) -> String {
-        compute_eth_address(&self.verifying_key)
-    }
-
-    #[must_use]
-    pub fn verify_share(&self, party: PartyIndex, verification_share: &AffinePoint) -> bool {
+    pub fn verify_share(&self, party: PartyIndex, verification_share: &C::AffinePoint) -> bool {
         self.verifying_shares
             .get(&party)
             .is_some_and(|stored| stored == verification_share)
@@ -442,7 +481,7 @@ impl Abort {
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PartiesMessage {
     pub sender: PartyIndex,
@@ -512,5 +551,21 @@ mod tests {
 
         let keys: Vec<u8> = map.keys().map(|k| k.as_u8()).collect();
         assert_eq!(keys, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn parameters_new_valid() {
+        assert!(Parameters::new(2, 3).is_ok());
+        assert!(Parameters::new(2, 2).is_ok());
+        assert!(Parameters::new(5, 10).is_ok());
+    }
+
+    #[test]
+    fn parameters_new_rejects_invalid() {
+        // threshold < 2
+        assert!(Parameters::new(0, 3).is_err());
+        assert!(Parameters::new(1, 3).is_err());
+        // threshold > share_count
+        assert!(Parameters::new(4, 3).is_err());
     }
 }

@@ -36,14 +36,15 @@
 //! instead of taking a vector of k-tuples of correlations, we equivalently deal with
 //! k vectors of single correlations, where k is the OT width.
 
-use k256::Scalar;
 use rand::RngExt;
 #[cfg(feature = "serde")]
 use serde::de::Error;
 #[cfg(feature = "serde")]
 use serde::{Deserializer, Serializer};
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::curve::DklsCurve;
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
 use crate::utilities::hashes::{tagged_hash, tagged_hash_as_scalar, HashOutput};
@@ -154,7 +155,9 @@ impl OTESender {
     ///
     /// See [`OTReceiver`](super::base::OTReceiver) for an explanation of the outputs.
     #[must_use]
-    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<Scalar>, Vec<EncProof>) {
+    pub fn init_phase1<C: DklsCurve>(
+        session_id: &[u8],
+    ) -> (OTReceiver, Vec<bool>, Vec<C::Scalar>, Vec<EncProof<C>>) {
         let ot_receiver = OTReceiver::init();
 
         // The choice bits are sampled randomly.
@@ -165,7 +168,7 @@ impl OTESender {
 
         // KAPPA is a compile-time u16 constant, so this never fails.
         let (vec_r, enc_proofs) = ot_receiver
-            .run_phase1_batch(session_id, &correlation)
+            .run_phase1_batch::<C>(session_id, &correlation)
             .expect("KAPPA is a u16 constant and always fits");
 
         (ot_receiver, correlation, vec_r, enc_proofs)
@@ -180,15 +183,15 @@ impl OTESender {
     /// # Errors
     ///
     /// Will return `Err` if the base OT fails (see the file above).
-    pub fn init_phase2(
+    pub fn init_phase2<C: DklsCurve>(
         ot_receiver: &OTReceiver,
         session_id: &[u8],
         correlation: Vec<bool>,
-        vec_r: &[Scalar],
-        dlog_proof: &DLogProof,
+        vec_r: &[C::Scalar],
+        dlog_proof: &DLogProof<C>,
     ) -> Result<OTESender, ErrorOT> {
         // The outputs from the base OT become the sender's seeds.
-        let seeds = ot_receiver.run_phase2_batch(session_id, vec_r, dlog_proof)?;
+        let seeds = ot_receiver.run_phase2_batch::<C>(session_id, vec_r, dlog_proof)?;
 
         Ok(OTESender { correlation, seeds })
     }
@@ -216,13 +219,13 @@ impl OTESender {
     /// if the received data has incorrect dimensions, or if the consistency
     /// check using the receiver values fails.
     #[allow(clippy::type_complexity)]
-    pub fn run(
+    pub fn run<C: DklsCurve>(
         &self,
         session_id: &[u8],
         ot_width: u8,
-        input_correlations: &[Vec<Scalar>],
+        input_correlations: &[Vec<C::Scalar>],
         data: &OTEDataToSender,
-    ) -> Result<(Vec<Vec<Scalar>>, Vec<Vec<Scalar>>), ErrorOT> {
+    ) -> Result<(Vec<Vec<C::Scalar>>, Vec<Vec<C::Scalar>>), ErrorOT> {
         // The protocol will be executed ot_width times using different input correlations.
         if input_correlations.len() != ot_width as usize {
             return Err(ErrorOT::new(
@@ -351,8 +354,13 @@ impl OTESender {
             verify_sender.push(verify_sender_i);
         }
 
-        // The two values must agree.
-        if verify_q != verify_sender {
+        // The two values must agree (constant-time comparison to prevent
+        // timing side-channels that could help forge consistency-check values).
+        let consistent = verify_q
+            .iter()
+            .zip(verify_sender.iter())
+            .fold(subtle::Choice::from(1u8), |acc, (a, b)| acc & a.ct_eq(b));
+        if !bool::from(consistent) {
             return Err(ErrorOT::new(
                 "Receiver cheated in OTE: Consistency check failed!",
             ));
@@ -366,7 +374,7 @@ impl OTESender {
         // Step 2 - No action for the sender.
 
         // Step 3 - We compute the final messages. For the final part, it will be better
-        // if we compute them in the form Scalar<Secp256k1>.
+        // if we compute them in the form of scalars.
 
         // IMPORTANT: This step will generate the sender's output. In this implementation,
         // we are executing the protocol ot_width times and, ideally, each execution must
@@ -392,11 +400,11 @@ impl OTESender {
             );
         }
 
-        let mut vector_of_v0: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
-        let mut vector_of_v1: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        let mut vector_of_v0: Vec<Vec<C::Scalar>> = Vec::with_capacity(ot_width as usize);
+        let mut vector_of_v1: Vec<Vec<C::Scalar>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
-            let mut v0: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
-            let mut v1: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            let mut v0: Vec<C::Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            let mut v1: Vec<C::Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 // For v1, we compute transposed_q[j] ^ correlation.
                 let mut transposed_qj_plus_correlation = [0u8; (KAPPA / 8) as usize];
@@ -408,7 +416,7 @@ impl OTESender {
                 let j_bytes = j.to_be_bytes();
                 let iteration_bytes = iteration.to_be_bytes();
 
-                v0.push(tagged_hash_as_scalar(
+                v0.push(tagged_hash_as_scalar::<C>(
                     TAG_OTE_RANDOMIZE,
                     &[
                         session_id,
@@ -417,7 +425,7 @@ impl OTESender {
                         &transposed_q[j as usize],
                     ],
                 ));
-                v1.push(tagged_hash_as_scalar(
+                v1.push(tagged_hash_as_scalar::<C>(
                     TAG_OTE_RANDOMIZE,
                     &[
                         session_id,
@@ -441,14 +449,14 @@ impl OTESender {
 
         // Step 1 - We compute t_A and tau, as in the paper.
         // Note that t_A is just the message v0 we computed above.
-        let mut vector_of_tau: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        let mut vector_of_tau: Vec<Vec<C::Scalar>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
             // Retrieving the current values.
             let v0 = &vector_of_v0[iteration as usize];
             let v1 = &vector_of_v1[iteration as usize];
             let input_correlation = &input_correlations[iteration as usize];
 
-            let mut tau: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            let mut tau: Vec<C::Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 let tau_j = v1[j as usize] - v0[j as usize] + input_correlation[j as usize];
                 tau.push(tau_j);
@@ -481,8 +489,8 @@ impl OTEReceiver {
     ///
     /// See [`OTSender`](super::base::OTSender) for an explanation of the outputs.
     #[must_use]
-    pub fn init_phase1(session_id: &[u8]) -> (OTSender, DLogProof) {
-        let ot_sender = OTSender::init(session_id);
+    pub fn init_phase1<C: DklsCurve>(session_id: &[u8]) -> (OTSender<C>, DLogProof<C>) {
+        let ot_sender = OTSender::<C>::init(session_id);
 
         let dlog_proof = ot_sender.run_phase1();
 
@@ -498,11 +506,11 @@ impl OTEReceiver {
     /// # Errors
     ///
     /// Will return `Err` if the base OT fails (see the file above).
-    pub fn init_phase2(
-        ot_sender: &OTSender,
+    pub fn init_phase2<C: DklsCurve>(
+        ot_sender: &OTSender<C>,
         session_id: &[u8],
         seed: &Seed,
-        enc_proofs: &[EncProof],
+        enc_proofs: &[EncProof<C>],
     ) -> Result<OTEReceiver, ErrorOT> {
         // The outputs from the base OT become the receiver's seeds.
         let (seeds0, seeds1) = ot_sender.run_phase2_batch(session_id, seed, enc_proofs)?;
@@ -712,14 +720,14 @@ impl OTEReceiver {
     /// # Errors
     ///
     /// Will return `Err` if the dimensions of one of the input vectors are invalid.
-    pub fn run_phase2(
+    pub fn run_phase2<C: DklsCurve>(
         &self,
         session_id: &[u8],
         ot_width: u8,
         choice_bits: &[bool],
         extended_seeds: &[PRGOutput],
-        vector_of_tau: &[Vec<Scalar>],
-    ) -> Result<Vec<Vec<Scalar>>, ErrorOT> {
+        vector_of_tau: &[Vec<C::Scalar>],
+    ) -> Result<Vec<Vec<C::Scalar>>, ErrorOT> {
         // IMPORTANT: Since the sender executed its part with our data ot_width times,
         // our final result will be ot_width times the usual result we would get.
         // But first, we check that the sender gave us a message with the correct length.
@@ -748,16 +756,16 @@ impl OTEReceiver {
         let transposed_t = cut_and_transpose(extended_seeds)?;
 
         // Step 2 - We compute the final message. For the final part, it will be better
-        // if we compute it in the form Scalar<Secp256k1>.
+        // if we compute it in the form of a scalar.
 
         // As stated for the sender, we run this part ot_width times with varying salts.
-        let mut vector_of_v: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        let mut vector_of_v: Vec<Vec<C::Scalar>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
-            let mut v: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            let mut v: Vec<C::Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 let j_bytes = j.to_be_bytes();
                 let iteration_bytes = iteration.to_be_bytes();
-                v.push(tagged_hash_as_scalar(
+                v.push(tagged_hash_as_scalar::<C>(
                     TAG_OTE_RANDOMIZE,
                     &[
                         session_id,
@@ -783,15 +791,15 @@ impl OTEReceiver {
         // Step 1 - No action for the receiver.
 
         // Step 2 - We compute t_B as in the paper. We use the value tau sent by the sender.
-        let mut vector_of_t_b: Vec<Vec<Scalar>> = Vec::with_capacity(ot_width as usize);
+        let mut vector_of_t_b: Vec<Vec<C::Scalar>> = Vec::with_capacity(ot_width as usize);
         for iteration in 0..ot_width {
             // Retrieving the current values.
             let v = &vector_of_v[iteration as usize];
             let tau = &vector_of_tau[iteration as usize];
 
-            let mut t_b: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
+            let mut t_b: Vec<C::Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
-                let mut t_b_j = -&v[j as usize];
+                let mut t_b_j = -v[j as usize];
                 if choice_bits[j as usize] {
                     t_b_j = tau[j as usize] + t_b_j;
                 }
@@ -964,27 +972,34 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> Result<FieldElement, ErrorOT> {
 mod tests {
     use super::*;
     use crate::utilities::hashes::scalar_to_bytes;
-    use k256::elliptic_curve::Field;
+    use elliptic_curve::CurveArithmetic;
+    use k256::Secp256k1;
     use rand::RngExt;
+    use rustcrypto_ff::Field;
     use std::collections::HashSet;
+
+    type TestCurve = Secp256k1;
+    type Scalar = <TestCurve as CurveArithmetic>::Scalar;
 
     fn prepare_ote_sender_inputs(
         session_id: &[u8; crate::utilities::ID_LEN],
         ot_width: u8,
     ) -> (OTESender, Vec<Vec<Scalar>>, OTEDataToSender) {
         // INITIALIZATION
-        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(session_id);
-        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1(session_id);
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(session_id);
         let seed = ot_receiver.seed;
 
         let ote_receiver =
-            match OTEReceiver::init_phase2(&ot_sender, session_id, &seed, &enc_proofs) {
+            match OTEReceiver::init_phase2::<TestCurve>(&ot_sender, session_id, &seed, &enc_proofs)
+            {
                 Ok(r) => r,
                 Err(error) => {
                     panic!("OTE error: {:?}", error.description);
                 }
             };
-        let ote_sender = match OTESender::init_phase2(
+        let ote_sender = match OTESender::init_phase2::<TestCurve>(
             &ot_receiver,
             session_id,
             correlation,
@@ -1003,7 +1018,7 @@ mod tests {
             let mut current_input_correlation: Vec<Scalar> =
                 Vec::with_capacity(BATCH_SIZE as usize);
             for _ in 0..BATCH_SIZE {
-                current_input_correlation.push(Scalar::random(&mut rng::get_rng()));
+                current_input_correlation.push(<Scalar as Field>::random(&mut rng::get_rng()));
             }
             sender_input_correlations.push(current_input_correlation);
         }
@@ -1060,12 +1075,13 @@ mod tests {
     #[test]
     fn test_ot_extension_receiver_phase1_rejects_wrong_choice_bits_len() {
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
-        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
+        let (ot_sender, _) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
 
         let wrong_choice_bits = vec![false; (BATCH_SIZE as usize) - 1];
         let error = ote_receiver
@@ -1080,12 +1096,13 @@ mod tests {
     #[test]
     fn test_ot_extension_receiver_phase2_rejects_wrong_choice_bits_len() {
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
-        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
+        let (ot_sender, _) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
 
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
@@ -1096,9 +1113,9 @@ mod tests {
             .expect("OTE receiver phase1 should succeed");
 
         let wrong_choice_bits = vec![false; (BATCH_SIZE as usize) - 1];
-        let tau = vec![vec![Scalar::ZERO; BATCH_SIZE as usize]];
+        let tau = vec![vec![<Scalar as Field>::ZERO; BATCH_SIZE as usize]];
         let error = ote_receiver
-            .run_phase2(&session_id, 1, &wrong_choice_bits, &extended_seeds, &tau)
+            .run_phase2::<TestCurve>(&session_id, 1, &wrong_choice_bits, &extended_seeds, &tau)
             .expect_err("wrong choice-bit length should fail");
         assert!(error
             .description
@@ -1114,16 +1131,18 @@ mod tests {
         // INITIALIZATION
 
         // Phase 1 - Receiver
-        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(&session_id);
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
 
         // Phase 1 - Sender
-        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(&session_id);
 
         // Communication round (Exchange the proofs and the seed)
         let seed = ot_receiver.seed;
 
         // Phase 2 - Receiver
-        let result_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs);
+        let result_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs);
         let ote_receiver = match result_receiver {
             Ok(r) => r,
             Err(error) => {
@@ -1132,8 +1151,13 @@ mod tests {
         };
 
         // Phase 2 - Sender
-        let result_sender =
-            OTESender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof);
+        let result_sender = OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+        );
         let ote_sender = match result_sender {
             Ok(s) => s,
             Err(error) => {
@@ -1151,7 +1175,7 @@ mod tests {
             let mut current_input_correlation: Vec<Scalar> =
                 Vec::with_capacity(BATCH_SIZE as usize);
             for _ in 0..BATCH_SIZE {
-                current_input_correlation.push(Scalar::random(&mut rng::get_rng()));
+                current_input_correlation.push(<Scalar as Field>::random(&mut rng::get_rng()));
             }
             sender_input_correlations.push(current_input_correlation);
         }
@@ -1170,7 +1194,7 @@ mod tests {
         // Receiver keeps extended_seeds and transmits data_to_sender.
 
         // Unique phase - Sender
-        let sender_result = ote_sender.run(
+        let sender_result = ote_sender.run::<TestCurve>(
             &session_id,
             ot_width,
             &sender_input_correlations,
@@ -1192,7 +1216,7 @@ mod tests {
         // Sender transmits tau.
 
         // Phase 2 - Receiver
-        let receiver_result = ote_receiver.run_phase2(
+        let receiver_result = ote_receiver.run_phase2::<TestCurve>(
             &session_id,
             ot_width,
             &receiver_choice_bits,
@@ -1224,7 +1248,7 @@ mod tests {
                         sender_input_correlations[iteration as usize][i as usize]
                     );
                 } else {
-                    assert_eq!(sum, Scalar::ZERO);
+                    assert_eq!(sum, <Scalar as Field>::ZERO);
                 }
             }
 
@@ -1233,7 +1257,7 @@ mod tests {
                 sender_outputs[iteration as usize]
                     .clone()
                     .into_iter()
-                    .map(|x| scalar_to_bytes(&x))
+                    .map(|x| scalar_to_bytes::<TestCurve>(&x))
                     .collect::<Vec<Vec<u8>>>()
                     .concat(),
             );
@@ -1241,7 +1265,7 @@ mod tests {
                 receiver_outputs[iteration as usize]
                     .clone()
                     .into_iter()
-                    .map(|x| scalar_to_bytes(&x))
+                    .map(|x| scalar_to_bytes::<TestCurve>(&x))
                     .collect::<Vec<Vec<u8>>>()
                     .concat(),
             );
@@ -1276,22 +1300,29 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // INITIALIZATION
-        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1(&session_id);
-        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1(&session_id);
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
-        let ote_sender =
-            OTESender::init_phase2(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof)
-                .expect("OTE sender init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
+        let ote_sender = OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+        )
+        .expect("OTE sender init should succeed");
 
         // PROTOCOL
         let ot_width = 1;
         let mut sender_input_correlations: Vec<Vec<Scalar>> = Vec::with_capacity(1);
         let mut correlation_row: Vec<Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
-            correlation_row.push(Scalar::random(&mut rng::get_rng()));
+            correlation_row.push(<Scalar as Field>::random(&mut rng::get_rng()));
         }
         sender_input_correlations.push(correlation_row);
 
@@ -1306,7 +1337,7 @@ mod tests {
         let mut malformed = data_to_sender.clone();
         malformed.u.pop();
 
-        let result = ote_sender.run(
+        let result = ote_sender.run::<TestCurve>(
             &session_id,
             ot_width,
             &sender_input_correlations,
@@ -1322,12 +1353,13 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
 
         // INITIALIZATION
-        let (ot_sender, _) = OTEReceiver::init_phase1(&session_id);
-        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1(&session_id);
+        let (ot_sender, _) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
 
         // Phase 1 - Receiver
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
@@ -1339,8 +1371,8 @@ mod tests {
             .expect("OTE receiver phase1 should succeed");
 
         // Phase 2 - Receiver with malformed sender data.
-        let malformed_tau = vec![vec![Scalar::ZERO; (BATCH_SIZE as usize) - 1]];
-        let result = ote_receiver.run_phase2(
+        let malformed_tau = vec![vec![<Scalar as Field>::ZERO; (BATCH_SIZE as usize) - 1]];
+        let result = ote_receiver.run_phase2::<TestCurve>(
             &session_id,
             1,
             &receiver_choice_bits,
@@ -1361,7 +1393,7 @@ mod tests {
 
         data_to_sender.u[0][0] ^= 1;
 
-        let result = ote_sender.run(
+        let result = ote_sender.run::<TestCurve>(
             &session_id,
             ot_width,
             &sender_input_correlations,
@@ -1381,7 +1413,7 @@ mod tests {
 
         data_to_sender.verify_x[0] ^= 1;
 
-        let result = ote_sender.run(
+        let result = ote_sender.run::<TestCurve>(
             &session_id,
             ot_width,
             &sender_input_correlations,
@@ -1402,7 +1434,7 @@ mod tests {
 
         data_to_sender.verify_t[0][0] ^= 1;
 
-        let result = ote_sender.run(
+        let result = ote_sender.run::<TestCurve>(
             &session_id,
             ot_width,
             &sender_input_correlations,

@@ -50,12 +50,14 @@
 use std::collections::BTreeMap;
 
 use hex;
-use k256::elliptic_curve::Field;
-use k256::{elliptic_curve::sec1::ToSec1Point, AffinePoint, Scalar};
+use rustcrypto_ff::Field;
+use rustcrypto_group::prime::PrimeCurveAffine;
+use rustcrypto_group::Curve as GroupCurve;
 
 use rand::RngExt;
 use sha3::{Digest, Keccak256};
 
+use crate::curve::DklsCurve;
 use crate::protocols::derivation::{ChainCode, DerivData, CHAIN_CODE_LEN};
 use crate::protocols::{
     Abort, AbortReason, Parameters, PartiesMessage, Party, PartyIndex, PublicKeyPackage,
@@ -76,9 +78,16 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 /// The `proof` is broadcasted after Phase 3.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ProofCommitment {
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct ProofCommitment<C: DklsCurve> {
     pub index: PartyIndex,
-    pub proof: DLogProof,
+    pub proof: DLogProof<C>,
     pub commitment: HashOutput,
 }
 
@@ -140,13 +149,20 @@ pub struct KeepInitZeroSharePhase3to4 {
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TransmitInitMulPhase3to4 {
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct TransmitInitMulPhase3to4<C: DklsCurve> {
     pub parties: PartiesMessage,
 
-    pub dlog_proof: DLogProof,
-    pub nonce: Scalar,
+    pub dlog_proof: DLogProof<C>,
+    pub nonce: C::Scalar,
 
-    pub enc_proofs: Vec<EncProof>,
+    pub enc_proofs: Vec<EncProof<C>>,
     pub seed: ot::base::Seed,
 }
 
@@ -155,13 +171,20 @@ pub struct TransmitInitMulPhase3to4 {
 /// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct KeepInitMulPhase3to4 {
-    pub ot_sender: ot::base::OTSender,
-    pub nonce: Scalar,
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+pub struct KeepInitMulPhase3to4<C: DklsCurve> {
+    pub ot_sender: ot::base::OTSender<C>,
+    pub nonce: C::Scalar,
 
     pub ot_receiver: ot::base::OTReceiver,
     pub correlation: Vec<bool>,
-    pub vec_r: Vec<Scalar>,
+    pub vec_r: Vec<C::Scalar>,
 }
 
 // INITIALIZING KEY DERIVATION (VIA BIP-32).
@@ -203,7 +226,11 @@ mod message_tags {
     use super::*;
     use crate::protocols::messages::MessageTag;
 
-    impl MessageTag for ProofCommitment {
+    impl<C: DklsCurve> MessageTag for ProofCommitment<C>
+    where
+        C::AffinePoint: serde::Serialize + serde::de::DeserializeOwned,
+        C::Scalar: serde::Serialize + serde::de::DeserializeOwned,
+    {
         const TAG: u8 = 0x01;
     }
     impl MessageTag for TransmitInitZeroSharePhase2to4 {
@@ -212,7 +239,11 @@ mod message_tags {
     impl MessageTag for TransmitInitZeroSharePhase3to4 {
         const TAG: u8 = 0x03;
     }
-    impl MessageTag for TransmitInitMulPhase3to4 {
+    impl<C: DklsCurve> MessageTag for TransmitInitMulPhase3to4<C>
+    where
+        C::AffinePoint: serde::Serialize + serde::de::DeserializeOwned,
+        C::Scalar: serde::Serialize + serde::de::DeserializeOwned,
+    {
         const TAG: u8 = 0x04;
     }
     impl MessageTag for BroadcastDerivationPhase2to4 {
@@ -232,12 +263,12 @@ mod message_tags {
 ///
 /// This is Step 1 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
-pub(crate) fn step1(parameters: &Parameters) -> Vec<Scalar> {
+pub(crate) fn step1<C: DklsCurve>(parameters: &Parameters) -> Vec<C::Scalar> {
     // We represent the polynomial by its coefficients.
     let mut rng = rng::get_rng(); // Reuse RNG
-    let mut polynomial: Vec<Scalar> = Vec::with_capacity(parameters.threshold as usize);
+    let mut polynomial: Vec<C::Scalar> = Vec::with_capacity(parameters.threshold as usize);
     for _ in 0..parameters.threshold {
-        polynomial.push(Scalar::random(&mut rng)); // Pass the RNG explicitly
+        polynomial.push(<C::Scalar as Field>::random(&mut rng)); // Pass the RNG explicitly
     }
     polynomial
 }
@@ -252,12 +283,15 @@ pub(crate) fn step1(parameters: &Parameters) -> Vec<Scalar> {
 ///
 /// This is Step 2 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
-pub(crate) fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scalar> {
-    let mut points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
+pub(crate) fn step2<C: DklsCurve>(
+    parameters: &Parameters,
+    polynomial: &[C::Scalar],
+) -> Vec<C::Scalar> {
+    let mut points: Vec<C::Scalar> = Vec::with_capacity(parameters.share_count as usize);
     let last_index = (parameters.threshold - 1) as usize;
 
     for j in 1..=parameters.share_count {
-        let j_scalar = Scalar::from(u32::from(j)); // Direct conversion
+        let j_scalar = C::Scalar::from(u64::from(j));
 
         // Using Horner's method for polynomial evaluation
         let mut evaluation_at_j = polynomial[last_index];
@@ -284,15 +318,20 @@ pub(crate) fn step2(parameters: &Parameters, polynomial: &[Scalar]) -> Vec<Scala
 ///
 /// The Step 4 of the protocol is broadcasting the rest of [`ProofCommitment`] after
 /// having received all commitments.
+/// # Panics
+///
+/// Panics if the Fischlin proof-of-work search is exhausted, which is
+/// astronomically unlikely with a correct RNG.
 #[must_use]
-pub(crate) fn step3(
+pub(crate) fn step3<C: DklsCurve>(
     party_index: PartyIndex,
     session_id: &[u8],
-    poly_fragments: &[Scalar],
-) -> (Scalar, ProofCommitment) {
-    let poly_point: Scalar = poly_fragments.iter().sum();
+    poly_fragments: &[C::Scalar],
+) -> (C::Scalar, ProofCommitment<C>) {
+    let poly_point: C::Scalar = poly_fragments.iter().copied().sum();
 
-    let (proof, commitment) = DLogProof::prove_commit(&poly_point, session_id);
+    let (proof, commitment) = DLogProof::<C>::prove_commit(&poly_point, session_id)
+        .expect("Fischlin proof-of-work search exhausted — RNG failure");
     let proof_commitment = ProofCommitment {
         index: party_index,
         proof,
@@ -321,19 +360,19 @@ pub(crate) fn step3(
 ///
 /// Will panic if the list of indices in `proofs_commitments`
 /// are not the numbers from 1 to `parameters.share_count`.
-pub(crate) fn step5(
+pub(crate) fn step5<C: DklsCurve>(
     parameters: &Parameters,
     party_index: PartyIndex,
     session_id: &[u8],
-    proofs_commitments: &[ProofCommitment],
-) -> Result<(AffinePoint, BTreeMap<PartyIndex, AffinePoint>), Abort> {
-    let mut committed_points: BTreeMap<PartyIndex, AffinePoint> = BTreeMap::new(); //The "public key fragments"
+    proofs_commitments: &[ProofCommitment<C>],
+) -> Result<(C::AffinePoint, BTreeMap<PartyIndex, C::AffinePoint>), Abort> {
+    let mut committed_points: BTreeMap<PartyIndex, C::AffinePoint> = BTreeMap::new(); //The "public key fragments"
 
     // Verify the proofs and gather the committed points.
     for party_j in proofs_commitments {
         if party_j.index != party_index {
             let verification =
-                DLogProof::decommit_verify(&party_j.proof, &party_j.commitment, session_id);
+                DLogProof::<C>::decommit_verify(&party_j.proof, &party_j.commitment, session_id);
             if !verification {
                 return Err(Abort::recoverable(
                     party_index,
@@ -347,23 +386,24 @@ pub(crate) fn step5(
     }
 
     // Initializes what will be the public key.
-    let mut pk = AffinePoint::IDENTITY;
+    let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+    let mut pk = identity;
 
     // Verify that all points come from the same polynomial. To do so, for each contiguous set of parties,
     // perform Shamir reconstruction in the exponent and check if the results agree.
     // The common value calculated is the public key.
     for i in 1..=(parameters.share_count - parameters.threshold + 1) {
-        let mut current_pk = AffinePoint::IDENTITY;
+        let mut current_pk = identity;
         for j in i..(i + parameters.threshold) {
             // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
             // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polynomial from Step 3.
-            let j_scalar = Scalar::from(u32::from(j));
-            let mut lj_numerator = Scalar::ONE;
-            let mut lj_denominator = Scalar::ONE;
+            let j_scalar = C::Scalar::from(u64::from(j));
+            let mut lj_numerator = <C::Scalar as Field>::ONE;
+            let mut lj_denominator = <C::Scalar as Field>::ONE;
 
             for k in i..(i + parameters.threshold) {
                 if k != j {
-                    let k_scalar = Scalar::from(u32::from(k));
+                    let k_scalar = C::Scalar::from(u64::from(k));
                     lj_numerator *= k_scalar;
                     lj_denominator *= k_scalar - j_scalar;
                 }
@@ -415,11 +455,11 @@ pub(crate) fn step5(
 /// ATTENTION: In particular, we keep the coordinate corresponding
 /// to our party index for the next phase.
 #[must_use]
-pub(crate) fn phase1(data: &SessionData) -> Vec<Scalar> {
+pub(crate) fn phase1<C: DklsCurve>(data: &SessionData) -> Vec<C::Scalar> {
     // DKG
-    let secret_polynomial = step1(&data.parameters);
+    let secret_polynomial = step1::<C>(&data.parameters);
 
-    step2(&data.parameters, &secret_polynomial)
+    step2::<C>(&data.parameters, &secret_polynomial)
 }
 
 // Communication round 1
@@ -443,19 +483,20 @@ pub(crate) fn phase1(data: &SessionData) -> Vec<Scalar> {
 /// There is also some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
-pub(crate) fn phase2(
+pub(crate) fn phase2<C: DklsCurve>(
     data: &SessionData,
-    poly_fragments: &[Scalar],
+    poly_fragments: &[C::Scalar],
 ) -> (
-    Scalar,
-    ProofCommitment,
+    C::Scalar,
+    ProofCommitment<C>,
     BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
     Vec<TransmitInitZeroSharePhase2to4>,
     UniqueKeepDerivationPhase2to3,
     BroadcastDerivationPhase2to4,
 ) {
     // DKG
-    let (poly_point, proof_commitment) = step3(data.party_index, &data.session_id, poly_fragments);
+    let (poly_point, proof_commitment) =
+        step3::<C>(data.party_index, &data.session_id, poly_fragments);
 
     // Initialization - Zero shares.
 
@@ -528,15 +569,15 @@ pub(crate) fn phase2(
 /// conventions [here](self).
 #[must_use]
 #[allow(clippy::type_complexity)]
-pub(crate) fn phase3(
+pub(crate) fn phase3<C: DklsCurve>(
     data: &SessionData,
     zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
     bip_kept: &UniqueKeepDerivationPhase2to3,
 ) -> (
     BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>,
     Vec<TransmitInitZeroSharePhase3to4>,
-    BTreeMap<PartyIndex, KeepInitMulPhase3to4>,
-    Vec<TransmitInitMulPhase3to4>,
+    BTreeMap<PartyIndex, KeepInitMulPhase3to4<C>>,
+    Vec<TransmitInitMulPhase3to4<C>>,
     BroadcastDerivationPhase3to4,
 ) {
     // Initialization - Zero shares.
@@ -590,7 +631,7 @@ pub(crate) fn phase3(
         ]
         .concat();
 
-        let (ot_sender, dlog_proof, nonce) = MulReceiver::init_phase1(&mul_sid_receiver);
+        let (ot_sender, dlog_proof, nonce) = MulReceiver::<C>::init_phase1(&mul_sid_receiver);
 
         // SENDER
         // We are the sender and i = receiver.
@@ -605,7 +646,8 @@ pub(crate) fn phase3(
         ]
         .concat();
 
-        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::init_phase1(&mul_sid_sender);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            MulSender::<C>::init_phase1(&mul_sid_sender);
 
         // We gather these values.
 
@@ -695,20 +737,21 @@ pub(crate) fn phase3(
 /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
 /// with the party indices in the received vectors.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn phase4(
+pub(crate) fn phase4<C: DklsCurve>(
     data: &SessionData,
-    poly_point: &Scalar,
-    proofs_commitments: &[ProofCommitment],
+    poly_point: &C::Scalar,
+    proofs_commitments: &[ProofCommitment<C>],
     zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>,
     zero_received_phase2: &[TransmitInitZeroSharePhase2to4],
     zero_received_phase3: &[TransmitInitZeroSharePhase3to4],
-    mul_kept: &BTreeMap<PartyIndex, KeepInitMulPhase3to4>,
-    mul_received: &[TransmitInitMulPhase3to4],
+    mul_kept: &BTreeMap<PartyIndex, KeepInitMulPhase3to4<C>>,
+    mul_received: &[TransmitInitMulPhase3to4<C>],
     bip_received_phase2: &BTreeMap<PartyIndex, BroadcastDerivationPhase2to4>,
     bip_received_phase3: &BTreeMap<PartyIndex, BroadcastDerivationPhase3to4>,
-) -> Result<(Party, PublicKeyPackage), Abort> {
+    address_fn: impl Fn(&C::AffinePoint) -> String,
+) -> Result<(Party<C>, PublicKeyPackage<C>), Abort> {
     // DKG
-    let (pk, verifying_shares) = step5(
+    let (pk, verifying_shares) = step5::<C>(
         &data.parameters,
         data.party_index,
         &data.session_id,
@@ -719,7 +762,9 @@ pub(crate) fn phase4(
     // This is practically impossible, but easy to check.
     // We also verify that pk is not the generator point, because
     // otherwise it would be trivial to find the "total" secret key.
-    if pk == AffinePoint::IDENTITY || pk == AffinePoint::GENERATOR {
+    let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+    let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+    if pk == identity || pk == generator {
         return Err(Abort::recoverable(
             data.party_index,
             AbortReason::TrivialPublicKey,
@@ -729,7 +774,7 @@ pub(crate) fn phase4(
     // Our key share (that is, poly_point), should not be trivial.
     // Note that the other parties can deduce the triviality from
     // the corresponding proof in proofs_commitments.
-    if *poly_point == Scalar::ZERO || *poly_point == Scalar::ONE {
+    if *poly_point == <C::Scalar as Field>::ZERO || *poly_point == <C::Scalar as Field>::ONE {
         return Err(Abort::recoverable(
             data.party_index,
             AbortReason::TrivialKeyShare,
@@ -872,9 +917,9 @@ pub(crate) fn phase4(
     let zero_share = ZeroShare::initialize(seeds);
 
     // Initialization - Two-party multiplication.
-    let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver> = BTreeMap::new();
-    let mut mul_senders: BTreeMap<PartyIndex, MulSender> = BTreeMap::new();
-    let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4> =
+    let mut mul_receivers: BTreeMap<PartyIndex, MulReceiver<C>> = BTreeMap::new();
+    let mut mul_senders: BTreeMap<PartyIndex, MulSender<C>> = BTreeMap::new();
+    let mut mul_received_by_sender: BTreeMap<PartyIndex, &TransmitInitMulPhase3to4<C>> =
         BTreeMap::new();
     for message in mul_received {
         if message.parties.receiver != data.party_index {
@@ -939,7 +984,7 @@ pub(crate) fn phase4(
         ]
         .concat();
 
-        let receiver_result = MulReceiver::init_phase2(
+        let receiver_result = MulReceiver::<C>::init_phase2(
             &message_kept.ot_sender,
             &mul_sid_receiver,
             &message_received.seed,
@@ -947,7 +992,7 @@ pub(crate) fn phase4(
             &message_kept.nonce,
         );
 
-        let mul_receiver: MulReceiver = match receiver_result {
+        let mul_receiver: MulReceiver<C> = match receiver_result {
             Ok(r) => r,
             Err(error) => {
                 // In DKG this failed run does not produce reusable OT state,
@@ -975,7 +1020,7 @@ pub(crate) fn phase4(
         ]
         .concat();
 
-        let sender_result = MulSender::init_phase2(
+        let sender_result = MulSender::<C>::init_phase2(
             &message_kept.ot_receiver,
             &mul_sid_sender,
             message_kept.correlation.clone(),
@@ -984,7 +1029,7 @@ pub(crate) fn phase4(
             &message_received.nonce,
         );
 
-        let mul_sender: MulSender = match sender_result {
+        let mul_sender: MulSender<C> = match sender_result {
             Ok(s) => s,
             Err(error) => {
                 // In DKG this failed run does not produce reusable OT state,
@@ -1053,7 +1098,7 @@ pub(crate) fn phase4(
         chain_code,
     };
 
-    let eth_address = compute_eth_address(&pk); // We compute the Ethereum address.
+    let address = address_fn(&pk);
 
     let party = Party {
         parameters: data.parameters.clone(),
@@ -1070,7 +1115,7 @@ pub(crate) fn phase4(
 
         derivation_data,
 
-        eth_address,
+        address,
     };
 
     let public_key_package = PublicKeyPackage::new(pk, verifying_shares, data.parameters.clone());
@@ -1078,9 +1123,13 @@ pub(crate) fn phase4(
     Ok((party, public_key_package))
 }
 
-/// Computes the Ethereum address given a public key.
+/// Computes the Ethereum address given a secp256k1 public key.
+///
+/// This function is specific to secp256k1/Ethereum and will be moved
+/// to the `dkls23-secp256k1` crate in a future release.
 #[must_use]
-pub fn compute_eth_address(pk: &AffinePoint) -> String {
+pub fn compute_eth_address(pk: &k256::AffinePoint) -> String {
+    use elliptic_curve::sec1::ToSec1Point;
     // Serialize the public key in uncompressed form
     let uncompressed_pk = pk.to_sec1_point(false);
 
@@ -1119,19 +1168,26 @@ pub fn compute_eth_address(pk: &AffinePoint) -> String {
 mod tests {
 
     use super::*;
+    use elliptic_curve::CurveArithmetic;
     use k256::elliptic_curve::ops::Reduce;
-    use k256::U256;
+    use k256::{AffinePoint, Scalar, U256};
     use rand::RngExt;
+
+    type TestCurve = k256::Secp256k1;
+
+    fn no_address(_pk: &<TestCurve as CurveArithmetic>::AffinePoint) -> String {
+        String::new()
+    }
 
     struct DkgPhase4Inputs {
         all_data: Vec<SessionData>,
         poly_points: Vec<Scalar>,
-        proofs_commitments: Vec<ProofCommitment>,
+        proofs_commitments: Vec<ProofCommitment<TestCurve>>,
         zero_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>>,
         zero_received_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>>,
         zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>>,
-        mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>>,
-        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>>,
+        mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4<TestCurve>>>,
+        mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<TestCurve>>>,
         bip_broadcast_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4>,
         bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4>,
     }
@@ -1157,7 +1213,7 @@ mod tests {
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let out1 = phase1(&all_data[i as usize]);
+            let out1 = phase1::<TestCurve>(&all_data[i as usize]);
             dkg_1.push(out1);
         }
 
@@ -1174,7 +1230,7 @@ mod tests {
 
         // Phase 2
         let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<TestCurve>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_kept_2to3: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1186,7 +1242,7 @@ mod tests {
             BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5, out6) =
-                phase2(&all_data[i as usize], &poly_fragments[i as usize]);
+                phase2::<TestCurve>(&all_data[i as usize], &poly_fragments[i as usize]);
 
             poly_points.push(out1);
             proofs_commitments.push(out2);
@@ -1218,14 +1274,14 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>> =
+        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> =
             BTreeMap::new();
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5) = phase3(
+            let (out1, out2, out3, out4, out5) = phase3::<TestCurve>(
                 &all_data[i as usize],
                 &zero_kept_2to3[i as usize],
                 &bip_kept_2to3[i as usize],
@@ -1241,7 +1297,7 @@ mod tests {
         // Communication round 3
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             let i_idx = PartyIndex::new(i).unwrap();
@@ -1256,7 +1312,7 @@ mod tests {
             }
             zero_received_3to4.push(zero_row);
 
-            let mut mul_row: Vec<TransmitInitMulPhase3to4> =
+            let mut mul_row: Vec<TransmitInitMulPhase3to4<TestCurve>> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
@@ -1288,7 +1344,7 @@ mod tests {
         let mut data = setup_two_party_dkg_phase4_inputs();
         data.mul_received_3to4[0].clear();
 
-        let result = phase4(
+        let result = phase4::<TestCurve>(
             &data.all_data[0],
             &data.poly_points[0],
             &data.proofs_commitments,
@@ -1299,6 +1355,7 @@ mod tests {
             &data.mul_received_3to4[0],
             &data.bip_broadcast_2to4,
             &data.bip_broadcast_3to4,
+            no_address,
         );
         let abort = result.expect_err("missing multiplication-init message should be rejected");
         assert!(matches!(
@@ -1326,8 +1383,8 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Phase 1 (Steps 1 and 2)
-        let p1_phase1 = step2(&parameters, &step1(&parameters)); //p1 = Party 1
-        let p2_phase1 = step2(&parameters, &step1(&parameters)); //p2 = Party 2
+        let p1_phase1 = step2::<TestCurve>(&parameters, &step1::<TestCurve>(&parameters)); //p1 = Party 1
+        let p2_phase1 = step2::<TestCurve>(&parameters, &step1::<TestCurve>(&parameters)); //p2 = Party 2
 
         assert_eq!(p1_phase1.len(), 2);
         assert_eq!(p2_phase1.len(), 2);
@@ -1337,8 +1394,10 @@ mod tests {
         let p2_poly_fragments = vec![p1_phase1[1], p2_phase1[1]];
 
         // Phase 2 (Step 3)
-        let p1_phase2 = step3(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
-        let p2_phase2 = step3(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
+        let p1_phase2 =
+            step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
+        let p2_phase2 =
+            step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
 
         let (_, p1_proof_commitment) = p1_phase2;
         let (_, p2_proof_commitment) = p2_phase2;
@@ -1348,13 +1407,13 @@ mod tests {
         let proofs_commitments = vec![p1_proof_commitment, p2_proof_commitment];
 
         // Phase 4 (Step 5)
-        let p1_result = step5(
+        let p1_result = step5::<TestCurve>(
             &parameters,
             PartyIndex::new(1).unwrap(),
             &session_id,
             &proofs_commitments,
         );
-        let p2_result = step5(
+        let p2_result = step5::<TestCurve>(
             &parameters,
             PartyIndex::new(2).unwrap(),
             &session_id,
@@ -1384,7 +1443,7 @@ mod tests {
         // Matrix of polynomial points
         let mut phase1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for _ in 0..parameters.share_count {
-            let party_phase1 = step2(&parameters, &step1(&parameters));
+            let party_phase1 = step2::<TestCurve>(&parameters, &step1::<TestCurve>(&parameters));
             assert_eq!(party_phase1.len(), parameters.share_count as usize);
             phase1.push(party_phase1);
         }
@@ -1402,10 +1461,10 @@ mod tests {
         }
 
         // Phase 2 (Step 3) + Communication rounds 2 and 3
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<TestCurve>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let party_i_phase2 = step3(
+            let party_i_phase2 = step3::<TestCurve>(
                 PartyIndex::new(i + 1).unwrap(),
                 &session_id,
                 &poly_fragments[i as usize],
@@ -1416,7 +1475,7 @@ mod tests {
 
         // Phase 4 (Step 5)
         for i in 0..parameters.share_count {
-            let result = step5(
+            let result = step5::<TestCurve>(
                 &parameters,
                 PartyIndex::new(i + 1).unwrap(),
                 &session_id,
@@ -1451,8 +1510,10 @@ mod tests {
         // For this reason, we should expect the public key to be 2 * generator.
 
         // Phase 2 (Step 3)
-        let p1_phase2 = step3(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
-        let p2_phase2 = step3(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
+        let p1_phase2 =
+            step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
+        let p2_phase2 =
+            step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
 
         let (_, p1_proof_commitment) = p1_phase2;
         let (_, p2_proof_commitment) = p2_phase2;
@@ -1462,13 +1523,13 @@ mod tests {
         let proofs_commitments = vec![p1_proof_commitment, p2_proof_commitment];
 
         // Phase 4 (Step 5)
-        let p1_result = step5(
+        let p1_result = step5::<TestCurve>(
             &parameters,
             PartyIndex::new(1).unwrap(),
             &session_id,
             &proofs_commitments,
         );
-        let p2_result = step5(
+        let p2_result = step5::<TestCurve>(
             &parameters,
             PartyIndex::new(2).unwrap(),
             &session_id,
@@ -1506,8 +1567,10 @@ mod tests {
         // For this reason, we should expect the public key to be 23 * generator.
 
         // Phase 2 (Step 3)
-        let p1_phase2 = step3(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
-        let p2_phase2 = step3(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
+        let p1_phase2 =
+            step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
+        let p2_phase2 =
+            step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
 
         let (_, p1_proof_commitment) = p1_phase2;
         let (_, p2_proof_commitment) = p2_phase2;
@@ -1517,13 +1580,13 @@ mod tests {
         let proofs_commitments = vec![p1_proof_commitment, p2_proof_commitment];
 
         // Phase 4 (Step 5)
-        let p1_result = step5(
+        let p1_result = step5::<TestCurve>(
             &parameters,
             PartyIndex::new(1).unwrap(),
             &session_id,
             &proofs_commitments,
         );
-        let p2_result = step5(
+        let p2_result = step5::<TestCurve>(
             &parameters,
             PartyIndex::new(2).unwrap(),
             &session_id,
@@ -1599,10 +1662,10 @@ mod tests {
         // For this reason, we should expect the public key to be (-2) * generator.
 
         // Phase 2 (Step 3) + Communication rounds 2 and 3
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<TestCurve>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let party_i_phase2 = step3(
+            let party_i_phase2 = step3::<TestCurve>(
                 PartyIndex::new(i + 1).unwrap(),
                 &session_id,
                 &poly_fragments[i as usize],
@@ -1614,7 +1677,7 @@ mod tests {
         // Phase 4 (Step 5)
         let mut public_keys: Vec<AffinePoint> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let (pk, _) = step5(
+            let (pk, _) = step5::<TestCurve>(
                 &parameters,
                 PartyIndex::new(i + 1).unwrap(),
                 &session_id,
@@ -1672,7 +1735,7 @@ mod tests {
         // Phase 1
         let mut dkg_1: Vec<Vec<Scalar>> = Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let out1 = phase1(&all_data[i as usize]);
+            let out1 = phase1::<TestCurve>(&all_data[i as usize]);
 
             dkg_1.push(out1);
         }
@@ -1691,7 +1754,7 @@ mod tests {
 
         // Phase 2
         let mut poly_points: Vec<Scalar> = Vec::with_capacity(parameters.share_count as usize);
-        let mut proofs_commitments: Vec<ProofCommitment> =
+        let mut proofs_commitments: Vec<ProofCommitment<TestCurve>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_kept_2to3: Vec<BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>> =
             Vec::with_capacity(parameters.share_count as usize);
@@ -1703,7 +1766,7 @@ mod tests {
             BTreeMap::new();
         for i in 0..parameters.share_count {
             let (out1, out2, out3, out4, out5, out6) =
-                phase2(&all_data[i as usize], &poly_fragments[i as usize]);
+                phase2::<TestCurve>(&all_data[i as usize], &poly_fragments[i as usize]);
 
             poly_points.push(out1);
             proofs_commitments.push(out2);
@@ -1742,14 +1805,14 @@ mod tests {
             Vec::with_capacity(parameters.share_count as usize);
         let mut zero_transmit_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4>> =
+        let mut mul_kept_3to4: Vec<BTreeMap<PartyIndex, KeepInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_transmit_3to4: Vec<Vec<TransmitInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
         let mut bip_broadcast_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> =
             BTreeMap::new();
         for i in 0..parameters.share_count {
-            let (out1, out2, out3, out4, out5) = phase3(
+            let (out1, out2, out3, out4, out5) = phase3::<TestCurve>(
                 &all_data[i as usize],
                 &zero_kept_2to3[i as usize],
                 &bip_kept_2to3[i as usize],
@@ -1765,7 +1828,7 @@ mod tests {
         // Communication round 3
         let mut zero_received_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> =
             Vec::with_capacity(parameters.share_count as usize);
-        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4>> =
+        let mut mul_received_3to4: Vec<Vec<TransmitInitMulPhase3to4<TestCurve>>> =
             Vec::with_capacity(parameters.share_count as usize);
         for i in 1..=parameters.share_count {
             let i_idx = PartyIndex::new(i).unwrap();
@@ -1784,7 +1847,7 @@ mod tests {
             }
             zero_received_3to4.push(new_row);
 
-            let mut new_row: Vec<TransmitInitMulPhase3to4> =
+            let mut new_row: Vec<TransmitInitMulPhase3to4<TestCurve>> =
                 Vec::with_capacity((parameters.share_count - 1) as usize);
             for party in &mul_transmit_3to4 {
                 for message in party {
@@ -1801,10 +1864,12 @@ mod tests {
         // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
-        let mut parties: Vec<Party> = Vec::with_capacity((parameters.share_count) as usize);
-        let mut pkgs: Vec<PublicKeyPackage> = Vec::with_capacity(parameters.share_count as usize);
+        let mut parties: Vec<Party<TestCurve>> =
+            Vec::with_capacity((parameters.share_count) as usize);
+        let mut pkgs: Vec<PublicKeyPackage<TestCurve>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
-            let result = phase4(
+            let result = phase4::<TestCurve>(
                 &all_data[i as usize],
                 &poly_points[i as usize],
                 &proofs_commitments,
@@ -1815,6 +1880,7 @@ mod tests {
                 &mul_received_3to4[i as usize],
                 &bip_broadcast_2to4,
                 &bip_broadcast_3to4,
+                compute_eth_address,
             );
             match result {
                 Err(abort) => {
@@ -1854,8 +1920,8 @@ mod tests {
             assert!(pkg0.verify_share(party.party_index, &expected_share));
         }
 
-        // ethereum_address must match the address from Party.
-        assert_eq!(pkg0.ethereum_address(), parties[0].eth_address);
+        // Address must match the address from Party.
+        assert_eq!(compute_eth_address(&parties[0].pk), parties[0].address);
     }
 
     /// Tests if [`compute_eth_address`] correctly

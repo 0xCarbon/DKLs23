@@ -4,13 +4,13 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - 'src/**/*.rs'
-      - 'Cargo.toml'
+      - '**/*.rs'
+      - '**/Cargo.toml'
   pull_request:
     types: [opened, reopened, synchronize]
     paths:
-      - 'src/**/*.rs'
-      - 'Cargo.toml'
+      - '**/*.rs'
+      - '**/Cargo.toml'
 
 jobs:
   test:
@@ -34,4 +34,4 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --release
+          args: --workspace --release
