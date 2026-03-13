@@ -17,7 +17,10 @@ pub struct SignSession<'a, C: DklsCurve> {
 }
 
 impl<'a, C: DklsCurve> SignSession<'a, C> {
-    pub fn new(party: &'a Party<C>, data: SignData) -> Result<(Self, Vec<TransmitPhase1to2>), Abort> {
+    pub fn new(
+        party: &'a Party<C>,
+        data: SignData,
+    ) -> Result<(Self, Vec<TransmitPhase1to2>), Abort> {
         let (unique_kept, kept, transmit) = party.sign_phase1(&data)?;
         let session = Self {
             party,
@@ -128,7 +131,9 @@ mod tests {
 
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| String::new());
+        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        });
 
         let sign_id = rng::get_rng().random::<[u8; 32]>();
         let message_to_sign = tagged_hash(b"test-sign", &["Message to sign!".as_bytes()]);
@@ -203,7 +208,8 @@ mod tests {
         }
 
         // Phase 3.
-        let mut broadcasts: Vec<Broadcast3to4<Secp256k1>> = Vec::with_capacity(parameters.threshold as usize);
+        let mut broadcasts: Vec<Broadcast3to4<Secp256k1>> =
+            Vec::with_capacity(parameters.threshold as usize);
         for party_index in executing_parties.clone() {
             let broadcast = sessions
                 .get_mut(&party_index)
@@ -241,7 +247,9 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| String::new());
+        let (parties, _) = re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        });
 
         let data = SignData {
             sign_id: rng::get_rng().random::<[u8; 32]>().to_vec(),

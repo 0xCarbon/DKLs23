@@ -144,15 +144,31 @@ mod tests {
     fn test_neo3_address() {
         let pk = test_pubkey();
         let address = compute_neo3_address(&pk);
-        assert!(address.starts_with('N'), "NEO3 address should start with 'N', got: {address}");
-        assert_eq!(address.len(), 34, "NEO3 address should be 34 chars, got: {}", address.len());
+        assert!(
+            address.starts_with('N'),
+            "NEO3 address should start with 'N', got: {address}"
+        );
+        assert_eq!(
+            address.len(),
+            34,
+            "NEO3 address should be 34 chars, got: {}",
+            address.len()
+        );
     }
 
     #[test]
     fn test_sui_address() {
         let pk = test_pubkey();
         let address = compute_sui_address(&pk);
-        assert!(address.starts_with("0x"), "Sui address should start with '0x', got: {address}");
-        assert_eq!(address.len(), 66, "Sui address should be 66 chars (0x + 64 hex), got: {}", address.len());
+        assert!(
+            address.starts_with("0x"),
+            "Sui address should start with '0x', got: {address}"
+        );
+        assert_eq!(
+            address.len(),
+            66,
+            "Sui address should be 66 chars (0x + 64 hex), got: {}",
+            address.len()
+        );
     }
 }

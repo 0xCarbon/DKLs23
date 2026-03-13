@@ -102,7 +102,11 @@ impl ZeroShare {
     /// Moreover, not all parties need to participate in this step, so we need to provide a
     /// list of counterparties.
     #[must_use]
-    pub fn compute<C: DklsCurve>(&self, counterparties: &[PartyIndex], session_id: &[u8]) -> C::Scalar {
+    pub fn compute<C: DklsCurve>(
+        &self,
+        counterparties: &[PartyIndex],
+        session_id: &[u8],
+    ) -> C::Scalar {
         let mut share = <C::Scalar as Field>::ZERO;
         let seeds = self.seeds.clone();
         for seed_pair in seeds {
@@ -197,8 +201,8 @@ mod tests {
             let mut counterparties = executing_parties.clone();
             counterparties.retain(|index| *index != party);
             //Compute the share (there is a -1 because indexes for parties start at 1).
-            let share =
-                zero_shares[(party.as_u8() as usize) - 1].compute::<TestCurve>(&counterparties, &session_id);
+            let share = zero_shares[(party.as_u8() as usize) - 1]
+                .compute::<TestCurve>(&counterparties, &session_id);
             shares.push(share);
         }
 

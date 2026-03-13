@@ -28,7 +28,7 @@
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::point::AffineCoordinates;
 use elliptic_curve::scalar::IsHigh;
-use rustcrypto_ff::Field;
+use rustcrypto_ff::{Field, PrimeField};
 use rustcrypto_group::prime::PrimeCurveAffine;
 use rustcrypto_group::Curve;
 use std::collections::{BTreeMap, BTreeSet};
@@ -74,10 +74,13 @@ pub struct TransmitPhase1to2 {
 /// The message is produced/sent during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct TransmitPhase2to3<C: DklsCurve> {
     pub parties: PartiesMessage,
     pub gamma_u: C::AffinePoint,
@@ -94,10 +97,13 @@ pub struct TransmitPhase2to3<C: DklsCurve> {
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct Broadcast3to4<C: DklsCurve> {
     pub u: C::Scalar,
     pub w: C::Scalar,
@@ -110,10 +116,13 @@ pub struct Broadcast3to4<C: DklsCurve> {
 /// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub(crate) struct KeepPhase1to2<C: DklsCurve> {
     pub salt: Vec<u8>,
     pub chi: C::Scalar,
@@ -125,10 +134,13 @@ pub(crate) struct KeepPhase1to2<C: DklsCurve> {
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub(crate) struct KeepPhase2to3<C: DklsCurve> {
     pub c_u: C::Scalar,
     pub c_v: C::Scalar,
@@ -142,10 +154,13 @@ pub(crate) struct KeepPhase2to3<C: DklsCurve> {
 /// The message is produced during Phase 1 and used in Phase 2.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub(crate) struct UniqueKeep1to2<C: DklsCurve> {
     pub instance_key: C::Scalar,
     #[zeroize(skip)]
@@ -159,10 +174,13 @@ pub(crate) struct UniqueKeep1to2<C: DklsCurve> {
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub(crate) struct UniqueKeep2to3<C: DklsCurve> {
     pub instance_key: C::Scalar,
     #[zeroize(skip)]
@@ -371,7 +389,9 @@ impl<C: DklsCurve> Party<C> {
         ]
         .concat();
 
-        let zeta = self.zero_share.compute::<C>(&data.counterparties, &zero_sid);
+        let zeta = self
+            .zero_share
+            .compute::<C>(&data.counterparties, &zero_sid);
 
         // "Unique" because it is only one message referring to all counter parties.
         let unique_keep = UniqueKeep1to2 {
@@ -767,8 +787,9 @@ impl<C: DklsCurve> Party<C> {
             // We add the current summand to our sums.
             expected_public_key =
                 (C::ProjectivePoint::from(expected_public_key) + message.public_share).to_affine();
-            total_instance_point =
-                (C::ProjectivePoint::from(total_instance_point) + message.instance_point).to_affine();
+            total_instance_point = (C::ProjectivePoint::from(total_instance_point)
+                + message.instance_point)
+                .to_affine();
 
             first_sum_u_v += &message.psi;
 
@@ -891,38 +912,41 @@ impl<C: DklsCurve> Party<C> {
         let s_inverse = s.invert().unwrap();
         let signature_point = ((first + second) * s_inverse).to_affine();
 
-        // Compute recovery id.
-        // The y-parity is determined by the last bit of the y-coordinate.
-        // We approximate is_x_reduced as false (it's negligibly rare for any curve).
-        let y_bytes = signature_point.x();
-        let y_bytes_ref: &[u8] = y_bytes.as_ref();
-        let is_y_odd = y_bytes_ref[y_bytes_ref.len() - 1] & 1 == 1;
-
-        // Actually we need the y-coordinate, not the x-coordinate. Let's use the
-        // SEC1 encoding: uncompressed point is 0x04 || x || y.
-        // For the recovery id, we just need y-parity.
-        // GroupEncoding::to_bytes gives compressed form (0x02/0x03 || x).
-        // The compressed prefix byte tells us the y-parity.
+        // Compute recovery id from the signature point R.
+        //
+        // y-parity: determined from the compressed SEC1 prefix byte (0x02=even, 0x03=odd).
         let compressed = rustcrypto_group::GroupEncoding::to_bytes(&signature_point);
-        let prefix = compressed.as_ref()[0];
-        let is_y_odd = prefix == 0x03;
+        let is_y_odd = compressed.as_ref()[0] == 0x03;
 
-        let rec_id = ecdsa::RecoveryId::new(is_y_odd, false);
+        // is_x_reduced: true when R.x (as a field element) >= the curve order n,
+        // meaning Scalar::reduce(&R.x) lost information. This is negligibly rare
+        // but must be correct for downstream key-recovery flows.
+        let x_bytes_original = {
+            let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
+            hex::decode_to_slice(x_coord, &mut bytes).expect("valid hex");
+            bytes
+        };
+        let rx_repr = rx_scalar.to_repr();
+        let rx_repr_slice: &[u8] = rx_repr.as_ref();
+        let is_x_reduced = x_bytes_original.as_slice() != rx_repr_slice;
+
+        let rec_id = ecdsa::RecoveryId::new(is_y_odd, is_x_reduced);
 
         Ok((signature, rec_id.into()))
     }
 }
 
-/// Reduces a hex string representing a field-sized value into a scalar for curve `C`.
+/// Parses a hex string as a canonical scalar for curve `C` (value must be < curve order n).
 ///
-/// Returns `None` if the hex string cannot be decoded into the expected number of bytes.
+/// Returns `None` if the hex string is invalid or represents a value >= n.
+/// This enforces strict ECDSA range requirements for signature verification.
 fn parse_hex_to_scalar<C: DklsCurve>(hex_value: &str) -> Option<C::Scalar> {
     let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
         return None;
     }
     let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&bytes);
-    Some(<C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes))
+    Option::from(<C::Scalar as PrimeField>::from_repr(field_bytes.clone()))
 }
 
 /// Reduces a 32-byte hash output into a scalar for curve `C`.
@@ -996,9 +1020,9 @@ mod tests {
     use crate::utilities::hashes::hash;
     use ecdsa::RecoveryId;
     use elliptic_curve::sec1::ToSec1Point;
-    use elliptic_curve::CurveArithmetic;
     use elliptic_curve::Curve as _;
-    use k256::{AffinePoint, ProjectivePoint, Secp256k1, Scalar, U256};
+    use elliptic_curve::CurveArithmetic;
+    use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1, U256};
     use rand::RngExt;
 
     type TestCurve = k256::Secp256k1;
@@ -1028,7 +1052,8 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         // SIGNING
 
@@ -1090,7 +1115,8 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1111,7 +1137,8 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
             let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
@@ -1188,7 +1215,8 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         // SIGNING (as in test_signing)
 
@@ -1250,7 +1278,8 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1271,7 +1300,8 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
             let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
@@ -1533,7 +1563,8 @@ mod tests {
         // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
-        let mut parties: Vec<Party<TestCurve>> = Vec::with_capacity(parameters.share_count as usize);
+        let mut parties: Vec<Party<TestCurve>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = phase4(
                 &all_data[i as usize],
@@ -1626,7 +1657,8 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1647,7 +1679,8 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         for &party_index in &executing_parties {
             let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
@@ -1715,7 +1748,8 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let data = SignData {
             sign_id: rng::get_rng()
@@ -1742,7 +1776,9 @@ mod tests {
         let message = hash("Message to sign!".as_bytes(), &[]);
         let pk = AffinePoint::GENERATOR;
 
-        assert!(!verify_ecdsa_signature::<TestCurve>(&message, &pk, "zz", "11"));
+        assert!(!verify_ecdsa_signature::<TestCurve>(
+            &message, &pk, "zz", "11"
+        ));
         assert!(!verify_ecdsa_signature::<TestCurve>(&message, &pk, "", ""));
         assert!(!verify_ecdsa_signature::<TestCurve>(
             &message,
@@ -1761,7 +1797,8 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let data = SignData {
             sign_id: rng::get_rng()
@@ -1813,7 +1850,8 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
@@ -1890,7 +1928,8 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -1910,7 +1949,8 @@ mod tests {
             }
         }
 
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let messages_for_party: Vec<TransmitPhase2to3<TestCurve>> = transmit_2to3
                 .values()

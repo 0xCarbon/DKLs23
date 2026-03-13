@@ -18,8 +18,8 @@
 
 use rand::RngExt;
 use rustcrypto_ff::Field;
-use rustcrypto_group::Curve as GroupCurve;
 use rustcrypto_group::prime::PrimeCurveAffine;
+use rustcrypto_group::Curve as GroupCurve;
 
 use crate::curve::DklsCurve;
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
@@ -34,10 +34,13 @@ use crate::SECURITY;
 /// Sender's data and methods for the base OT protocol.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct OTSender<C: DklsCurve> {
     pub s: C::Scalar,
     pub proof: DLogProof<C>,
@@ -105,9 +108,8 @@ impl<C: DklsCurve> OTSender<C> {
     ) -> Result<(HashOutput, HashOutput), ErrorOT> {
         // We reconstruct h from the seed (as in the paper).
         let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
-        let h = (generator
-            * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, seed]))
-        .to_affine();
+        let h = (generator * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, seed]))
+            .to_affine();
 
         // We verify the proof.
         let verification = enc_proof.verify(session_id);
@@ -186,15 +188,18 @@ impl OTReceiver {
     /// Given a choice bit, returns a secret scalar (to be kept)
     /// and an encryption proof (to be sent to the sender).
     #[must_use]
-    pub fn run_phase1<C: DklsCurve>(&self, session_id: &[u8], bit: bool) -> (C::Scalar, EncProof<C>) {
+    pub fn run_phase1<C: DklsCurve>(
+        &self,
+        session_id: &[u8],
+        bit: bool,
+    ) -> (C::Scalar, EncProof<C>) {
         // We sample the secret scalar r.
         let r = <C::Scalar as Field>::random(&mut rng::get_rng());
 
         // We compute h as in the paper.
         let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
-        let h = (generator
-            * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, &self.seed]))
-        .to_affine();
+        let h = (generator * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, &self.seed]))
+            .to_affine();
 
         // We prove our data.
         let proof = EncProof::<C>::prove(session_id, &h, &r, bit);
@@ -270,7 +275,12 @@ impl OTReceiver {
     /// With the secret value `r` from Phase 1 and with the point `z`
     /// from the previous step, the output message is computed.
     #[must_use]
-    pub fn run_phase2_step2<C: DklsCurve>(&self, session_id: &[u8], r: &C::Scalar, z: &C::AffinePoint) -> HashOutput {
+    pub fn run_phase2_step2<C: DklsCurve>(
+        &self,
+        session_id: &[u8],
+        r: &C::Scalar,
+        z: &C::AffinePoint,
+    ) -> HashOutput {
         // We compute the message.
 
         let value_for_mb = (*z * r).to_affine();
@@ -431,7 +441,9 @@ mod tests {
             bits.push(rng::get_rng().random());
         }
 
-        let (vec_r, enc_proofs) = receiver.run_phase1_batch::<TestCurve>(&session_id, &bits).unwrap();
+        let (vec_r, enc_proofs) = receiver
+            .run_phase1_batch::<TestCurve>(&session_id, &bits)
+            .unwrap();
 
         // Communication round - The parties exchange the proofs.
         // The receiver also sends his seed.
@@ -447,7 +459,8 @@ mod tests {
         let (vec_m0, vec_m1) = result_sender.unwrap();
 
         // Phase 2 - Receiver
-        let result_receiver = receiver.run_phase2_batch::<TestCurve>(&session_id, &vec_r, &dlog_proof);
+        let result_receiver =
+            receiver.run_phase2_batch::<TestCurve>(&session_id, &vec_r, &dlog_proof);
 
         if let Err(error) = result_receiver {
             panic!("OT error: {:?}", error.description);

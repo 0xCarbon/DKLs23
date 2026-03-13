@@ -136,8 +136,7 @@ pub fn compute_cosmos_address_with_hrp(pk: &k256::AffinePoint, hrp: &str) -> Str
     let addr_bytes = hash160(compressed_pk.as_bytes());
 
     let hrp = bech32::Hrp::parse(hrp).expect("invalid bech32 HRP");
-    bech32::encode::<bech32::Bech32>(hrp, &addr_bytes)
-        .expect("bech32 encoding should not fail")
+    bech32::encode::<bech32::Bech32>(hrp, &addr_bytes).expect("bech32 encoding should not fail")
 }
 
 /// [`AddressScheme`] implementation for Cosmos Hub addresses.
@@ -244,15 +243,25 @@ mod tests {
     fn test_compute_btc_address() {
         let pk = test_keypair();
         let address = compute_btc_address(&pk);
-        assert!(address.starts_with("bc1q"), "Bitcoin P2WPKH should start with 'bc1q', got: {address}");
-        assert_eq!(address.len(), 42, "Bitcoin P2WPKH address should be 42 chars");
+        assert!(
+            address.starts_with("bc1q"),
+            "Bitcoin P2WPKH should start with 'bc1q', got: {address}"
+        );
+        assert_eq!(
+            address.len(),
+            42,
+            "Bitcoin P2WPKH address should be 42 chars"
+        );
     }
 
     #[test]
     fn test_compute_cosmos_address() {
         let pk = test_keypair();
         let address = compute_cosmos_address(&pk);
-        assert!(address.starts_with("cosmos1"), "Cosmos address should start with 'cosmos1', got: {address}");
+        assert!(
+            address.starts_with("cosmos1"),
+            "Cosmos address should start with 'cosmos1', got: {address}"
+        );
     }
 
     #[test]
@@ -270,7 +279,10 @@ mod tests {
     fn test_compute_tron_address() {
         let pk = test_keypair();
         let address = compute_tron_address(&pk);
-        assert!(address.starts_with('T'), "TRON address should start with 'T', got: {address}");
+        assert!(
+            address.starts_with('T'),
+            "TRON address should start with 'T', got: {address}"
+        );
         assert_eq!(address.len(), 34, "TRON address should be 34 chars");
     }
 }

@@ -62,10 +62,13 @@ pub const T: u16 = 32;
 /// Schnorr's protocol (interactive).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::Scalar: serde::Serialize",
-    deserialize = "C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::Scalar: serde::Serialize",
+        deserialize = "C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct InteractiveDLogProof<C: DklsCurve> {
     pub challenge: Vec<u8>,
     pub challenge_response: C::Scalar,
@@ -151,9 +154,8 @@ impl<C: DklsCurve> InteractiveDLogProof<C> {
         let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
 
         // We compare the values that should agree.
-        let point_verify = ((generator * self.challenge_response)
-            + (*point * challenge_scalar))
-            .to_affine();
+        let point_verify =
+            ((generator * self.challenge_response) + (*point * challenge_scalar)).to_affine();
 
         point_verify == *point_rand_commitment
     }
@@ -178,10 +180,13 @@ impl<C: DklsCurve> InteractiveDLogProof<C> {
 /// In this case, the constant `t` from the paper is equal to 32.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct DLogProof<C: DklsCurve> {
     pub point: C::AffinePoint,
     pub rand_commitments: Vec<C::AffinePoint>,
@@ -457,7 +462,11 @@ impl<C: DklsCurve> DLogProof<C> {
 
     /// Verifies a proof and checks it against the commitment.
     #[must_use]
-    pub fn decommit_verify(proof: &DLogProof<C>, commitment: &HashOutput, session_id: &[u8]) -> bool {
+    pub fn decommit_verify(
+        proof: &DLogProof<C>,
+        commitment: &HashOutput,
+        session_id: &[u8],
+    ) -> bool {
         //Computes the expected commitment
         let point_as_bytes = point_to_bytes::<C>(&proof.point);
         let rc_as_bytes = proof
@@ -503,10 +512,13 @@ impl<C: DklsCurve> DLogProof<C> {
 /// Represents the random commitments for the Chaum-Pedersen protocol.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>"
+    ))
+)]
 pub struct RandomCommitments<C: DklsCurve> {
     pub rc_g: C::AffinePoint,
     pub rc_h: C::AffinePoint,
@@ -515,10 +527,13 @@ pub struct RandomCommitments<C: DklsCurve> {
 /// Chaum-Pedersen protocol (interactive version).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct CPProof<C: DklsCurve> {
     pub base_g: C::AffinePoint, // Parameters for the proof.
     pub base_h: C::AffinePoint, // In the encryption proof, base_g = generator.
@@ -539,7 +554,10 @@ impl<C: DklsCurve> CPProof<C> {
     ///
     /// The `Scalar` is kept secret while the `RandomCommitments` is transmitted.
     #[must_use]
-    pub fn prove_step1(base_g: &C::AffinePoint, base_h: &C::AffinePoint) -> (C::Scalar, RandomCommitments<C>) {
+    pub fn prove_step1(
+        base_g: &C::AffinePoint,
+        base_h: &C::AffinePoint,
+    ) -> (C::Scalar, RandomCommitments<C>) {
         // We sample a nonzero random scalar.
         let mut scalar_rand_commitment = <C::Scalar as Field>::ZERO;
         while scalar_rand_commitment == <C::Scalar as Field>::ZERO {
@@ -650,10 +668,13 @@ impl<C: DklsCurve> CPProof<C> {
 /// See page 17 of <https://eprint.iacr.org/2022/1525.pdf>.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct EncProof<C: DklsCurve> {
     /// EncProof is a proof that `proof0` or `proof1` really proves what it says.
     pub proof0: CPProof<C>,
@@ -672,7 +693,12 @@ impl<C: DklsCurve> EncProof<C> {
     /// The variable `bit` indicates which one of the proofs is really
     /// proved by `scalar`. The other one is simulated.
     #[must_use]
-    pub fn prove(session_id: &[u8], base_h: &C::AffinePoint, scalar: &C::Scalar, bit: bool) -> EncProof<C> {
+    pub fn prove(
+        session_id: &[u8],
+        base_h: &C::AffinePoint,
+        scalar: &C::Scalar,
+        bit: bool,
+    ) -> EncProof<C> {
         // PRELIMINARIES
 
         // g is the generator in this case.
@@ -763,7 +789,8 @@ impl<C: DklsCurve> EncProof<C> {
             .concat()
         };
 
-        let challenge = tagged_hash_as_scalar::<C>(TAG_ENCPROOF_FS, &[session_id, &msg_for_challenge]);
+        let challenge =
+            tagged_hash_as_scalar::<C>(TAG_ENCPROOF_FS, &[session_id, &msg_for_challenge]);
 
         // STEP 3
         // We compute the real challenge for our real proof.
@@ -935,11 +962,17 @@ mod tests {
 
         let mut proof_short_commitments = DLogProof::<TestCurve>::prove(&scalar, &session_id);
         proof_short_commitments.rand_commitments.pop();
-        assert!(!DLogProof::<TestCurve>::verify(&proof_short_commitments, &session_id));
+        assert!(!DLogProof::<TestCurve>::verify(
+            &proof_short_commitments,
+            &session_id
+        ));
 
         let mut proof_short_proofs = DLogProof::<TestCurve>::prove(&scalar, &session_id);
         proof_short_proofs.proofs.pop();
-        assert!(!DLogProof::<TestCurve>::verify(&proof_short_proofs, &session_id));
+        assert!(!DLogProof::<TestCurve>::verify(
+            &proof_short_proofs,
+            &session_id
+        ));
     }
 
     /// Ensures session-id mismatches invalidate the proof.
@@ -960,7 +993,11 @@ mod tests {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let (proof, commitment) = DLogProof::<TestCurve>::prove_commit(&scalar, &session_id);
-        assert!(DLogProof::<TestCurve>::decommit_verify(&proof, &commitment, &session_id));
+        assert!(DLogProof::<TestCurve>::decommit_verify(
+            &proof,
+            &commitment,
+            &session_id
+        ));
     }
 
     /// Generates a [`DLogProof`] with commitment and changes
@@ -1003,7 +1040,8 @@ mod tests {
         let base_h = (generator * log_base_h).to_affine();
 
         // Prover - Step 1.
-        let (scalar_rand_commitment, rand_commitments) = CPProof::<TestCurve>::prove_step1(&base_g, &base_h);
+        let (scalar_rand_commitment, rand_commitments) =
+            CPProof::<TestCurve>::prove_step1(&base_g, &base_h);
 
         // Verifier - Gather the commitments and choose the challenge.
         let challenge = <Scalar as Field>::random(&mut rng::get_rng());

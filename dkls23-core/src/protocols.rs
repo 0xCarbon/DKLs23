@@ -87,10 +87,13 @@ pub struct Parameters {
 /// Represents a party after key generation ready to sign a message.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct Party<C: DklsCurve> {
     pub parameters: Parameters,
     pub party_index: PartyIndex,
@@ -147,10 +150,13 @@ impl<C: DklsCurve> Drop for Party<C> {
 /// and threshold parameters produced by DKG or re-key.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct PublicKeyPackage<C: DklsCurve> {
     verifying_key: C::AffinePoint,
     verifying_shares: BTreeMap<PartyIndex, C::AffinePoint>,

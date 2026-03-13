@@ -26,13 +26,18 @@ use rustcrypto_group::{Curve as GroupCurve, Group, GroupEncoding};
 pub trait DklsCurve:
     CurveArithmetic<
         AffinePoint: GroupEncoding
-            + PrimeCurveAffine<
-                Curve = <Self as CurveArithmetic>::ProjectivePoint,
-                Scalar = <Self as CurveArithmetic>::Scalar,
-            >
-            + AffineCoordinates<FieldRepr = elliptic_curve::FieldBytes<Self>>,
-        Scalar: Reduce<Self::Uint> + Reduce<elliptic_curve::FieldBytes<Self>> + IsHigh + Field + PrimeField,
-        ProjectivePoint: Group + PrimeGroup + GroupCurve<AffineRepr = <Self as CurveArithmetic>::AffinePoint>,
+                         + PrimeCurveAffine<
+            Curve = <Self as CurveArithmetic>::ProjectivePoint,
+            Scalar = <Self as CurveArithmetic>::Scalar,
+        > + AffineCoordinates<FieldRepr = elliptic_curve::FieldBytes<Self>>,
+        Scalar: Reduce<Self::Uint>
+                    + Reduce<elliptic_curve::FieldBytes<Self>>
+                    + IsHigh
+                    + Field
+                    + PrimeField,
+        ProjectivePoint: Group
+                             + PrimeGroup
+                             + GroupCurve<AffineRepr = <Self as CurveArithmetic>::AffinePoint>,
     > + PrimeCurve
     + Sized
     + 'static
@@ -48,13 +53,13 @@ where
         + PrimeCurveAffine<
             Curve = <C as CurveArithmetic>::ProjectivePoint,
             Scalar = <C as CurveArithmetic>::Scalar,
-        >
-        + AffineCoordinates<FieldRepr = elliptic_curve::FieldBytes<C>>
+        > + AffineCoordinates<FieldRepr = elliptic_curve::FieldBytes<C>>
         + FromSec1Point<C>
         + ToSec1Point<C>,
     <C as CurveArithmetic>::Scalar:
         Reduce<C::Uint> + Reduce<elliptic_curve::FieldBytes<C>> + IsHigh + Field + PrimeField,
-    <C as CurveArithmetic>::ProjectivePoint: Group + PrimeGroup + GroupCurve<AffineRepr = <C as CurveArithmetic>::AffinePoint>,
+    <C as CurveArithmetic>::ProjectivePoint:
+        Group + PrimeGroup + GroupCurve<AffineRepr = <C as CurveArithmetic>::AffinePoint>,
     FieldBytesSize<C>: ModulusSize,
 {
 }

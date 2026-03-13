@@ -419,7 +419,15 @@ mod tests {
 
         // phase4 before phase2
         let session = DkgSession::<Secp256k1>::new(parameters.clone(), pi, session_id.to_vec());
-        let result = session.phase4(&[], &[], &[], &[], &BTreeMap::new(), &BTreeMap::new(), |_| String::new());
+        let result = session.phase4(
+            &[],
+            &[],
+            &[],
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_| String::new(),
+        );
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err().reason,
@@ -430,7 +438,15 @@ mod tests {
         let mut session = DkgSession::<Secp256k1>::new(parameters, pi, session_id.to_vec());
         let fragments = session.phase1();
         session.phase2(&fragments).unwrap();
-        let result = session.phase4(&[], &[], &[], &[], &BTreeMap::new(), &BTreeMap::new(), |_| String::new());
+        let result = session.phase4(
+            &[],
+            &[],
+            &[],
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_| String::new(),
+        );
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err().reason,

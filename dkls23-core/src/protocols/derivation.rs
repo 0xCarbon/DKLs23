@@ -15,9 +15,9 @@
 use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacEngine};
 
 use elliptic_curve::ops::Reduce;
-use rustcrypto_group::Curve;
 use rustcrypto_ff::Field;
 use rustcrypto_group::prime::PrimeCurveAffine;
+use rustcrypto_group::Curve;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::curve::DklsCurve;
@@ -60,10 +60,13 @@ impl ErrorDeriv {
 /// network, but it can be easily inferred from context.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct DerivData<C: DklsCurve> {
     /// Counts after how many derivations this key is obtained from the master node.
     pub depth: u8,
@@ -487,13 +490,15 @@ mod tests {
         // We use the re_key function to quickly sample the parties.
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, _) = re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         // DERIVATION
 
         let path = "m/0/1/2/3";
 
-        let mut derived_parties: Vec<Party<TestCurve>> = Vec::with_capacity(parameters.share_count as usize);
+        let mut derived_parties: Vec<Party<TestCurve>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = parties[i as usize].derive_from_path(path, no_address);
             match result {
@@ -572,7 +577,8 @@ mod tests {
         let mut unique_kept_2to3: BTreeMap<PartyIndex, UniqueKeep2to3<TestCurve>> = BTreeMap::new();
         let mut kept_2to3: BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase2to3<TestCurve>>> =
             BTreeMap::new();
-        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut transmit_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
@@ -593,7 +599,8 @@ mod tests {
         }
 
         // Communication round 2
-        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> = BTreeMap::new();
+        let mut received_2to3: BTreeMap<PartyIndex, Vec<TransmitPhase2to3<TestCurve>>> =
+            BTreeMap::new();
 
         // Use references to avoid cloning executing_parties
         for &party_index in &executing_parties {
@@ -664,7 +671,8 @@ mod tests {
         };
         let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
         let secret_key = Scalar::random(&mut rng::get_rng());
-        let (parties, pkg) = re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let (parties, pkg) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let chain_code = parties[0].derivation_data.chain_code;
         const TEST_CHILD_NUMBER: u32 = 42;

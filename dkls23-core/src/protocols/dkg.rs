@@ -78,10 +78,13 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 /// The `proof` is broadcasted after Phase 3.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct ProofCommitment<C: DklsCurve> {
     pub index: PartyIndex,
     pub proof: DLogProof<C>,
@@ -146,10 +149,13 @@ pub struct KeepInitZeroSharePhase3to4 {
 /// The message is produced/sent during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct TransmitInitMulPhase3to4<C: DklsCurve> {
     pub parties: PartiesMessage,
 
@@ -165,10 +171,13 @@ pub struct TransmitInitMulPhase3to4<C: DklsCurve> {
 /// The message is produced during Phase 3 and used in Phase 4.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
-    deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct KeepInitMulPhase3to4<C: DklsCurve> {
     pub ot_sender: ot::base::OTSender<C>,
     pub nonce: C::Scalar,
@@ -274,7 +283,10 @@ pub(crate) fn step1<C: DklsCurve>(parameters: &Parameters) -> Vec<C::Scalar> {
 ///
 /// This is Step 2 from Protocol 9.1 in <https://eprint.iacr.org/2023/602.pdf>.
 #[must_use]
-pub(crate) fn step2<C: DklsCurve>(parameters: &Parameters, polynomial: &[C::Scalar]) -> Vec<C::Scalar> {
+pub(crate) fn step2<C: DklsCurve>(
+    parameters: &Parameters,
+    polynomial: &[C::Scalar],
+) -> Vec<C::Scalar> {
     let mut points: Vec<C::Scalar> = Vec::with_capacity(parameters.share_count as usize);
     let last_index = (parameters.threshold - 1) as usize;
 
@@ -478,7 +490,8 @@ pub(crate) fn phase2<C: DklsCurve>(
     BroadcastDerivationPhase2to4,
 ) {
     // DKG
-    let (poly_point, proof_commitment) = step3::<C>(data.party_index, &data.session_id, poly_fragments);
+    let (poly_point, proof_commitment) =
+        step3::<C>(data.party_index, &data.session_id, poly_fragments);
 
     // Initialization - Zero shares.
 
@@ -628,7 +641,8 @@ pub(crate) fn phase3<C: DklsCurve>(
         ]
         .concat();
 
-        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::<C>::init_phase1(&mul_sid_sender);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            MulSender::<C>::init_phase1(&mul_sid_sender);
 
         // We gather these values.
 
@@ -1375,8 +1389,10 @@ mod tests {
         let p2_poly_fragments = vec![p1_phase1[1], p2_phase1[1]];
 
         // Phase 2 (Step 3)
-        let p1_phase2 = step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
-        let p2_phase2 = step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
+        let p1_phase2 =
+            step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
+        let p2_phase2 =
+            step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
 
         let (_, p1_proof_commitment) = p1_phase2;
         let (_, p2_proof_commitment) = p2_phase2;
@@ -1489,8 +1505,10 @@ mod tests {
         // For this reason, we should expect the public key to be 2 * generator.
 
         // Phase 2 (Step 3)
-        let p1_phase2 = step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
-        let p2_phase2 = step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
+        let p1_phase2 =
+            step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
+        let p2_phase2 =
+            step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
 
         let (_, p1_proof_commitment) = p1_phase2;
         let (_, p2_proof_commitment) = p2_phase2;
@@ -1544,8 +1562,10 @@ mod tests {
         // For this reason, we should expect the public key to be 23 * generator.
 
         // Phase 2 (Step 3)
-        let p1_phase2 = step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
-        let p2_phase2 = step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
+        let p1_phase2 =
+            step3::<TestCurve>(PartyIndex::new(1).unwrap(), &session_id, &p1_poly_fragments);
+        let p2_phase2 =
+            step3::<TestCurve>(PartyIndex::new(2).unwrap(), &session_id, &p2_poly_fragments);
 
         let (_, p1_proof_commitment) = p1_phase2;
         let (_, p2_proof_commitment) = p2_phase2;
@@ -1839,8 +1859,10 @@ mod tests {
         // In practice, the messages received should be grouped into a BTreeMap.
 
         // Phase 4
-        let mut parties: Vec<Party<TestCurve>> = Vec::with_capacity((parameters.share_count) as usize);
-        let mut pkgs: Vec<PublicKeyPackage<TestCurve>> = Vec::with_capacity(parameters.share_count as usize);
+        let mut parties: Vec<Party<TestCurve>> =
+            Vec::with_capacity((parameters.share_count) as usize);
+        let mut pkgs: Vec<PublicKeyPackage<TestCurve>> =
+            Vec::with_capacity(parameters.share_count as usize);
         for i in 0..parameters.share_count {
             let result = phase4::<TestCurve>(
                 &all_data[i as usize],

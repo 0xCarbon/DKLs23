@@ -38,10 +38,13 @@ pub const OT_WIDTH: u8 = 2 * L;
 /// Sender's data and methods for the multiplication protocol.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::Scalar: serde::Serialize",
-    deserialize = "C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::Scalar: serde::Serialize",
+        deserialize = "C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct MulSender<C: DklsCurve> {
     pub public_gadget: Vec<C::Scalar>,
     pub ote_sender: OTESender,
@@ -53,10 +56,13 @@ pub struct MulSender<C: DklsCurve> {
 /// Receiver's data and methods for the multiplication protocol.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::Scalar: serde::Serialize",
-    deserialize = "C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::Scalar: serde::Serialize",
+        deserialize = "C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct MulReceiver<C: DklsCurve> {
     pub public_gadget: Vec<C::Scalar>,
     pub ote_receiver: OTEReceiver,
@@ -68,10 +74,13 @@ pub struct MulReceiver<C: DklsCurve> {
 /// Data transmitted by the sender to the receiver after his phase.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::Scalar: serde::Serialize",
-    deserialize = "C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::Scalar: serde::Serialize",
+        deserialize = "C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct MulDataToReceiver<C: DklsCurve> {
     pub vector_of_tau: Vec<Vec<C::Scalar>>,
     pub verify_r: HashOutput,
@@ -82,10 +91,13 @@ pub struct MulDataToReceiver<C: DklsCurve> {
 /// Data kept by the receiver between phases.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "C::Scalar: serde::Serialize",
-    deserialize = "C::Scalar: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::Scalar: serde::Serialize",
+        deserialize = "C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
 pub struct MulDataToKeepReceiver<C: DklsCurve> {
     pub b: C::Scalar,
     pub choice_bits: Vec<bool>,
@@ -133,7 +145,9 @@ impl<C: DklsCurve> MulSender<C> {
     ///
     /// See [`OTESender`](super::ot::extension::OTESender) for explanation.
     #[must_use]
-    pub fn init_phase1(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<C::Scalar>, Vec<EncProof<C>>) {
+    pub fn init_phase1(
+        session_id: &[u8],
+    ) -> (OTReceiver, Vec<bool>, Vec<C::Scalar>, Vec<EncProof<C>>) {
         OTESender::init_phase1::<C>(session_id)
     }
 
@@ -256,7 +270,9 @@ impl<C: DklsCurve> MulSender<C> {
 
         let ote_sid = ["OT Extension protocol".as_bytes(), session_id].concat();
 
-        let result = self.ote_sender.run::<C>(&ote_sid, OT_WIDTH, &correlations, data);
+        let result = self
+            .ote_sender
+            .run::<C>(&ote_sid, OT_WIDTH, &correlations, data);
 
         let ot_outputs: Vec<Vec<C::Scalar>>;
         let vector_of_tau: Vec<Vec<C::Scalar>>; // Used by the receiver to finish the OT protocol.
@@ -664,10 +680,15 @@ mod tests {
 
     fn prepare_mul_receiver_inputs(
         session_id: &[u8; 32],
-    ) -> (MulReceiver<TestCurve>, MulDataToKeepReceiver<TestCurve>, MulDataToReceiver<TestCurve>) {
+    ) -> (
+        MulReceiver<TestCurve>,
+        MulDataToKeepReceiver<TestCurve>,
+        MulDataToReceiver<TestCurve>,
+    ) {
         // INITIALIZATION
         let (ot_sender, dlog_proof, nonce) = MulReceiver::<TestCurve>::init_phase1(session_id);
-        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::<TestCurve>::init_phase1(session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            MulSender::<TestCurve>::init_phase1(session_id);
         let seed = ot_receiver.seed;
 
         let mul_receiver =
@@ -723,7 +744,8 @@ mod tests {
         let (ot_sender, dlog_proof, nonce) = MulReceiver::<TestCurve>::init_phase1(&session_id);
 
         // Phase 1 - Sender
-        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::<TestCurve>::init_phase1(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            MulSender::<TestCurve>::init_phase1(&session_id);
 
         // Communication round
         // OT: Exchange the proofs and the seed.
@@ -818,7 +840,8 @@ mod tests {
 
         // INITIALIZATION
         let (ot_sender, dlog_proof, nonce) = MulReceiver::<TestCurve>::init_phase1(&session_id);
-        let (ot_receiver, correlation, vec_r, enc_proofs) = MulSender::<TestCurve>::init_phase1(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            MulSender::<TestCurve>::init_phase1(&session_id);
         let seed = ot_receiver.seed;
 
         let mul_receiver =

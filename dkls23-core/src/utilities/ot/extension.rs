@@ -154,7 +154,9 @@ impl OTESender {
     ///
     /// See [`OTReceiver`](super::base::OTReceiver) for an explanation of the outputs.
     #[must_use]
-    pub fn init_phase1<C: DklsCurve>(session_id: &[u8]) -> (OTReceiver, Vec<bool>, Vec<C::Scalar>, Vec<EncProof<C>>) {
+    pub fn init_phase1<C: DklsCurve>(
+        session_id: &[u8],
+    ) -> (OTReceiver, Vec<bool>, Vec<C::Scalar>, Vec<EncProof<C>>) {
         let ot_receiver = OTReceiver::init();
 
         // The choice bits are sampled randomly.
@@ -979,11 +981,13 @@ mod tests {
     ) -> (OTESender, Vec<Vec<Scalar>>, OTEDataToSender) {
         // INITIALIZATION
         let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(session_id);
-        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1::<TestCurve>(session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(session_id);
         let seed = ot_receiver.seed;
 
         let ote_receiver =
-            match OTEReceiver::init_phase2::<TestCurve>(&ot_sender, session_id, &seed, &enc_proofs) {
+            match OTEReceiver::init_phase2::<TestCurve>(&ot_sender, session_id, &seed, &enc_proofs)
+            {
                 Ok(r) => r,
                 Err(error) => {
                     panic!("OTE error: {:?}", error.description);
@@ -1069,8 +1073,9 @@ mod tests {
         let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
 
         let wrong_choice_bits = vec![false; (BATCH_SIZE as usize) - 1];
         let error = ote_receiver
@@ -1089,8 +1094,9 @@ mod tests {
         let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
 
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);
         for _ in 0..BATCH_SIZE {
@@ -1122,13 +1128,15 @@ mod tests {
         let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
 
         // Phase 1 - Sender
-        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(&session_id);
 
         // Communication round (Exchange the proofs and the seed)
         let seed = ot_receiver.seed;
 
         // Phase 2 - Receiver
-        let result_receiver = OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs);
+        let result_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs);
         let ote_receiver = match result_receiver {
             Ok(r) => r,
             Err(error) => {
@@ -1137,8 +1145,13 @@ mod tests {
         };
 
         // Phase 2 - Sender
-        let result_sender =
-            OTESender::init_phase2::<TestCurve>(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof);
+        let result_sender = OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+        );
         let ote_sender = match result_sender {
             Ok(s) => s,
             Err(error) => {
@@ -1282,14 +1295,21 @@ mod tests {
 
         // INITIALIZATION
         let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
-        let (ot_receiver, correlation, vec_r, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
-        let ote_sender =
-            OTESender::init_phase2::<TestCurve>(&ot_receiver, &session_id, correlation, &vec_r, &dlog_proof)
-                .expect("OTE sender init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
+        let ote_sender = OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            correlation,
+            &vec_r,
+            &dlog_proof,
+        )
+        .expect("OTE sender init should succeed");
 
         // PROTOCOL
         let ot_width = 1;
@@ -1331,8 +1351,9 @@ mod tests {
         let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
         let seed = ot_receiver.seed;
 
-        let ote_receiver = OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
-            .expect("OTE receiver init should succeed");
+        let ote_receiver =
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &enc_proofs)
+                .expect("OTE receiver init should succeed");
 
         // Phase 1 - Receiver
         let mut receiver_choice_bits: Vec<bool> = Vec::with_capacity(BATCH_SIZE as usize);

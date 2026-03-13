@@ -231,12 +231,7 @@ pub fn re_key<C: DklsCurve>(
 
     let verifying_shares: BTreeMap<PartyIndex, C::AffinePoint> = parties
         .iter()
-        .map(|p| {
-            (
-                p.party_index,
-                (generator * p.poly_point).to_affine(),
-            )
-        })
+        .map(|p| (p.party_index, (generator * p.poly_point).to_affine()))
         .collect();
 
     let public_key_package = PublicKeyPackage::new(pk, verifying_shares, parameters.clone());
