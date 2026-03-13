@@ -66,7 +66,7 @@ where
 /// This function writes this integer as a byte array.
 #[must_use]
 pub fn scalar_to_bytes<C: CurveArithmetic>(scalar: &C::Scalar) -> Vec<u8> {
-    let fb: FieldBytes<C> = scalar.clone().into();
+    let fb: FieldBytes<C> = (*scalar).into();
     <FieldBytes<C> as AsRef<[u8]>>::as_ref(&fb).to_vec()
 }
 

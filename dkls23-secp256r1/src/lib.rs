@@ -11,7 +11,7 @@ pub use dkls23_core::*;
 use blake2::{digest::consts::U32, Blake2b, Digest as Blake2Digest};
 use elliptic_curve::sec1::ToSec1Point;
 use ripemd::Ripemd160;
-use sha2::{Digest as Sha2Digest, Sha256};
+use sha2::Sha256;
 
 /// Type alias for a DKLs23 party using NIST P-256.
 pub type Party = dkls23_core::protocols::Party<p256::NistP256>;
@@ -98,7 +98,7 @@ pub fn compute_sui_address(pk: &p256::AffinePoint) -> String {
     let pk_bytes = compressed_pk.as_bytes();
 
     let mut hasher = Blake2b256::new();
-    Blake2Digest::update(&mut hasher, &[SUI_SECP256R1_FLAG]);
+    Blake2Digest::update(&mut hasher, [SUI_SECP256R1_FLAG]);
     Blake2Digest::update(&mut hasher, pk_bytes);
     let hash = hasher.finalize();
 
@@ -120,7 +120,7 @@ impl dkls23_core::curve::AddressScheme<p256::NistP256> for SuiAddress {
 
 /// Returns the first 4 bytes of `SHA256(SHA256(data))`.
 fn double_sha256_checksum(data: &[u8]) -> [u8; 4] {
-    let hash = Sha256::digest(&Sha256::digest(data));
+    let hash = Sha256::digest(Sha256::digest(data));
     let mut checksum = [0u8; 4];
     checksum.copy_from_slice(&hash[..4]);
     checksum

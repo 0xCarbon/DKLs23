@@ -4,12 +4,12 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - 'Cargo.toml'
+      - '**/Cargo.toml'
   pull_request:
     branches: [main, dev]
     types: [opened, reopened, synchronize]
     paths:
-      - 'Cargo.toml'
+      - '**/Cargo.toml'
 jobs:
   cargo-unmaintained:
     name: Run cargo unmaintained

@@ -208,7 +208,7 @@ fn hash160(data: &[u8]) -> [u8; 20] {
 
 /// Returns the first 4 bytes of `SHA256(SHA256(data))`.
 fn double_sha256_checksum(data: &[u8]) -> [u8; 4] {
-    let hash = Sha256::digest(&Sha256::digest(data));
+    let hash = Sha256::digest(Sha256::digest(data));
     let mut checksum = [0u8; 4];
     checksum.copy_from_slice(&hash[..4]);
     checksum
