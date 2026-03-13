@@ -39,6 +39,7 @@ screenshots
 segwit
 supertrait
 UInconsistency
+varint
 versioned
 WPKH
 xcarbon
