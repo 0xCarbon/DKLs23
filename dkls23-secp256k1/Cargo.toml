@@ -7,7 +7,7 @@ description = "DKLs23 Threshold ECDSA — secp256k1 / Ethereum"
 repository = "https://github.com/0xCarbon/DKLs23"
 
 [dependencies]
-dkls23-core = { path = "../dkls23-core" }
+dkls23-core = { version = "0.4", path = "../dkls23-core" }
 elliptic-curve = { version = "0.14.0-rc.4", features = ["sec1"] }
 rustcrypto-group = "0.14.0-rc.0"
 k256 = { version = "0.14.0-rc.7" }
