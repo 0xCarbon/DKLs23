@@ -337,6 +337,29 @@ mod tests {
     }
 
     #[test]
+    fn test_large_u32_round_trip() {
+        // Use a value > 250 to distinguish varint from fixint encoding.
+        let msg = MsgA { value: 100_000 };
+        let mut output = PhaseOutput::new();
+        output.add_broadcast(&msg).unwrap();
+
+        let mut input = PhaseInput {
+            broadcasts: BTreeMap::new(),
+            p2p: BTreeMap::new(),
+        };
+        for blob in &output.broadcasts {
+            input
+                .broadcasts
+                .entry(1)
+                .or_default()
+                .extend_from_slice(blob);
+        }
+
+        let decoded: MsgA = input.get_broadcast(1).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
     fn test_truncated_payload() {
         let mut input = PhaseInput {
             broadcasts: BTreeMap::new(),
