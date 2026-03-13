@@ -15,7 +15,7 @@
 use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacEngine};
 
 use elliptic_curve::ops::Reduce;
-use rustcrypto_ff::Field;
+use rustcrypto_ff::PrimeField;
 use rustcrypto_group::prime::PrimeCurveAffine;
 use rustcrypto_group::Curve;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -113,24 +113,17 @@ impl<C: DklsCurve> DerivData<C> {
         let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
         let hmac_bytes = hmac_result.to_byte_array();
 
-        // Use Reduce to convert the HMAC left half directly to a scalar.
-        // The probability of the result being zero (which would indicate
-        // the original value was >= ORDER) is negligible.
+        // BIP-32 requires IL < n (curve order). We reduce modulo n then
+        // verify the value wasn't changed — if it was, IL >= n.
         let tweak_bytes: [u8; CHAIN_CODE_LEN] = hmac_bytes[..CHAIN_CODE_LEN]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
         let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
         let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
-
-        // If the tweak is zero after reduction, the original value was likely >= ORDER.
-        // This is extremely unlikely but we check for BIP-32 compliance.
-        if tweak == <C::Scalar as Field>::ZERO {
-            // Check if the original bytes were all zeros (legitimate zero) vs >= ORDER
-            if tweak_bytes.iter().any(|&b| b != 0) {
-                return Err(ErrorDeriv::new(
-                    "Very improbable: Child index results in value not allowed by BIP-32!",
-                ));
-            }
+        if tweak.to_repr() != *field_bytes {
+            return Err(ErrorDeriv::new(
+                "BIP-32: HMAC left half >= curve order, child index is invalid",
+            ));
         }
 
         let chain_code: ChainCode = hmac_bytes[CHAIN_CODE_LEN..]
@@ -327,10 +320,9 @@ impl<C: DklsCurve> PublicKeyPackage<C> {
             .expect("Half of hmac is guaranteed to be 32 bytes!");
         let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
         let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
-
-        if tweak == <C::Scalar as Field>::ZERO && tweak_bytes.iter().any(|&b| b != 0) {
+        if tweak.to_repr() != *field_bytes {
             return Err(ErrorDeriv::new(
-                "Very improbable: Child index results in value not allowed by BIP-32!",
+                "BIP-32: HMAC left half >= curve order, child index is invalid",
             ));
         }
 
