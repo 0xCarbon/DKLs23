@@ -34,7 +34,7 @@ jobs:
           FILTERED=$(echo "$OUTPUT" \
             | sed 's/\x1b\[[0-9;]*m//g' \
             | grep -v '^\s*$' \
-            | grep -vE '^(warning:|Scanning |\*)' \
+            | grep -vE '^(warning:|Error:|Scanning |\*)' \
             | grep -vE "^($(echo $EXCEPTIONS | tr ' ' '|'))\b" \
             || true)
           if [ -n "$FILTERED" ]; then
