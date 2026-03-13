@@ -32,42 +32,21 @@ fn append_len_prefixed(encoded: &mut Vec<u8>, component: &[u8]) {
     encoded.extend_from_slice(component);
 }
 
+#[cfg(test)]
 fn legacy_salted_hash(msg: &[u8], salt: &[u8]) -> HashOutput {
     let concatenation = [salt, msg].concat();
     hash_bytes(&concatenation)
 }
 
-/// Legacy salted hash API.
-///
-/// Deprecated for protocol-internal use. Prefer [`tagged_hash`] with a
-/// dedicated oracle tag from `utilities::oracle_tags`.
+/// Legacy salted hash API — test-only, not part of the public or crate API.
+#[cfg(test)]
+#[allow(deprecated)]
 #[deprecated(
     since = "0.2.0",
     note = "Use tagged_hash/tagged_hash_as_int/tagged_hash_as_scalar for protocol oracles."
 )]
-/// Hash with result in bytes.
-#[must_use]
-pub fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
+pub(crate) fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
     legacy_salted_hash(msg, salt)
-}
-
-/// Legacy salted hash API returning a scalar.
-///
-/// Deprecated for protocol-internal use. Prefer [`tagged_hash_as_scalar`].
-#[deprecated(
-    since = "0.2.0",
-    note = "Use tagged_hash/tagged_hash_as_int/tagged_hash_as_scalar for protocol oracles."
-)]
-/// Hash with result as a scalar.
-///
-/// It takes the hash bytes and reduces them modulo the order of the curve.
-#[must_use]
-pub fn hash_as_scalar<C: CurveArithmetic>(msg: &[u8], salt: &[u8]) -> C::Scalar
-where
-    C::Scalar: Reduce<FieldBytes<C>>,
-{
-    let as_bytes = legacy_salted_hash(msg, salt);
-    reduce_hash_to_scalar::<C>(&as_bytes)
 }
 
 /// Length-delimited tagged hash with result in bytes.

@@ -41,6 +41,7 @@ use rand::RngExt;
 use serde::de::Error;
 #[cfg(feature = "serde")]
 use serde::{Deserializer, Serializer};
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::curve::DklsCurve;
@@ -353,8 +354,13 @@ impl OTESender {
             verify_sender.push(verify_sender_i);
         }
 
-        // The two values must agree.
-        if verify_q != verify_sender {
+        // The two values must agree (constant-time comparison to prevent
+        // timing side-channels that could help forge consistency-check values).
+        let consistent = verify_q
+            .iter()
+            .zip(verify_sender.iter())
+            .fold(subtle::Choice::from(1u8), |acc, (a, b)| acc & a.ct_eq(b));
+        if !bool::from(consistent) {
             return Err(ErrorOT::new(
                 "Receiver cheated in OTE: Consistency check failed!",
             ));

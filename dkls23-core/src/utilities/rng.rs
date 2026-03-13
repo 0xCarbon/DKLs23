@@ -23,5 +23,16 @@ pub fn get_rng() -> ThreadRng {
 
 #[cfg(all(test, feature = "insecure-rng"))]
 pub fn get_rng() -> StdRng {
-    rand::rngs::StdRng::seed_from_u64(DEFAULT_SEED)
+    use std::cell::RefCell;
+
+    thread_local! {
+        static RNG: RefCell<StdRng> = RefCell::new(StdRng::seed_from_u64(DEFAULT_SEED));
+    }
+
+    RNG.with(|cell| {
+        let mut parent = cell.borrow_mut();
+        // Fork a child RNG from the thread-local state. This advances the
+        // parent so that the next call returns a different child.
+        StdRng::from_rng(&mut *parent)
+    })
 }

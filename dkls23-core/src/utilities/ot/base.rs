@@ -64,6 +64,11 @@ impl<C: DklsCurve> OTSender<C> {
     // logarithm. Thus, we isolate this part from the rest for efficiency.
 
     /// Initializes the protocol for a given session id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Fischlin proof-of-work search is exhausted, which is
+    /// astronomically unlikely with a correct RNG.
     #[must_use]
     pub fn init(session_id: &[u8]) -> OTSender<C> {
         // We sample a nonzero random scalar.
@@ -72,7 +77,8 @@ impl<C: DklsCurve> OTSender<C> {
             s = <C::Scalar as Field>::random(&mut rng::get_rng());
         }
 
-        let proof = DLogProof::<C>::prove(&s, session_id);
+        let proof = DLogProof::<C>::prove(&s, session_id)
+            .expect("Fischlin proof-of-work search exhausted — RNG failure");
 
         OTSender { s, proof }
     }
