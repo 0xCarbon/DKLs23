@@ -393,7 +393,6 @@ pub fn parse_path(path: &str) -> Result<Vec<u32>, ErrorDeriv> {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
 
     use super::*;
@@ -516,7 +515,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)

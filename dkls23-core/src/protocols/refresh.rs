@@ -1178,7 +1178,6 @@ impl<C: DklsCurve> Party<C> {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
 
     use super::*;
@@ -1188,7 +1187,7 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::signing::*;
     use crate::protocols::{AbortKind, AbortReason, Parameters};
-    use crate::utilities::hashes::hash;
+    use crate::utilities::hashes::tagged_hash;
 
     use rand::RngExt;
 
@@ -1602,7 +1601,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1884,7 +1883,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)

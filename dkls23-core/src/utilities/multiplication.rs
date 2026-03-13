@@ -73,7 +73,7 @@ pub struct MulReceiver<C: DklsCurve> {
 }
 
 /// Data transmitted by the sender to the receiver after his phase.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",

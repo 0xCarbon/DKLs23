@@ -318,6 +318,10 @@ pub(crate) fn step2<C: DklsCurve>(
 ///
 /// The Step 4 of the protocol is broadcasting the rest of [`ProofCommitment`] after
 /// having received all commitments.
+/// # Panics
+///
+/// Panics if the Fischlin proof-of-work search is exhausted, which is
+/// astronomically unlikely with a correct RNG.
 #[must_use]
 pub(crate) fn step3<C: DklsCurve>(
     party_index: PartyIndex,
@@ -326,7 +330,8 @@ pub(crate) fn step3<C: DklsCurve>(
 ) -> (C::Scalar, ProofCommitment<C>) {
     let poly_point: C::Scalar = poly_fragments.iter().copied().sum();
 
-    let (proof, commitment) = DLogProof::<C>::prove_commit(&poly_point, session_id);
+    let (proof, commitment) = DLogProof::<C>::prove_commit(&poly_point, session_id)
+        .expect("Fischlin proof-of-work search exhausted — RNG failure");
     let proof_commitment = ProofCommitment {
         index: party_index,
         proof,

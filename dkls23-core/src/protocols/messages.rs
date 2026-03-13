@@ -1,3 +1,4 @@
+use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -77,7 +78,16 @@ fn find_in_stream<T: MessageTag>(stream: &[u8]) -> Result<T, MessageError> {
             return Err(MessageError::InvalidFrame("truncated payload".into()));
         }
         if tag == T::TAG {
-            return bincode::deserialize(&stream[offset..offset + len])
+            // Limit deserialization to the actual payload size to prevent
+            // internal length-prefix attacks (e.g. a tiny frame claiming a
+            // multi-GB string). We cap at the payload length already validated
+            // by the frame header.
+            let payload = &stream[offset..offset + len];
+            return bincode::options()
+                .with_fixint_encoding()
+                .with_limit(len as u64)
+                .allow_trailing_bytes()
+                .deserialize(payload)
                 .map_err(|e| MessageError::Deserialization(e.to_string()));
         }
         offset += len;

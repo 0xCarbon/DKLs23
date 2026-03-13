@@ -359,9 +359,7 @@ impl OTESender {
         let consistent = verify_q
             .iter()
             .zip(verify_sender.iter())
-            .fold(subtle::Choice::from(1u8), |acc, (a, b)| {
-                acc & a.ct_eq(b)
-            });
+            .fold(subtle::Choice::from(1u8), |acc, (a, b)| acc & a.ct_eq(b));
         if !bool::from(consistent) {
             return Err(ErrorOT::new(
                 "Receiver cheated in OTE: Consistency check failed!",

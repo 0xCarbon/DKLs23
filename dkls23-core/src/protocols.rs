@@ -482,7 +482,7 @@ impl Abort {
 }
 
 /// Saves the sender and receiver of a message.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PartiesMessage {
     pub sender: PartyIndex,

@@ -46,7 +46,7 @@ use crate::utilities::ot::extension::OTEDataToSender;
 use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignData {
     pub sign_id: Vec<u8>,
@@ -61,18 +61,19 @@ pub struct SignData {
 /// Transmit - Signing.
 ///
 /// The message is produced/sent during Phase 1 and used in Phase 2.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
     pub commitment: HashOutput,
+    #[zeroize(skip)]
     pub mul_transmit: OTEDataToSender,
 }
 
 /// Transmit - Signing.
 ///
 /// The message is produced/sent during Phase 2 and used in Phase 3.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -83,19 +84,24 @@ pub struct TransmitPhase1to2 {
 )]
 pub struct TransmitPhase2to3<C: DklsCurve> {
     pub parties: PartiesMessage,
+    #[zeroize(skip)]
     pub gamma_u: C::AffinePoint,
+    #[zeroize(skip)]
     pub gamma_v: C::AffinePoint,
     pub psi: C::Scalar,
+    #[zeroize(skip)]
     pub public_share: C::AffinePoint,
+    #[zeroize(skip)]
     pub instance_point: C::AffinePoint,
     pub salt: Vec<u8>,
+    #[zeroize(skip)]
     pub mul_transmit: MulDataToReceiver<C>,
 }
 
 /// Broadcast - Signing.
 ///
 /// The message is produced/sent during Phase 3 and used in Phase 4.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -1011,13 +1017,12 @@ pub fn verify_ecdsa_signature<C: DklsCurve>(
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::protocols::dkg::*;
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
-    use crate::utilities::hashes::hash;
+    use crate::utilities::hashes::tagged_hash;
     use ecdsa::RecoveryId;
     use elliptic_curve::sec1::ToSec1Point;
     use elliptic_curve::Curve as _;
@@ -1058,7 +1063,7 @@ mod tests {
         // SIGNING
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1221,7 +1226,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1380,7 +1385,7 @@ mod tests {
         assert_eq!(
             hashed_message,
             Scalar::reduce(&U256::from_be_hex(
-                "ece3e5d77980859352a5e702cb429f3d4dbdc12443e359ae60d15fe3c0333c0d"
+                "c73f9dea26b12228c23b66686b090b61bd6a61a80c665e058320eb7c2433c9ac"
             ))
         );
 
@@ -1600,7 +1605,7 @@ mod tests {
         // SIGNING (as in test_signing)
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         // For simplicity, we are testing only the first parties.
         let executing_parties: Vec<PartyIndex> = (1..=parameters.threshold)
@@ -1756,7 +1761,7 @@ mod tests {
                 .random::<[u8; crate::utilities::ID_LEN]>()
                 .to_vec(),
             counterparties: vec![PartyIndex::new(2).unwrap()],
-            message_hash: hash("Message to sign!".as_bytes(), &[]),
+            message_hash: tagged_hash(b"test-sign", &[b"Message to sign!"]),
         };
 
         let received = vec![Broadcast3to4 {
@@ -1773,7 +1778,7 @@ mod tests {
     #[test]
     fn test_verify_ecdsa_signature_rejects_malformed_hex() {
         use k256::AffinePoint;
-        let message = hash("Message to sign!".as_bytes(), &[]);
+        let message = tagged_hash(b"test-sign", &[b"Message to sign!"]);
         let pk = AffinePoint::GENERATOR;
 
         assert!(!verify_ecdsa_signature::<TestCurve>(
@@ -1805,7 +1810,7 @@ mod tests {
                 .random::<[u8; crate::utilities::ID_LEN]>()
                 .to_vec(),
             counterparties: vec![PartyIndex::new(2).unwrap(), PartyIndex::new(2).unwrap()],
-            message_hash: hash("Message to sign!".as_bytes(), &[]),
+            message_hash: tagged_hash(b"test-sign", &[b"Message to sign!"]),
         };
 
         let abort = parties[0]
@@ -1854,7 +1859,7 @@ mod tests {
             re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
 
         let sign_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
-        let message_to_sign = hash("Message to sign!".as_bytes(), &[]);
+        let message_to_sign = tagged_hash(b"test-sign", &[b"Message to sign!"]);
 
         let mut all_data: BTreeMap<PartyIndex, SignData> = BTreeMap::new();
         all_data.insert(

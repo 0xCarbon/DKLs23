@@ -46,11 +46,29 @@ use crate::curve::DklsCurve;
 use crate::utilities::hashes::{
     point_to_bytes, scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput,
 };
+use std::fmt;
+
 use crate::utilities::oracle_tags::{
     TAG_DLOG_PROOF_COMMITMENT, TAG_DLOG_PROOF_FISCHLIN, TAG_ENCPROOF_FS,
 };
 use crate::utilities::rng;
 use subtle::ConstantTimeEq;
+
+/// Error returned when the Fischlin proof-of-work search is exhausted
+/// without finding all required hash collisions.
+#[derive(Debug, Clone)]
+pub struct ProofSearchExhausted;
+
+impl fmt::Display for ProofSearchExhausted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Fischlin proof-of-work search exhausted without finding all required hash collisions"
+        )
+    }
+}
+
+impl std::error::Error for ProofSearchExhausted {}
 
 /// Constants for the randomized Fischlin transform.
 pub const R: u16 = 64;
@@ -195,8 +213,14 @@ pub struct DLogProof<C: DklsCurve> {
 
 impl<C: DklsCurve> DLogProof<C> {
     /// Computes a proof for the witness `scalar`.
-    #[must_use]
-    pub fn prove(scalar: &C::Scalar, session_id: &[u8]) -> DLogProof<C> {
+    ///
+    /// Returns an error if the Fischlin proof-of-work search is exhausted
+    /// without finding all required hash collisions. This is astronomically
+    /// unlikely with a correct RNG but must not be silently ignored.
+    pub fn prove(
+        scalar: &C::Scalar,
+        session_id: &[u8],
+    ) -> Result<DLogProof<C>, ProofSearchExhausted> {
         // We execute Step 1 r times.
         let mut rand_commitments: Vec<C::AffinePoint> = Vec::with_capacity(R as usize);
         let mut states: Vec<C::Scalar> = Vec::with_capacity(R as usize);
@@ -316,6 +340,10 @@ impl<C: DklsCurve> DLogProof<C> {
                 // If we were not successful, we try again.
                 first_counter += 1;
             }
+
+            if !flag {
+                return Err(ProofSearchExhausted);
+            }
         }
 
         // We put together the vectors.
@@ -325,11 +353,11 @@ impl<C: DklsCurve> DLogProof<C> {
         let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
         let point = (generator * scalar).to_affine();
 
-        DLogProof {
+        Ok(DLogProof {
             point,
             rand_commitments,
             proofs,
-        }
+        })
     }
 
     /// Verification of a proof of discrete logarithm.
@@ -419,9 +447,12 @@ impl<C: DklsCurve> DLogProof<C> {
     ///
     /// The commitment is transmitted first and the proof is sent later
     /// when needed.
-    #[must_use]
-    pub fn prove_commit(scalar: &C::Scalar, session_id: &[u8]) -> (DLogProof<C>, HashOutput) {
-        let proof = Self::prove(scalar, session_id);
+    /// Computes a proof with a commitment, propagating proof generation errors.
+    pub fn prove_commit(
+        scalar: &C::Scalar,
+        session_id: &[u8],
+    ) -> Result<(DLogProof<C>, HashOutput), ProofSearchExhausted> {
+        let proof = Self::prove(scalar, session_id)?;
 
         //Computes the commitment (it's the hash of DLogProof in bytes).
         let point_as_bytes = point_to_bytes::<C>(&proof.point);
@@ -459,7 +490,7 @@ impl<C: DklsCurve> DLogProof<C> {
             &[session_id, &msg_for_commitment],
         );
 
-        (proof, commitment)
+        Ok((proof, commitment))
     }
 
     /// Verifies a proof and checks it against the commitment.
@@ -934,7 +965,7 @@ mod tests {
     fn test_dlog_proof() {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
-        let proof = DLogProof::<TestCurve>::prove(&scalar, &session_id);
+        let proof = DLogProof::<TestCurve>::prove(&scalar, &session_id).unwrap();
         assert!(DLogProof::<TestCurve>::verify(&proof, &session_id));
     }
 
@@ -944,7 +975,7 @@ mod tests {
     fn test_dlog_proof_fail_proof() {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
-        let mut proof = DLogProof::<TestCurve>::prove(&scalar, &session_id);
+        let mut proof = DLogProof::<TestCurve>::prove(&scalar, &session_id).unwrap();
         proof.proofs[0].challenge_response *= Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::<TestCurve>::verify(&proof, &session_id)));
     }
@@ -954,7 +985,7 @@ mod tests {
     fn test_dlog_proof_rejects_duplicate_rand_commitments() {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
-        let mut proof = DLogProof::<TestCurve>::prove(&scalar, &session_id);
+        let mut proof = DLogProof::<TestCurve>::prove(&scalar, &session_id).unwrap();
         proof.rand_commitments[1] = proof.rand_commitments[0];
         assert!(!DLogProof::<TestCurve>::verify(&proof, &session_id));
     }
@@ -965,14 +996,15 @@ mod tests {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
 
-        let mut proof_short_commitments = DLogProof::<TestCurve>::prove(&scalar, &session_id);
+        let mut proof_short_commitments =
+            DLogProof::<TestCurve>::prove(&scalar, &session_id).unwrap();
         proof_short_commitments.rand_commitments.pop();
         assert!(!DLogProof::<TestCurve>::verify(
             &proof_short_commitments,
             &session_id
         ));
 
-        let mut proof_short_proofs = DLogProof::<TestCurve>::prove(&scalar, &session_id);
+        let mut proof_short_proofs = DLogProof::<TestCurve>::prove(&scalar, &session_id).unwrap();
         proof_short_proofs.proofs.pop();
         assert!(!DLogProof::<TestCurve>::verify(
             &proof_short_proofs,
@@ -987,7 +1019,7 @@ mod tests {
         let prove_sid = rng::get_rng().random::<[u8; 32]>();
         let mut verify_sid = prove_sid;
         verify_sid[0] ^= 1;
-        let proof = DLogProof::<TestCurve>::prove(&scalar, &prove_sid);
+        let proof = DLogProof::<TestCurve>::prove(&scalar, &prove_sid).unwrap();
         assert!(!DLogProof::<TestCurve>::verify(&proof, &verify_sid));
     }
 
@@ -997,7 +1029,8 @@ mod tests {
     fn test_dlog_proof_commit() {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
-        let (proof, commitment) = DLogProof::<TestCurve>::prove_commit(&scalar, &session_id);
+        let (proof, commitment) =
+            DLogProof::<TestCurve>::prove_commit(&scalar, &session_id).unwrap();
         assert!(DLogProof::<TestCurve>::decommit_verify(
             &proof,
             &commitment,
@@ -1011,7 +1044,8 @@ mod tests {
     fn test_dlog_proof_commit_fail_proof() {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
-        let (mut proof, commitment) = DLogProof::<TestCurve>::prove_commit(&scalar, &session_id);
+        let (mut proof, commitment) =
+            DLogProof::<TestCurve>::prove_commit(&scalar, &session_id).unwrap();
         proof.proofs[0].challenge_response *= Scalar::from(2u32); //Changing the proof
         assert!(!(DLogProof::<TestCurve>::decommit_verify(&proof, &commitment, &session_id)));
     }
@@ -1022,7 +1056,8 @@ mod tests {
     fn test_dlog_proof_commit_fail_commitment() {
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let session_id = rng::get_rng().random::<[u8; 32]>();
-        let (proof, mut commitment) = DLogProof::<TestCurve>::prove_commit(&scalar, &session_id);
+        let (proof, mut commitment) =
+            DLogProof::<TestCurve>::prove_commit(&scalar, &session_id).unwrap();
         if commitment[0] == 0 {
             commitment[0] = 1;
         } else {
