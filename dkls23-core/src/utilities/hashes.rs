@@ -1,15 +1,7 @@
 //! Functions relating hashes and byte conversions.
 //!
-//! We are using SHA-256 from SHA-2 as in the implementation of the
-//! previous version of the `DKLs` protocol (<https://gitlab.com/neucrypt/mpecdsa/-/blob/release/src/lib.rs>).
-//!
-//! As explained by one of the authors (see <https://youtu.be/-d0Ny7NAG-w?si=POTKF1BwwGOzvIpL&t=3065>),
-//! each subprotocol should use a different random oracle. This crate implements
-//! explicit domain separation via [`tagged_hash`] and fixed tags in
-//! `utilities::oracle_tags`.
-//!
-//! The legacy `hash(msg, salt)` helpers are retained for compatibility at the
-//! API level, but internal protocol oracles should use tagged hashing.
+//! Each subprotocol uses a different random oracle via [`tagged_hash`]
+//! and fixed tags in `utilities::oracle_tags`.
 
 use bitcoin_hashes::sha256;
 use elliptic_curve::ops::Reduce;
@@ -30,23 +22,6 @@ fn hash_bytes(msg: &[u8]) -> HashOutput {
 fn append_len_prefixed(encoded: &mut Vec<u8>, component: &[u8]) {
     encoded.extend_from_slice(&(component.len() as u64).to_be_bytes());
     encoded.extend_from_slice(component);
-}
-
-#[cfg(test)]
-fn legacy_salted_hash(msg: &[u8], salt: &[u8]) -> HashOutput {
-    let concatenation = [salt, msg].concat();
-    hash_bytes(&concatenation)
-}
-
-/// Legacy salted hash API — test-only, not part of the public or crate API.
-#[cfg(test)]
-#[allow(deprecated)]
-#[deprecated(
-    since = "0.2.0",
-    note = "Use tagged_hash/tagged_hash_as_int/tagged_hash_as_scalar for protocol oracles."
-)]
-pub(crate) fn hash(msg: &[u8], salt: &[u8]) -> HashOutput {
-    legacy_salted_hash(msg, salt)
 }
 
 /// Length-delimited tagged hash with result in bytes.
@@ -108,7 +83,6 @@ where
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
 
     use super::*;
@@ -116,22 +90,6 @@ mod tests {
     use k256::elliptic_curve::{point::AffineCoordinates, Field};
     use k256::{AffinePoint, Scalar, Secp256k1};
     use rand::RngExt;
-
-    /// Tests if [`hash`] really works as `SHA-256` is intended.
-    #[test]
-    fn test_hash() {
-        let msg_string = "Testing message";
-        let salt_string = "Testing salt";
-
-        let msg = msg_string.as_bytes();
-        let salt = salt_string.as_bytes();
-
-        assert_eq!(
-            hash(msg, salt).to_vec(),
-            hex::decode("847bf2f0d27a519b25e519efebc9d509316539b89ee8f6f09ef6d2abc08113ba")
-                .unwrap()
-        );
-    }
 
     #[test]
     fn test_tagged_hash_is_length_delimited() {

@@ -143,7 +143,6 @@ pub struct Party<C: DklsCurve> {
     pub derivation_data: DerivData<C>,
 
     /// Address calculated from the public key.
-    #[cfg_attr(feature = "serde", serde(alias = "eth_address"))]
     pub address: String,
 }
 
