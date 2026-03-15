@@ -936,9 +936,10 @@ impl<C: DklsCurve> Party<C> {
         let rx_repr_slice: &[u8] = rx_repr.as_ref();
         let is_x_reduced = x_bytes_original.as_slice() != rx_repr_slice;
 
-        let rec_id = ecdsa::RecoveryId::new(is_y_odd, is_x_reduced);
+        // Recovery ID: bit 0 = y_is_odd, bit 1 = x_is_reduced
+        let rec_id = (is_y_odd as u8) | ((is_x_reduced as u8) << 1);
 
-        Ok((signature, rec_id.into()))
+        Ok((signature, rec_id))
     }
 }
 
@@ -1023,7 +1024,6 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
     use crate::utilities::hashes::tagged_hash;
-    use ecdsa::RecoveryId;
     use elliptic_curve::sec1::ToSec1Point;
     use elliptic_curve::Curve as _;
     use elliptic_curve::CurveArithmetic;
@@ -1402,11 +1402,11 @@ mod tests {
             [crate::utilities::ID_LEN - 1]
             & 1
             == 1;
-        let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
+        let expected_rec_id = (is_y_odd as u8) | ((is_x_reduced as u8) << 1);
 
         // We compare the results.
         assert_eq!(signature.0, expected_signature);
-        assert_eq!(signature.1, u8::from(expected_rec_id));
+        assert_eq!(signature.1, expected_rec_id);
     }
 
     /// Tests DKG and signing together. The main purpose is to

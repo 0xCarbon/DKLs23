@@ -49,13 +49,11 @@
 
 use std::collections::BTreeMap;
 
-use hex;
 use rustcrypto_ff::Field;
 use rustcrypto_group::prime::PrimeCurveAffine;
 use rustcrypto_group::Curve as GroupCurve;
 
 use rand::RngExt;
-use sha3::{Digest, Keccak256};
 
 use crate::curve::DklsCurve;
 use crate::protocols::derivation::{ChainCode, DerivData, CHAIN_CODE_LEN};
@@ -1123,54 +1121,12 @@ pub(crate) fn phase4<C: DklsCurve>(
     Ok((party, public_key_package))
 }
 
-/// Computes the Ethereum address given a secp256k1 public key.
-///
-/// This function is specific to secp256k1/Ethereum and will be moved
-/// to the `dkls23-secp256k1` crate in a future release.
-#[must_use]
-pub fn compute_eth_address(pk: &k256::AffinePoint) -> String {
-    use elliptic_curve::sec1::ToSec1Point;
-    // Serialize the public key in uncompressed form
-    let uncompressed_pk = pk.to_sec1_point(false);
-
-    // Compute the Keccak256 hash of the serialized public key
-    // Skip the "04" SEC-1 prefix, see: https://www.secg.org/sec1-v2.pdf sec 3.3.3 page 11
-    let mut hasher = Keccak256::new();
-    hasher.update(&uncompressed_pk.as_bytes()[1..]);
-
-    // Take the last 20 bytes of the hash and convert to a hex string
-    let full_hash = hasher.finalize_reset();
-    const ETH_ADDR_OFFSET: usize = 12;
-    let address = hex::encode(&full_hash[ETH_ADDR_OFFSET..]);
-
-    // Compute the Keccak256 hash of the lowercase hexadecimal address
-    hasher.update(address.to_lowercase().as_bytes());
-    let hash_bytes = hasher.finalize();
-
-    // ERC-55: Mixed-case checksum address encoding: https://eips.ethereum.org/EIPS/eip-55
-    format!(
-        "0x{}",
-        address
-            .chars()
-            .enumerate()
-            .map(|(i, c)| {
-                if c.is_alphabetic() && (hash_bytes[i / 2] >> (4 * (1 - i % 2)) & 0x0f) >= 8 {
-                    c.to_ascii_uppercase()
-                } else {
-                    c
-                }
-            })
-            .collect::<String>()
-    )
-}
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use elliptic_curve::CurveArithmetic;
-    use k256::elliptic_curve::ops::Reduce;
-    use k256::{AffinePoint, Scalar, U256};
+    use k256::{AffinePoint, Scalar};
     use rand::RngExt;
 
     type TestCurve = k256::Secp256k1;
@@ -1880,7 +1836,7 @@ mod tests {
                 &mul_received_3to4[i as usize],
                 &bip_broadcast_2to4,
                 &bip_broadcast_3to4,
-                compute_eth_address,
+                no_address,
             );
             match result {
                 Err(abort) => {
@@ -1920,25 +1876,7 @@ mod tests {
             assert!(pkg0.verify_share(party.party_index, &expected_share));
         }
 
-        // Address must match the address from Party.
-        assert_eq!(compute_eth_address(&parties[0].pk), parties[0].address);
-    }
-
-    /// Tests if [`compute_eth_address`] correctly
-    /// computes the Ethereum address for a fixed public key.
-    #[test]
-    fn test_compute_eth_address() {
-        // You should test different values using, for example,
-        // https://www.rfctools.com/ethereum-address-test-tool/.
-        let sk = Scalar::reduce(&U256::from_be_hex(
-            "0249815B0D7E186DB61E7A6AAD6226608BB1C48B309EA8903CAB7A7283DA64A5",
-        ));
-        let pk = (AffinePoint::GENERATOR * sk).to_affine();
-
-        let address = compute_eth_address(&pk);
-        assert_eq!(
-            address,
-            "0x2afDdfDF813E567A6f357Da818B16E2dae08599F".to_string()
-        );
+        // Address must be empty (no_address stub).
+        assert_eq!(parties[0].address, String::new());
     }
 }
