@@ -3,10 +3,10 @@
 //! Each subprotocol uses a different random oracle via [`tagged_hash`]
 //! and fixed tags in `utilities::oracle_tags`.
 
-use sha2::{Digest, Sha256};
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::{CurveArithmetic, FieldBytes};
 use rustcrypto_group::GroupEncoding;
+use sha2::{Digest, Sha256};
 
 use crate::SECURITY;
 

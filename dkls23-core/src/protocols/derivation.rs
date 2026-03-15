@@ -106,8 +106,8 @@ impl<C: DklsCurve> DerivData<C> {
         &self,
         child_number: u32,
     ) -> Result<(C::Scalar, ChainCode, Fingerprint), ErrorDeriv> {
-        let mut hmac_engine =
-            <Hmac<Sha512> as KeyInit>::new_from_slice(&self.chain_code[..]).expect("HMAC accepts any key length");
+        let mut hmac_engine = <Hmac<Sha512> as KeyInit>::new_from_slice(&self.chain_code[..])
+            .expect("HMAC accepts any key length");
 
         let pk_as_bytes = point_to_bytes::<C>(&self.pk);
         Mac::update(&mut hmac_engine, &pk_as_bytes);
@@ -310,8 +310,8 @@ impl<C: DklsCurve> PublicKeyPackage<C> {
             ));
         }
 
-        let mut hmac_engine =
-            <Hmac<Sha512> as KeyInit>::new_from_slice(&chain_code[..]).expect("HMAC accepts any key length");
+        let mut hmac_engine = <Hmac<Sha512> as KeyInit>::new_from_slice(&chain_code[..])
+            .expect("HMAC accepts any key length");
         let pk_as_bytes = point_to_bytes::<C>(self.verifying_key());
         Mac::update(&mut hmac_engine, &pk_as_bytes);
         Mac::update(&mut hmac_engine, &child_number.to_be_bytes());
