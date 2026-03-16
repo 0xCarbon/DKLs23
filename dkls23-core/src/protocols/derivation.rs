@@ -12,7 +12,9 @@
 //! ATTENTION: Since no party has the full secret key, it is not convenient
 //! to do hardened derivation. Thus, we only implement normal derivation.
 
-use bitcoin_hashes::{hash160, sha512, GeneralHash, Hash, HashEngine, Hmac, HmacEngine};
+use hmac::{Hmac, KeyInit, Mac};
+use ripemd::Ripemd160;
+use sha2::{Digest, Sha256, Sha512};
 
 use elliptic_curve::ops::Reduce;
 use rustcrypto_ff::PrimeField;
@@ -104,21 +106,25 @@ impl<C: DklsCurve> DerivData<C> {
         &self,
         child_number: u32,
     ) -> Result<(C::Scalar, ChainCode, Fingerprint), ErrorDeriv> {
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
+        let mut hmac_engine =
+            Hmac::<Sha512>::new_from_slice(&self.chain_code).expect("HMAC accepts any key length");
 
         let pk_as_bytes = point_to_bytes::<C>(&self.pk);
-        hmac_engine.input(&pk_as_bytes);
-        hmac_engine.input(&child_number.to_be_bytes());
+        hmac_engine.update(&pk_as_bytes);
+        hmac_engine.update(&child_number.to_be_bytes());
 
-        let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
-        let hmac_bytes = hmac_result.to_byte_array();
+        let hmac_result = hmac_engine.finalize().into_bytes();
+        let hmac_bytes: [u8; 64] = hmac_result.into();
 
         // BIP-32 requires IL < n (curve order). We reduce modulo n then
         // verify the value wasn't changed — if it was, IL >= n.
         let tweak_bytes: [u8; CHAIN_CODE_LEN] = hmac_bytes[..CHAIN_CODE_LEN]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
-        let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
+        let field_bytes: &elliptic_curve::FieldBytes<C> = tweak_bytes
+            .as_slice()
+            .try_into()
+            .expect("tweak_bytes length matches field size");
         let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
         if tweak.to_repr() != *field_bytes {
             return Err(ErrorDeriv::new(
@@ -131,10 +137,9 @@ impl<C: DklsCurve> DerivData<C> {
             .expect("Half of hmac is guaranteed to be 32 bytes!");
 
         // We also calculate the fingerprint here for convenience.
-        let mut engine = hash160::Hash::engine();
-        engine.input(&pk_as_bytes);
-        let hash_result = hash160::Hash::from_engine(engine);
-        let fingerprint: Fingerprint = hash_result.to_byte_array()[0..4]
+        // HASH160 = RIPEMD160(SHA256(data))
+        let hash_result = Ripemd160::digest(Sha256::digest(&pk_as_bytes));
+        let fingerprint: Fingerprint = hash_result[0..4]
             .try_into()
             .expect("4 is the fingerprint length!");
 
@@ -308,17 +313,21 @@ impl<C: DklsCurve> PublicKeyPackage<C> {
             ));
         }
 
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&chain_code[..]);
+        let mut hmac_engine =
+            Hmac::<Sha512>::new_from_slice(chain_code).expect("HMAC accepts any key length");
         let pk_as_bytes = point_to_bytes::<C>(self.verifying_key());
-        hmac_engine.input(&pk_as_bytes);
-        hmac_engine.input(&child_number.to_be_bytes());
-        let hmac_result = Hmac::<sha512::Hash>::from_engine(hmac_engine);
-        let hmac_bytes = hmac_result.to_byte_array();
+        hmac_engine.update(&pk_as_bytes);
+        hmac_engine.update(&child_number.to_be_bytes());
+        let hmac_result = hmac_engine.finalize().into_bytes();
+        let hmac_bytes: [u8; 64] = hmac_result.into();
 
         let tweak_bytes: [u8; CHAIN_CODE_LEN] = hmac_bytes[..CHAIN_CODE_LEN]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
-        let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
+        let field_bytes: &elliptic_curve::FieldBytes<C> = tweak_bytes
+            .as_slice()
+            .try_into()
+            .expect("tweak_bytes length matches field size");
         let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
         if tweak.to_repr() != *field_bytes {
             return Err(ErrorDeriv::new(

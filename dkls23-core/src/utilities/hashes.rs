@@ -3,10 +3,10 @@
 //! Each subprotocol uses a different random oracle via [`tagged_hash`]
 //! and fixed tags in `utilities::oracle_tags`.
 
-use bitcoin_hashes::sha256;
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::{CurveArithmetic, FieldBytes};
 use rustcrypto_group::GroupEncoding;
+use sha2::{Digest, Sha256};
 
 use crate::SECURITY;
 
@@ -16,7 +16,7 @@ use crate::SECURITY;
 pub type HashOutput = [u8; SECURITY as usize];
 
 fn hash_bytes(msg: &[u8]) -> HashOutput {
-    sha256::Hash::hash(msg).to_byte_array()
+    Sha256::digest(msg).into()
 }
 
 fn append_len_prefixed(encoded: &mut Vec<u8>, component: &[u8]) {
@@ -56,7 +56,10 @@ fn reduce_hash_to_scalar<C: CurveArithmetic>(hash: &HashOutput) -> C::Scalar
 where
     C::Scalar: Reduce<FieldBytes<C>>,
 {
-    let field_bytes = FieldBytes::<C>::from_slice(hash);
+    let field_bytes: &FieldBytes<C> = hash
+        .as_slice()
+        .try_into()
+        .expect("hash output length matches field size");
     <C::Scalar as Reduce<FieldBytes<C>>>::reduce(field_bytes)
 }
 

@@ -936,9 +936,10 @@ impl<C: DklsCurve> Party<C> {
         let rx_repr_slice: &[u8] = rx_repr.as_ref();
         let is_x_reduced = x_bytes_original.as_slice() != rx_repr_slice;
 
-        let rec_id = ecdsa::RecoveryId::new(is_y_odd, is_x_reduced);
+        // Recovery ID: bit 0 = y_is_odd, bit 1 = x_is_reduced
+        let rec_id = (is_y_odd as u8) | ((is_x_reduced as u8) << 1);
 
-        Ok((signature, rec_id.into()))
+        Ok((signature, rec_id))
     }
 }
 
@@ -951,13 +952,16 @@ fn parse_hex_to_scalar<C: DklsCurve>(hex_value: &str) -> Option<C::Scalar> {
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
         return None;
     }
-    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&bytes);
+    let field_bytes: &elliptic_curve::FieldBytes<C> = bytes.as_slice().try_into().ok()?;
     Option::from(<C::Scalar as PrimeField>::from_repr(field_bytes.clone()))
 }
 
 /// Reduces a 32-byte hash output into a scalar for curve `C`.
 fn reduce_hash_bytes<C: DklsCurve>(hash: &HashOutput) -> C::Scalar {
-    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(hash);
+    let field_bytes: &elliptic_curve::FieldBytes<C> = hash
+        .as_slice()
+        .try_into()
+        .expect("hash output length matches field size");
     <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes)
 }
 
@@ -965,7 +969,10 @@ fn reduce_hash_bytes<C: DklsCurve>(hash: &HashOutput) -> C::Scalar {
 fn reduce_hex_bytes<C: DklsCurve>(hex_value: &str) -> C::Scalar {
     let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
     hex::decode_to_slice(hex_value, &mut bytes).expect("valid hex");
-    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&bytes);
+    let field_bytes: &elliptic_curve::FieldBytes<C> = bytes
+        .as_slice()
+        .try_into()
+        .expect("decoded hex length matches field size");
     <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes)
 }
 
@@ -1010,7 +1017,9 @@ pub fn verify_ecdsa_signature<C: DklsCurve>(
     }
 
     let x_bytes = point_to_check.x();
-    let x_field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(x_bytes.as_ref());
+    let x_field_bytes: &elliptic_curve::FieldBytes<C> = (&x_bytes[..])
+        .try_into()
+        .expect("x coordinate length matches field size");
     let x_check = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(x_field_bytes);
 
     x_check == rx_as_scalar
@@ -1023,7 +1032,6 @@ mod tests {
     use crate::protocols::re_key::re_key;
     use crate::protocols::*;
     use crate::utilities::hashes::tagged_hash;
-    use ecdsa::RecoveryId;
     use elliptic_curve::sec1::ToSec1Point;
     use elliptic_curve::Curve as _;
     use elliptic_curve::CurveArithmetic;
@@ -1402,11 +1410,11 @@ mod tests {
             [crate::utilities::ID_LEN - 1]
             & 1
             == 1;
-        let expected_rec_id = RecoveryId::new(is_y_odd, is_x_reduced);
+        let expected_rec_id = (is_y_odd as u8) | ((is_x_reduced as u8) << 1);
 
         // We compare the results.
         assert_eq!(signature.0, expected_signature);
-        assert_eq!(signature.1, u8::from(expected_rec_id));
+        assert_eq!(signature.1, expected_rec_id);
     }
 
     /// Tests DKG and signing together. The main purpose is to
