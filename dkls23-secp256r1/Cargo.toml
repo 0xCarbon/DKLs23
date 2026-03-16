@@ -10,9 +10,9 @@ repository = "https://github.com/0xCarbon/DKLs23"
 dkls23-core = { version = "0.4", path = "../dkls23-core" }
 elliptic-curve = { version = "0.14.0-rc.4", features = ["sec1"] }
 p256 = { version = "0.14.0-rc.3" }
-ripemd = "0.1"
-sha2 = "0.10"
-blake2 = "0.10"
+ripemd = "0.2.0-rc.5"
+sha2 = "0.11.0-rc.5"
+blake2 = "0.11.0-rc.5"
 bs58 = "0.5"
 hex = "0.4"
 

@@ -100,7 +100,10 @@ fn challenge_to_scalar<C: DklsCurve>(challenge: &[u8]) -> C::Scalar {
     let mut extended = vec![0u8; 32 - challenge.len()];
     extended.extend_from_slice(challenge);
     // FieldBytes<C> is 32 bytes for both secp256k1 and P-256.
-    let field_bytes = FieldBytes::<C>::from_slice(&extended);
+    let field_bytes: &FieldBytes<C> = extended
+        .as_slice()
+        .try_into()
+        .expect("extended challenge length matches field size");
     <C::Scalar as Reduce<FieldBytes<C>>>::reduce(field_bytes)
 }
 

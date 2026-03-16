@@ -12,8 +12,8 @@ pub use dkls23_core::*;
 
 use elliptic_curve::sec1::ToSec1Point;
 use ripemd::Ripemd160;
-use sha2::{Digest as Sha2Digest, Sha256};
-use sha3::{Digest as Sha3Digest, Keccak256};
+use sha2::{Digest, Sha256};
+use sha3::Keccak256;
 
 /// Type alias for a DKLs23 party using secp256k1.
 pub type Party = dkls23_core::protocols::Party<k256::Secp256k1>;
@@ -37,13 +37,13 @@ pub fn compute_eth_address(pk: &k256::AffinePoint) -> String {
     let uncompressed_pk = pk.to_sec1_point(false);
 
     let mut hasher = Keccak256::new();
-    Sha3Digest::update(&mut hasher, &uncompressed_pk.as_bytes()[1..]);
+    Digest::update(&mut hasher, &uncompressed_pk.as_bytes()[1..]);
 
     let full_hash = hasher.finalize_reset();
     const ETH_ADDR_OFFSET: usize = 12;
     let address = hex::encode(&full_hash[ETH_ADDR_OFFSET..]);
 
-    Sha3Digest::update(&mut hasher, address.to_lowercase().as_bytes());
+    Digest::update(&mut hasher, address.to_lowercase().as_bytes());
     let hash_bytes = hasher.finalize();
 
     // ERC-55: Mixed-case checksum address encoding
@@ -165,7 +165,7 @@ pub fn compute_tron_address(pk: &k256::AffinePoint) -> String {
 
     // Keccak-256 of uncompressed pubkey (sans 0x04 prefix)
     let mut hasher = Keccak256::new();
-    Sha3Digest::update(&mut hasher, &uncompressed_pk.as_bytes()[1..]);
+    Digest::update(&mut hasher, &uncompressed_pk.as_bytes()[1..]);
     let full_hash = hasher.finalize();
 
     // Take last 20 bytes
