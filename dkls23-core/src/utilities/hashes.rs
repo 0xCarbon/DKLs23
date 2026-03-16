@@ -56,7 +56,10 @@ fn reduce_hash_to_scalar<C: CurveArithmetic>(hash: &HashOutput) -> C::Scalar
 where
     C::Scalar: Reduce<FieldBytes<C>>,
 {
-    let field_bytes = FieldBytes::<C>::from_slice(hash);
+    let field_bytes: &FieldBytes<C> = hash
+        .as_slice()
+        .try_into()
+        .expect("hash output length matches field size");
     <C::Scalar as Reduce<FieldBytes<C>>>::reduce(field_bytes)
 }
 

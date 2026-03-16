@@ -952,13 +952,16 @@ fn parse_hex_to_scalar<C: DklsCurve>(hex_value: &str) -> Option<C::Scalar> {
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
         return None;
     }
-    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&bytes);
+    let field_bytes: &elliptic_curve::FieldBytes<C> = bytes.as_slice().try_into().ok()?;
     Option::from(<C::Scalar as PrimeField>::from_repr(field_bytes.clone()))
 }
 
 /// Reduces a 32-byte hash output into a scalar for curve `C`.
 fn reduce_hash_bytes<C: DklsCurve>(hash: &HashOutput) -> C::Scalar {
-    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(hash);
+    let field_bytes: &elliptic_curve::FieldBytes<C> = hash
+        .as_slice()
+        .try_into()
+        .expect("hash output length matches field size");
     <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes)
 }
 
@@ -966,7 +969,10 @@ fn reduce_hash_bytes<C: DklsCurve>(hash: &HashOutput) -> C::Scalar {
 fn reduce_hex_bytes<C: DklsCurve>(hex_value: &str) -> C::Scalar {
     let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
     hex::decode_to_slice(hex_value, &mut bytes).expect("valid hex");
-    let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&bytes);
+    let field_bytes: &elliptic_curve::FieldBytes<C> = bytes
+        .as_slice()
+        .try_into()
+        .expect("decoded hex length matches field size");
     <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes)
 }
 
@@ -1011,7 +1017,9 @@ pub fn verify_ecdsa_signature<C: DklsCurve>(
     }
 
     let x_bytes = point_to_check.x();
-    let x_field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(x_bytes.as_ref());
+    let x_field_bytes: &elliptic_curve::FieldBytes<C> = (&x_bytes[..])
+        .try_into()
+        .expect("x coordinate length matches field size");
     let x_check = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(x_field_bytes);
 
     x_check == rx_as_scalar

@@ -106,12 +106,12 @@ impl<C: DklsCurve> DerivData<C> {
         &self,
         child_number: u32,
     ) -> Result<(C::Scalar, ChainCode, Fingerprint), ErrorDeriv> {
-        let mut hmac_engine = <Hmac<Sha512> as KeyInit>::new_from_slice(&self.chain_code[..])
-            .expect("HMAC accepts any key length");
+        let mut hmac_engine =
+            Hmac::<Sha512>::new_from_slice(&self.chain_code).expect("HMAC accepts any key length");
 
         let pk_as_bytes = point_to_bytes::<C>(&self.pk);
-        Mac::update(&mut hmac_engine, &pk_as_bytes);
-        Mac::update(&mut hmac_engine, &child_number.to_be_bytes());
+        hmac_engine.update(&pk_as_bytes);
+        hmac_engine.update(&child_number.to_be_bytes());
 
         let hmac_result = hmac_engine.finalize().into_bytes();
         let hmac_bytes: [u8; 64] = hmac_result.into();
@@ -121,7 +121,10 @@ impl<C: DklsCurve> DerivData<C> {
         let tweak_bytes: [u8; CHAIN_CODE_LEN] = hmac_bytes[..CHAIN_CODE_LEN]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
-        let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
+        let field_bytes: &elliptic_curve::FieldBytes<C> = tweak_bytes
+            .as_slice()
+            .try_into()
+            .expect("tweak_bytes length matches field size");
         let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
         if tweak.to_repr() != *field_bytes {
             return Err(ErrorDeriv::new(
@@ -310,18 +313,21 @@ impl<C: DklsCurve> PublicKeyPackage<C> {
             ));
         }
 
-        let mut hmac_engine = <Hmac<Sha512> as KeyInit>::new_from_slice(&chain_code[..])
-            .expect("HMAC accepts any key length");
+        let mut hmac_engine =
+            Hmac::<Sha512>::new_from_slice(chain_code).expect("HMAC accepts any key length");
         let pk_as_bytes = point_to_bytes::<C>(self.verifying_key());
-        Mac::update(&mut hmac_engine, &pk_as_bytes);
-        Mac::update(&mut hmac_engine, &child_number.to_be_bytes());
+        hmac_engine.update(&pk_as_bytes);
+        hmac_engine.update(&child_number.to_be_bytes());
         let hmac_result = hmac_engine.finalize().into_bytes();
         let hmac_bytes: [u8; 64] = hmac_result.into();
 
         let tweak_bytes: [u8; CHAIN_CODE_LEN] = hmac_bytes[..CHAIN_CODE_LEN]
             .try_into()
             .expect("Half of hmac is guaranteed to be 32 bytes!");
-        let field_bytes = elliptic_curve::FieldBytes::<C>::from_slice(&tweak_bytes);
+        let field_bytes: &elliptic_curve::FieldBytes<C> = tweak_bytes
+            .as_slice()
+            .try_into()
+            .expect("tweak_bytes length matches field size");
         let tweak = <C::Scalar as Reduce<elliptic_curve::FieldBytes<C>>>::reduce(field_bytes);
         if tweak.to_repr() != *field_bytes {
             return Err(ErrorDeriv::new(
