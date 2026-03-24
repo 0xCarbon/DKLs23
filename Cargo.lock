@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "dkls23-secp256k1"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "bech32",
  "bs58",
