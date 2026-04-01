@@ -46,6 +46,10 @@
 //!
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
+//!
+//! The keep-state types in this module, along with [`phase1`] through
+//! [`phase4`], are public low-level APIs for advanced resumable/stateless
+//! orchestration. [`crate::DkgSession`] remains the preferred high-level API.
 
 use std::collections::BTreeMap;
 
@@ -213,7 +217,7 @@ pub struct BroadcastDerivationPhase3to4 {
 /// The message is produced during Phase 2 and used in Phase 3.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct UniqueKeepDerivationPhase2to3 {
+pub struct UniqueKeepDerivationPhase2to3 {
     pub aux_chain_code: ChainCode,
     pub cc_salt: Vec<u8>,
 }
@@ -453,7 +457,7 @@ pub(crate) fn step5<C: DklsCurve>(
 /// ATTENTION: In particular, we keep the coordinate corresponding
 /// to our party index for the next phase.
 #[must_use]
-pub(crate) fn phase1<C: DklsCurve>(data: &SessionData) -> Vec<C::Scalar> {
+pub fn phase1<C: DklsCurve>(data: &SessionData) -> Vec<C::Scalar> {
     // DKG
     let secret_polynomial = step1::<C>(&data.parameters);
 
@@ -481,7 +485,7 @@ pub(crate) fn phase1<C: DklsCurve>(data: &SessionData) -> Vec<C::Scalar> {
 /// There is also some initialization data to keep and to transmit, following the
 /// conventions [here](self).
 #[must_use]
-pub(crate) fn phase2<C: DklsCurve>(
+pub fn phase2<C: DklsCurve>(
     data: &SessionData,
     poly_fragments: &[C::Scalar],
 ) -> (
@@ -567,7 +571,7 @@ pub(crate) fn phase2<C: DklsCurve>(
 /// conventions [here](self).
 #[must_use]
 #[allow(clippy::type_complexity)]
-pub(crate) fn phase3<C: DklsCurve>(
+pub fn phase3<C: DklsCurve>(
     data: &SessionData,
     zero_kept: &BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
     bip_kept: &UniqueKeepDerivationPhase2to3,
@@ -735,7 +739,7 @@ pub(crate) fn phase3<C: DklsCurve>(
 /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
 /// with the party indices in the received vectors.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn phase4<C: DklsCurve>(
+pub fn phase4<C: DklsCurve>(
     data: &SessionData,
     poly_point: &C::Scalar,
     proofs_commitments: &[ProofCommitment<C>],

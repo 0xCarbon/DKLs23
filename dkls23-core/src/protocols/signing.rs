@@ -24,6 +24,11 @@
 //!
 //! **Unique keep** messages refer to all counterparties at once,
 //! hence we only need to keep a unique instance of it.
+//!
+//! The keep-state types in this module, along with [`Party::sign_phase1`]
+//! through [`Party::sign_phase4`], are public low-level APIs for advanced
+//! resumable/stateless orchestration. [`crate::protocols::sign_session::SignSession`]
+//! remains the preferred high-level API.
 
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::point::AffineCoordinates;
@@ -129,7 +134,7 @@ pub struct Broadcast3to4<C: DklsCurve> {
         deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
     ))
 )]
-pub(crate) struct KeepPhase1to2<C: DklsCurve> {
+pub struct KeepPhase1to2<C: DklsCurve> {
     pub salt: Vec<u8>,
     pub chi: C::Scalar,
     pub mul_keep: MulDataToKeepReceiver<C>,
@@ -147,7 +152,7 @@ pub(crate) struct KeepPhase1to2<C: DklsCurve> {
         deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
     ))
 )]
-pub(crate) struct KeepPhase2to3<C: DklsCurve> {
+pub struct KeepPhase2to3<C: DklsCurve> {
     pub c_u: C::Scalar,
     pub c_v: C::Scalar,
     pub commitment: HashOutput,
@@ -167,7 +172,7 @@ pub(crate) struct KeepPhase2to3<C: DklsCurve> {
         deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
     ))
 )]
-pub(crate) struct UniqueKeep1to2<C: DklsCurve> {
+pub struct UniqueKeep1to2<C: DklsCurve> {
     pub instance_key: C::Scalar,
     #[zeroize(skip)]
     pub instance_point: C::AffinePoint,
@@ -187,7 +192,7 @@ pub(crate) struct UniqueKeep1to2<C: DklsCurve> {
         deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
     ))
 )]
-pub(crate) struct UniqueKeep2to3<C: DklsCurve> {
+pub struct UniqueKeep2to3<C: DklsCurve> {
     pub instance_key: C::Scalar,
     #[zeroize(skip)]
     pub instance_point: C::AffinePoint,
@@ -239,7 +244,7 @@ impl<C: DklsCurve> Party<C> {
     /// party index is out of range, or if the counterparty list contains our
     /// own index.
     #[allow(clippy::type_complexity)]
-    pub(crate) fn sign_phase1(
+    pub fn sign_phase1(
         &self,
         data: &SignData,
     ) -> Result<
@@ -432,7 +437,7 @@ impl<C: DklsCurve> Party<C> {
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
     #[allow(clippy::type_complexity)]
-    pub(crate) fn sign_phase2(
+    pub fn sign_phase2(
         &self,
         data: &SignData,
         unique_kept: &UniqueKeep1to2<C>,
@@ -640,7 +645,7 @@ impl<C: DklsCurve> Party<C> {
     ///
     /// Will panic if the list of keys in the `BTreeMap`'s are incompatible
     /// with the party indices in the vector `received`.
-    pub(crate) fn sign_phase3(
+    pub fn sign_phase3(
         &self,
         data: &SignData,
         unique_kept: &UniqueKeep2to3<C>,
@@ -861,7 +866,7 @@ impl<C: DklsCurve> Party<C> {
     ///
     /// Will return `Err` if the final ECDSA signature is invalid
     /// or if the denominator in signature assembly is zero.
-    pub(crate) fn sign_phase4(
+    pub fn sign_phase4(
         &self,
         data: &SignData,
         x_coord: &str,
