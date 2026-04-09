@@ -19,13 +19,10 @@ jobs:
           contents: read
           pull-requests: read
           actions: read
-        outputs:
-          followup: ${{ steps.spelling.outputs.followup }}
         runs-on: ubuntu-latest
         if: ${{ (contains(github.event_name, 'pull_request') && github.event.pull_request.state == 'open') || github.event_name == 'push' }}
         steps:
             - name: check-spelling
-              id: spelling
               uses: check-spelling/check-spelling@c635c2f3f714eec2fcf27b643a1919b9a811ef2e # v0.0.25
               with:
                   config: .github/actions/spelling
@@ -33,7 +30,6 @@ jobs:
                   check_file_names: 1
                   disable_checks: noisy-file
                   post_comment: 0
-                  experimental_apply_changes_via_bot: 1
                   extra_dictionaries: cspell:public-licenses/src/generated/public-licenses.txt
                       cspell:cryptocurrencies/cryptocurrencies.txt
                       cspell:software-terms/dict/networkingTerms.txt
@@ -50,34 +46,3 @@ jobs:
                       cspell:npm/dict/npm.txt
                       cspell:node/dict/node.txt
                       cspell:docker/src/docker-words.txt
-
-    comment-push:
-        name: Report (Push)
-        runs-on: ubuntu-latest
-        needs: spelling
-        permissions:
-          actions: read
-          contents: write
-        if: (success() || failure()) && needs.spelling.outputs.followup && github.event_name == 'push'
-        steps:
-            - name: comment
-              uses: check-spelling/check-spelling@c635c2f3f714eec2fcf27b643a1919b9a811ef2e # v0.0.25
-              with:
-                  config: .github/actions/spelling
-                  task: ${{ needs.spelling.outputs.followup }}
-
-    comment-pr:
-        name: Report (PR)
-        runs-on: ubuntu-latest
-        needs: spelling
-        permissions:
-          actions: read
-          pull-requests: write
-        if: (success() || failure()) && needs.spelling.outputs.followup && contains(github.event_name, 'pull_request')
-        steps:
-            - name: comment
-              uses: check-spelling/check-spelling@c635c2f3f714eec2fcf27b643a1919b9a811ef2e # v0.0.25
-              with:
-                  config: .github/actions/spelling
-                  task: ${{ needs.spelling.outputs.followup }}
-                  experimental_apply_changes_via_bot: 1
