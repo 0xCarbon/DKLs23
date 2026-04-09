@@ -1,13 +1,13 @@
 [package]
 name = "dkls23-secp256r1"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 description = "DKLs23 Threshold ECDSA — secp256r1 / NEO3"
 repository = "https://github.com/0xCarbon/DKLs23"
 
 [dependencies]
-dkls23-core = { version = "0.4", path = "../dkls23-core" }
+dkls23-core = { version = "0.5", path = "../dkls23-core" }
 elliptic-curve = { version = "0.14.0-rc.4", features = ["sec1"] }
 p256 = { version = "0.14.0-rc.3" }
 ripemd = "0.2.0-rc.5"
