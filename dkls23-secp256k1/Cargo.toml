@@ -5,6 +5,7 @@ edition = "2021"
 license = "Apache-2.0 OR MIT"
 description = "DKLs23 Threshold ECDSA — secp256k1 / Ethereum"
 repository = "https://github.com/0xCarbon/DKLs23"
+readme = "README.md"
 
 [dependencies]
 dkls23-core = { version = "0.5", path = "../dkls23-core" }
