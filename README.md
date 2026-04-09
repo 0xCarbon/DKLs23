@@ -22,6 +22,10 @@
 ## Overview
 DKLs23 is an advanced open-source implementation of the Threshold ECDSA method (see https://eprint.iacr.org/2023/765.pdf). The primary goal of DKLs23 is to compute a secret key without centralizing it in a single location. Instead, it leverages multiple parties to compute the secret key, with each party receiving a key share. This approach enhances security by eliminating single points of failure.
 
+## libtss
+
+If you need session orchestration, transport, and resumable protocol flows, see [libtss](https://github.com/0xCarbon/libtss) — a higher-level library built on top of DKLs23 that handles multi-party communication and state management.
+
 ## Getting Started
 These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
 
