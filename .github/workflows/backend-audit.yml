@@ -10,7 +10,7 @@ on:
 
 jobs:
   audit:
-    runs-on: arc-runner-set-0xcarbon
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
