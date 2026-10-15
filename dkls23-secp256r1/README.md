@@ -32,6 +32,7 @@ dkls23-secp256r1 = "0.5"
 - **Threshold Signing** — produce ECDSA signatures with a subset of parties
 - **Key Refresh** — rotate key shares without changing the public key
 - **BIP-32 Derivation** — derive child keys from a master key share
+- **Scalar Tweaks** — additive and multiplicative key tweaks (e.g. Lightning per-commitment keys)
 
 For session orchestration, transport, and resumable flows, see [libtss](https://github.com/0xCarbon/libtss).
 

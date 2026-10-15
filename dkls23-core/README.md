@@ -11,6 +11,7 @@ This crate provides the cryptographic primitives and protocol logic for:
 - **Threshold Signing** — produce ECDSA signatures with a subset of parties
 - **Key Refresh** — rotate key shares without changing the public key
 - **BIP-32 Derivation** — derive child keys from a master key share
+- **Scalar Tweaks** — additive and multiplicative key tweaks (e.g. Lightning per-commitment keys)
 
 ## Usage
 

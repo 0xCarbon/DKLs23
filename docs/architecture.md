@@ -98,6 +98,17 @@ BIP-32 non-hardened derivation adapted for threshold setting. Each party derives
 their share individually so the reconstructed key corresponds to BIP-32
 derivation of the original master key.
 
+### Scalar Tweaks (`protocols/tweak.rs`)
+
+Caller-supplied additive (`k' = k + t`) and multiplicative (`k' = a·k`) tweaks on
+key shares, the building blocks of Lightning per-commitment and revocation keys.
+Every party applies the same tweak to its own share and the `PublicKeyPackage` is
+mapped by the same function (group key and every verifying share). Because the
+Lagrange coefficients used in signing sum to one, the reconstructed key moves by
+exactly the tweak. OT correlations, zero-share seeds, multiplication state and the
+chain code are reused unchanged — the same argument BIP-32 derivation relies on —
+so a tweak is not a BIP-32 edge and leaves the derivation metadata untouched.
+
 ## Security Boundaries
 
 ### Abort Classification

@@ -171,4 +171,40 @@ mod tests {
             address.len()
         );
     }
+
+    #[test]
+    fn test_tweak_mul_p256_smoke() {
+        use protocols::re_key::re_key;
+        use protocols::tweak::TweakError;
+        use protocols::Parameters;
+
+        let parameters = Parameters::new(2, 3).unwrap();
+        let secret_key = p256::Scalar::from(15u64);
+        let (parties, package) = re_key::<p256::NistP256>(
+            &parameters,
+            &[7u8; 32],
+            &secret_key,
+            None,
+            compute_neo3_address,
+        );
+        let factor = p256::Scalar::from(3u64);
+        let scaled_package = package.tweak_mul(&factor).unwrap();
+
+        for party in &parties {
+            let scaled = party.tweak_mul(&factor, compute_neo3_address).unwrap();
+            assert_eq!(scaled.poly_point, party.poly_point * factor);
+            assert_eq!(scaled.address, compute_neo3_address(&scaled.pk));
+            assert_eq!(scaled_package.verifying_key(), &scaled.pk);
+            assert!(scaled_package.verify_share(
+                party.party_index,
+                &(p256::AffinePoint::generator() * scaled.poly_point).to_affine()
+            ));
+        }
+        assert_eq!(
+            parties[0]
+                .tweak_mul(&p256::Scalar::ZERO, compute_neo3_address)
+                .unwrap_err(),
+            TweakError::ZeroFactor
+        );
+    }
 }

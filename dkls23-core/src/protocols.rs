@@ -22,6 +22,7 @@ pub mod refresh;
 pub mod sign_session;
 pub mod signature;
 pub mod signing;
+pub mod tweak;
 
 /// Error returned when attempting to construct a `PartyIndex` from `0`.
 #[derive(Debug, Clone)]

@@ -3,6 +3,7 @@ bealore
 bech
 bincode
 btc
+btcec
 btreemap
 commitlint
 commitlintrc
@@ -16,11 +17,14 @@ fabio
 fischlin
 fixint
 Fordefi
+homomorphically
 hrp
 idx
 keypair
+Lagrange
 libdkls
 Litecoin
+LND
 ltc
 Misrouted
 misrouting
@@ -46,3 +50,4 @@ xcarbon
 XCoordinate
 Zeroization
 zeroized
+Zeroizing

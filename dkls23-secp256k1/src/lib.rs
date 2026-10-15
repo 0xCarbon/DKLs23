@@ -285,4 +285,35 @@ mod tests {
         );
         assert_eq!(address.len(), 34, "TRON address should be 34 chars");
     }
+
+    #[test]
+    fn test_tweak_add_with_btc_address() {
+        use protocols::re_key::re_key;
+        use protocols::Parameters;
+
+        let parameters = Parameters::new(2, 3).unwrap();
+        let secret_key = k256::Scalar::reduce(&k256::U256::from_be_hex(
+            "6728f18f7163f7a0c11cc0ad53140afb4e345d760f966176865a860041549903",
+        ));
+        let (parties, package) = re_key::<k256::Secp256k1>(
+            &parameters,
+            &[7u8; 32],
+            &secret_key,
+            None,
+            compute_btc_address,
+        );
+        let tweak = k256::Scalar::from(7u64);
+        let tweaked_package = package.tweak_add(&tweak).unwrap();
+
+        for party in &parties {
+            let tweaked = party.tweak_add(&tweak, compute_btc_address).unwrap();
+            assert_eq!(tweaked.address, compute_btc_address(&tweaked.pk));
+            assert_ne!(tweaked.address, party.address);
+            assert_eq!(tweaked_package.verifying_key(), &tweaked.pk);
+            assert!(tweaked_package.verify_share(
+                party.party_index,
+                &(k256::AffinePoint::generator() * tweaked.poly_point).to_affine()
+            ));
+        }
+    }
 }

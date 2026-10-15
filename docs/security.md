@@ -36,6 +36,20 @@ Session IDs for the multiplication protocol and zero-share protocol include:
 
 This prevents cross-session and cross-derivation transcript reuse.
 
+## Scalar Tweaks
+
+`protocols/tweak.rs` lets every party shift (`x + t`) or scale (`a·x`) its share
+while the public key package moves by the same map. The reused OT and
+multiplication state never depends on the share value, so a tweaked party is as
+safe to sign with as a BIP-32 child. The chain code stays the same, so transcript
+binding does not separate the base key from its tweaked keys; per-signature
+freshness comes from `sign_id` as usual. A set of signers that disagrees on the
+tweak fails the phase-3 public-key consistency check and aborts recoverably
+(`PolynomialInconsistency`). A zero multiplicative factor and any tweak whose
+result is the identity point are rejected. The additive tweak may itself be
+secret (LND's revocation tweak mixes in a per-commitment secret): callers should
+hold it in a zeroizing container; the crate never logs or formats scalars.
+
 ## Memory Safety
 
 - `#![forbid(unsafe_code)]` is enforced crate-wide.
