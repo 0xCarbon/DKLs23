@@ -28,6 +28,7 @@ LND
 ltc
 Misrouted
 misrouting
+NScalar
 PUSHDATA
 recoverably
 REQUIERMENT
@@ -43,6 +44,7 @@ screenshots
 segwit
 supertrait
 UInconsistency
+untweaked
 varint
 versioned
 WPKH
@@ -50,4 +52,4 @@ xcarbon
 XCoordinate
 Zeroization
 zeroized
-Zeroizing
+zeroizing

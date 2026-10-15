@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tweak_add_zero_and_mul_one_are_noops() {
+    fn test_tweak_add_zero_and_mul_one_are_no_ops() {
         let (parties, package, _) = sample_parties();
         let party = &parties[1];
 
@@ -680,8 +680,9 @@ mod tests {
             Scalar::reduce(&U256::MAX)
         );
 
-        let order_plus_one =
-            U256::from_be_hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364142");
+        let order_plus_one = <k256::Secp256k1 as elliptic_curve::Curve>::ORDER
+            .get()
+            .wrapping_add(&U256::ONE);
         assert_eq!(
             scalar_from_be_bytes::<TestCurve>(&order_plus_one.to_be_bytes()).unwrap(),
             Scalar::ONE
