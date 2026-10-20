@@ -58,9 +58,11 @@ use crate::utilities::rng;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignData {
     /// Identifies this signing session; all signers must use the same value.
-    /// A fresh value per session is recommended, but reusing one (for example
-    /// on a retry after an abort) is safe: each multiplication's OT extension
-    /// also mixes in fresh randomness from both parties.
+    /// A fresh value per attempt is recommended. Reusing one (for example on a
+    /// retry after an abort) does not leak key material, because each
+    /// multiplication's OT extension also mixes in fresh randomness from both
+    /// parties, and a message answering a stale attempt is detected as a
+    /// recoverable `SessionBindingMismatch`.
     pub sign_id: Vec<u8>,
     /// Vector containing the indices of the parties participating in the protocol (without us).
     pub counterparties: Vec<PartyIndex>,
@@ -304,15 +306,20 @@ impl<C: DklsCurve> Party<C> {
     ///
     /// Covers the DKG session id, the sign id, the chain code and public key
     /// (the key being used), the message hash, the signer set, the phase and
-    /// the direction. A receiver compares it with its own value before any
-    /// OT or multiplication work, so a message from a different session is
-    /// reported as a recoverable mismatch instead of a failed OT check.
+    /// the direction. A phase-2 message also covers the multiplication
+    /// receiver's OT extension nonce it answers (`answered_nonce`), which is
+    /// fresh in every attempt, so a message built on a stale phase-1 message
+    /// from an earlier attempt with the same sign id is caught too. A receiver
+    /// compares it with its own value before any OT or multiplication work,
+    /// so a message from a different session or attempt is reported as a
+    /// recoverable mismatch instead of a failed OT check.
     fn session_binding(
         &self,
         data: &SignData,
         phase: u8,
         sender: PartyIndex,
         receiver: PartyIndex,
+        answered_nonce: &[u8],
     ) -> HashOutput {
         tagged_hash(
             TAG_SIGN_SESSION_BINDING,
@@ -324,6 +331,7 @@ impl<C: DklsCurve> Party<C> {
                 &data.message_hash,
                 &Self::signers(data, self.party_index),
                 &[phase, sender.as_u8(), receiver.as_u8()],
+                answered_nonce,
             ],
         )
     }
@@ -466,7 +474,13 @@ impl<C: DklsCurve> Party<C> {
                     sender: self.party_index,
                     receiver: *counterparty,
                 },
-                session_binding: self.session_binding(data, 1, self.party_index, *counterparty),
+                session_binding: self.session_binding(
+                    data,
+                    1,
+                    self.party_index,
+                    *counterparty,
+                    &[],
+                ),
                 commitment,
                 mul_transmit,
             });
@@ -606,7 +620,7 @@ impl<C: DklsCurve> Party<C> {
                 ));
             }
             if message.session_binding
-                != self.session_binding(data, 1, counterparty, self.party_index)
+                != self.session_binding(data, 1, counterparty, self.party_index, &[])
             {
                 return Err(Abort::recoverable(
                     self.party_index,
@@ -677,7 +691,13 @@ impl<C: DklsCurve> Party<C> {
                     sender: self.party_index,
                     receiver: counterparty,
                 },
-                session_binding: self.session_binding(data, 2, self.party_index, counterparty),
+                session_binding: self.session_binding(
+                    data,
+                    2,
+                    self.party_index,
+                    counterparty,
+                    &message.mul_transmit.nonce,
+                ),
                 // Check-adjust
                 gamma_u,
                 gamma_v,
@@ -789,20 +809,26 @@ impl<C: DklsCurve> Party<C> {
                     },
                 ));
             }
-            if message.session_binding
-                != self.session_binding(data, 2, counterparty, self.party_index)
-            {
-                return Err(Abort::recoverable(
-                    self.party_index,
-                    AbortReason::SessionBindingMismatch { counterparty },
-                ));
-            }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
                 Abort::recoverable(
                     self.party_index,
                     AbortReason::MissingMulState { counterparty },
                 )
             })?;
+            if message.session_binding
+                != self.session_binding(
+                    data,
+                    2,
+                    counterparty,
+                    self.party_index,
+                    &current_kept.mul_keep.ote_nonce,
+                )
+            {
+                return Err(Abort::recoverable(
+                    self.party_index,
+                    AbortReason::SessionBindingMismatch { counterparty },
+                ));
+            }
 
             // Checking the committed value.
             let verification = verify_commitment_point::<C>(
@@ -2349,6 +2375,54 @@ mod tests {
         assert!(matches!(
             abort.reason,
             AbortReason::SessionBindingMismatch { .. }
+        ));
+    }
+
+    /// A retry with the same sign id: party 1 answers party 2's phase-1
+    /// message from an earlier attempt. Party 2 must see a recoverable session
+    /// mismatch, not a failed multiplication check that bans party 1.
+    #[test]
+    fn test_stale_phase1_message_from_earlier_attempt_is_recoverable() {
+        // Attempt B: both parties run phase 1.
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+        let party_two = PartyIndex::new(2).unwrap();
+
+        // Attempt A of party 2, same sign id, delivered to party 1 instead.
+        let (_, _, stale) = parties[1]
+            .sign_phase1(all_data.get(&party_two).unwrap())
+            .unwrap();
+        let (_, _, from_party_one) = parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &stale,
+            )
+            .unwrap();
+
+        // Party 2 continues attempt B.
+        let (unique_kept_2to3, kept_2to3, _) = parties[1]
+            .sign_phase2(
+                all_data.get(&party_two).unwrap(),
+                unique_kept_1to2.get(&party_two).unwrap(),
+                kept_1to2.get(&party_two).unwrap(),
+                received_1to2.get(&party_two).unwrap(),
+            )
+            .unwrap();
+        let abort = parties[1]
+            .sign_phase3(
+                all_data.get(&party_two).unwrap(),
+                &unique_kept_2to3,
+                &kept_2to3,
+                &from_party_one,
+            )
+            .expect_err("a message built on a stale attempt must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { counterparty } if counterparty == party_one
         ));
     }
 

@@ -45,8 +45,11 @@ carried in messages the protocol already sends:
   outputs are fresh in every execution.
 
 Each side's freshness protects that side even if the other repeats its value,
-so reusing a `sign_id` (for example on a retry after an abort) is safe. A
-fresh `sign_id` per session is still recommended.
+so reusing a `sign_id` (for example on a retry after an abort) does not leak
+key material. The phase-2 session binding also covers the receiver nonce the
+message answers, so a message built on a stale phase-1 message from an
+earlier attempt is a recoverable `SessionBindingMismatch`, not a ban. A fresh
+`sign_id` per attempt is still recommended.
 
 ## Memory Safety
 
