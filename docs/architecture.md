@@ -118,6 +118,11 @@ Aborts are classified via `AbortKind`:
 - `BanCounterparty(index)`: The counterparty leaked information about reusable
   OT state. They MUST be permanently excluded from future sessions.
 
+Signing messages carry a session binding (DKG session id, sign id, key, message
+hash, signer set, phase and direction). It is checked before any OT or
+multiplication work, so a message from a different session yields a
+`Recoverable` `SessionBindingMismatch` rather than a ban.
+
 ### Trust Model
 
 - Messages are authenticated but not encrypted (the protocol provides its own

@@ -293,6 +293,11 @@ pub enum AbortReason {
     MissingMessageFromParty {
         party: PartyIndex,
     },
+    /// A message belongs to a different signing session (sign id, message,
+    /// signer set or key) than ours.
+    SessionBindingMismatch {
+        counterparty: PartyIndex,
+    },
 
     // --- Cryptographic verification (severity varies) ---
     ProofVerificationFailed {
@@ -385,6 +390,12 @@ impl fmt::Display for AbortReason {
             }
             Self::MissingMessageFromParty { party } => {
                 write!(f, "missing message from party {party}")
+            }
+            Self::SessionBindingMismatch { counterparty } => {
+                write!(
+                    f,
+                    "message from party {counterparty} belongs to a different signing session"
+                )
             }
             Self::ProofVerificationFailed { counterparty } => {
                 write!(f, "proof verification failed for party {counterparty}")

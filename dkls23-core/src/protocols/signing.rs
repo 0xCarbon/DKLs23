@@ -45,8 +45,9 @@ use crate::curve::DklsCurve;
 use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 
 use crate::utilities::commits::{commit_point, verify_commitment_point};
-use crate::utilities::hashes::HashOutput;
+use crate::utilities::hashes::{point_to_bytes, tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
+use crate::utilities::oracle_tags::TAG_SIGN_SESSION_BINDING;
 use crate::utilities::ot::extension::OTEDataToSender;
 use crate::utilities::rng;
 
@@ -70,6 +71,8 @@ pub struct SignData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
+    /// Binds the message to its signing session (see `session_binding`).
+    pub session_binding: HashOutput,
     pub commitment: HashOutput,
     #[zeroize(skip)]
     pub mul_transmit: OTEDataToSender,
@@ -89,6 +92,8 @@ pub struct TransmitPhase1to2 {
 )]
 pub struct TransmitPhase2to3<C: DklsCurve> {
     pub parties: PartiesMessage,
+    /// Binds the message to its signing session (see `session_binding`).
+    pub session_binding: HashOutput,
     #[zeroize(skip)]
     pub gamma_u: C::AffinePoint,
     #[zeroize(skip)]
@@ -232,6 +237,41 @@ mod message_tags {
 
 /// Implementations related to the `DKLs23` signing protocol ([read more](self)).
 impl<C: DklsCurve> Party<C> {
+    /// Binds a signing message to its session.
+    ///
+    /// Covers the DKG session id, the sign id, the chain code and public key
+    /// (the key being used), the message hash, the signer set, the phase and
+    /// the direction. A receiver compares it with its own value before any
+    /// OT or multiplication work, so a message from a different session is
+    /// reported as a recoverable mismatch instead of a failed OT check.
+    fn session_binding(
+        &self,
+        data: &SignData,
+        phase: u8,
+        sender: PartyIndex,
+        receiver: PartyIndex,
+    ) -> HashOutput {
+        let mut signers: Vec<u8> = data
+            .counterparties
+            .iter()
+            .map(PartyIndex::as_u8)
+            .chain([self.party_index.as_u8()])
+            .collect();
+        signers.sort_unstable();
+        tagged_hash(
+            TAG_SIGN_SESSION_BINDING,
+            &[
+                &self.session_id,
+                &data.sign_id,
+                &self.derivation_data.chain_code,
+                &point_to_bytes::<C>(&self.pk),
+                &data.message_hash,
+                &signers,
+                &[phase, sender.as_u8(), receiver.as_u8()],
+            ],
+        )
+    }
+
     /// Phase 1 for signing: Steps 4, 5 and 6 from
     /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
     ///
@@ -380,6 +420,7 @@ impl<C: DklsCurve> Party<C> {
                     sender: self.party_index,
                     receiver: *counterparty,
                 },
+                session_binding: self.session_binding(data, 1, self.party_index, *counterparty),
                 commitment,
                 mul_transmit,
             });
@@ -525,6 +566,14 @@ impl<C: DklsCurve> Party<C> {
                     },
                 ));
             }
+            if message.session_binding
+                != self.session_binding(data, 1, counterparty, self.party_index)
+            {
+                return Err(Abort::recoverable(
+                    self.party_index,
+                    AbortReason::SessionBindingMismatch { counterparty },
+                ));
+            }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
                 Abort::recoverable(
                     self.party_index,
@@ -597,6 +646,7 @@ impl<C: DklsCurve> Party<C> {
                     sender: self.party_index,
                     receiver: counterparty,
                 },
+                session_binding: self.session_binding(data, 2, self.party_index, counterparty),
                 // Check-adjust
                 gamma_u,
                 gamma_v,
@@ -706,6 +756,14 @@ impl<C: DklsCurve> Party<C> {
                     AbortReason::DuplicateSender {
                         sender: counterparty,
                     },
+                ));
+            }
+            if message.session_binding
+                != self.session_binding(data, 2, counterparty, self.party_index)
+            {
+                return Err(Abort::recoverable(
+                    self.party_index,
+                    AbortReason::SessionBindingMismatch { counterparty },
                 ));
             }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
@@ -2143,6 +2201,110 @@ mod tests {
     }
 
     /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
+    /// Runs party 2's phase 1 under `party_two_data` and feeds its message to
+    /// party 1's phase 2, which runs under the original session data.
+    fn phase2_with_party_two_data(party_two_data: impl FnOnce(&mut SignData)) -> Result<(), Abort> {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, _) = setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+        let party_two = PartyIndex::new(2).unwrap();
+
+        let mut data = all_data.get(&party_two).unwrap().clone();
+        party_two_data(&mut data);
+        let (_, _, messages) = parties[1].sign_phase1(&data).unwrap();
+
+        parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &messages,
+            )
+            .map(|_| ())
+    }
+
+    /// A peer in a different signing session is a session mismatch, not
+    /// cheating: it must not ban an honest counterparty.
+    #[test]
+    fn test_sign_phase2_sign_id_mismatch_is_recoverable() {
+        let abort = phase2_with_party_two_data(|data| data.sign_id[0] ^= 1)
+            .expect_err("a different sign_id must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { counterparty } if counterparty.as_u8() == 2
+        ));
+    }
+
+    /// Parties signing different messages abort at phase 2, before any
+    /// multiplication work, instead of producing an invalid signature.
+    #[test]
+    fn test_sign_phase2_message_hash_mismatch_is_recoverable() {
+        let abort = phase2_with_party_two_data(|data| data.message_hash[0] ^= 1)
+            .expect_err("a different message hash must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { .. }
+        ));
+    }
+
+    /// A phase-2 message whose session binding does not match is rejected as
+    /// recoverable before the multiplication protocol is finished.
+    #[test]
+    fn test_sign_phase3_session_binding_mismatch_is_recoverable() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+        let party_one = PartyIndex::new(1).unwrap();
+
+        let mut tampered = received_2to3.get(&party_one).unwrap().clone();
+        tampered[0].session_binding[0] ^= 1;
+
+        let abort = parties[0]
+            .sign_phase3(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_2to3.get(&party_one).unwrap(),
+                kept_2to3.get(&party_one).unwrap(),
+                &tampered,
+            )
+            .expect_err("a mismatched session binding must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { .. }
+        ));
+    }
+
+    /// Tampered OT data under a correct session binding is still cheating.
+    #[test]
+    fn test_sign_phase2_bans_on_tampered_ot_data() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+
+        let mut tampered = received_1to2.get(&party_one).unwrap().clone();
+        tampered[0].mul_transmit.u[0][0] ^= 1;
+
+        let abort = parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &tampered,
+            )
+            .expect_err("tampered OT data must abort");
+        assert_eq!(
+            abort.kind,
+            AbortKind::BanCounterparty(PartyIndex::new(2).unwrap())
+        );
+    }
+
     #[test]
     fn test_sign_phase3_bans_on_inconsistent_gamma_u() {
         let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =

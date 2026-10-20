@@ -41,6 +41,9 @@ pub const TAG_MUL_CHI_HAT: &[u8] = b"dkls23/mul/chi-hat/v2";
 /// Multiplication verify-r oracle.
 pub const TAG_MUL_VERIFY: &[u8] = b"dkls23/mul/verify/v1";
 
+/// Signing message session-binding oracle.
+pub const TAG_SIGN_SESSION_BINDING: &[u8] = b"dkls23/sign/session-binding/v1";
+
 /// Fast-refresh OT re-randomization oracle for `r0'`.
 pub const TAG_REFRESH_FAST_R0: &[u8] = b"dkls23/refresh/fast/r0/v1";
 /// Fast-refresh OT re-randomization oracle for `r1'`.
@@ -69,6 +72,7 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_MUL_CHI_TILDE,
     TAG_MUL_CHI_HAT,
     TAG_MUL_VERIFY,
+    TAG_SIGN_SESSION_BINDING,
     TAG_REFRESH_FAST_R0,
     TAG_REFRESH_FAST_R1,
     TAG_REFRESH_FAST_B,
