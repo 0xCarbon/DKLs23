@@ -27,14 +27,18 @@ See Section 3.2 of the paper for the formal security argument.
 
 ## Fiat-Shamir Transcript Binding
 
-Session IDs for the multiplication protocol and zero-share protocol include:
-- Protocol domain separator
-- Both party indices
+Session IDs for the multiplication protocol and zero-share protocol are
+tagged, length-delimited hashes of:
 - DKG session ID
-- Signing session ID
-- BIP-32 chain code (binds to the derived key path)
+- Signing session ID (`SignData::sign_id`)
+- BIP-32 chain code and public key (bind to the key in use, including
+  derived keys)
+- Both party indices, in multiplication-role order (multiplication only)
 
-This prevents cross-session and cross-derivation transcript reuse.
+The multiplication's OT extension is derived from this session ID, so a
+`sign_id` must be unique for every signing session of a key and of every key
+derived from it, including a retry after an abort. Generate a fresh random
+`sign_id` for each session.
 
 ## Memory Safety
 

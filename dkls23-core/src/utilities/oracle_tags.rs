@@ -43,6 +43,10 @@ pub const TAG_MUL_VERIFY: &[u8] = b"dkls23/mul/verify/v1";
 
 /// Signing message session-binding oracle.
 pub const TAG_SIGN_SESSION_BINDING: &[u8] = b"dkls23/sign/session-binding/v1";
+/// Signing multiplication session-id oracle.
+pub const TAG_SIGN_MUL_SESSION: &[u8] = b"dkls23/sign/mul-session/v1";
+/// Signing zero-share session-id oracle.
+pub const TAG_SIGN_ZERO_SESSION: &[u8] = b"dkls23/sign/zero-session/v1";
 
 /// Fast-refresh OT re-randomization oracle for `r0'`.
 pub const TAG_REFRESH_FAST_R0: &[u8] = b"dkls23/refresh/fast/r0/v1";
@@ -73,6 +77,8 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_MUL_CHI_HAT,
     TAG_MUL_VERIFY,
     TAG_SIGN_SESSION_BINDING,
+    TAG_SIGN_MUL_SESSION,
+    TAG_SIGN_ZERO_SESSION,
     TAG_REFRESH_FAST_R0,
     TAG_REFRESH_FAST_R1,
     TAG_REFRESH_FAST_B,

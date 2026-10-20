@@ -47,7 +47,9 @@ use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 use crate::utilities::commits::{commit_point, verify_commitment_point};
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
-use crate::utilities::oracle_tags::TAG_SIGN_SESSION_BINDING;
+use crate::utilities::oracle_tags::{
+    TAG_SIGN_MUL_SESSION, TAG_SIGN_SESSION_BINDING, TAG_SIGN_ZERO_SESSION,
+};
 use crate::utilities::ot::extension::OTEDataToSender;
 use crate::utilities::rng;
 
@@ -55,6 +57,9 @@ use crate::utilities::rng;
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignData {
+    /// Identifies this signing session. It must be unique for every signing
+    /// session of a key and of every key derived from it, including a retry
+    /// after an abort: the multiplication's OT extension is derived from it.
     pub sign_id: Vec<u8>,
     /// Vector containing the indices of the parties participating in the protocol (without us).
     pub counterparties: Vec<PartyIndex>,
@@ -237,6 +242,45 @@ mod message_tags {
 
 /// Implementations related to the `DKLs23` signing protocol ([read more](self)).
 impl<C: DklsCurve> Party<C> {
+    /// Session id of the two-party multiplication in which `receiver` is the
+    /// multiplication receiver and `sender` the sender.
+    ///
+    /// Covers the DKG session id, the sign id and the key in use (chain code
+    /// and public key). Keys derived from the same shares (BIP-32 children,
+    /// BOLT 3 keys) reuse the OT state, so the public key keeps each of their
+    /// signing sessions under a distinct id.
+    fn mul_session_id(
+        &self,
+        data: &SignData,
+        receiver: PartyIndex,
+        sender: PartyIndex,
+    ) -> HashOutput {
+        tagged_hash(
+            TAG_SIGN_MUL_SESSION,
+            &[
+                &self.session_id,
+                &data.sign_id,
+                &self.derivation_data.chain_code,
+                &point_to_bytes::<C>(&self.pk),
+                &[receiver.as_u8(), sender.as_u8()],
+            ],
+        )
+    }
+
+    /// Session id of the zero-share computation, covering the same values as
+    /// [`Self::mul_session_id`] except the party indexes.
+    fn zero_session_id(&self, data: &SignData) -> HashOutput {
+        tagged_hash(
+            TAG_SIGN_ZERO_SESSION,
+            &[
+                &self.session_id,
+                &data.sign_id,
+                &self.derivation_data.chain_code,
+                &point_to_bytes::<C>(&self.pk),
+            ],
+        )
+    }
+
     /// Binds a signing message to its session.
     ///
     /// Covers the DKG session id, the sign id, the chain code and public key
@@ -372,17 +416,7 @@ impl<C: DklsCurve> Party<C> {
 
             // First, let us compute a session id for it.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
-            // We also use both the sign id and the DKG id.
-            // The chain code binds the signing session to the derived key path.
-            let mul_sid = [
-                "Multiplication protocol".as_bytes(),
-                &self.party_index.as_u8().to_be_bytes(),
-                &counterparty.as_u8().to_be_bytes(),
-                &self.session_id,
-                &data.sign_id,
-                &self.derivation_data.chain_code,
-            ]
-            .concat();
+            let mul_sid = self.mul_session_id(data, self.party_index, *counterparty);
 
             // We run the first phase.
             let mul_receiver = self.mul_receivers.get(counterparty).ok_or_else(|| {
@@ -431,15 +465,8 @@ impl<C: DklsCurve> Party<C> {
 
         // We first compute a session id.
         // Now, different to DKLs23, we won't put the indexes from the parties
-        // because the sign id refers only to this set of parties, hence
-        // it's simpler and almost equivalent to take just the following:
-        let zero_sid = [
-            "Zero shares protocol".as_bytes(),
-            &self.session_id,
-            &data.sign_id,
-            &self.derivation_data.chain_code,
-        ]
-        .concat();
+        // because the sign id refers only to this set of parties.
+        let zero_sid = self.zero_session_id(data);
 
         let zeta = self
             .zero_share
@@ -586,15 +613,7 @@ impl<C: DklsCurve> Party<C> {
 
             // Let us retrieve the session id for multiplication.
             // Note that the roles are now reversed.
-            let mul_sid = [
-                "Multiplication protocol".as_bytes(),
-                &counterparty.as_u8().to_be_bytes(),
-                &self.party_index.as_u8().to_be_bytes(),
-                &self.session_id,
-                &data.sign_id,
-                &self.derivation_data.chain_code,
-            ]
-            .concat();
+            let mul_sid = self.mul_session_id(data, counterparty, self.party_index);
 
             let mul_sender = self.mul_senders.get(&counterparty).ok_or_else(|| {
                 Abort::recoverable(
@@ -791,15 +810,7 @@ impl<C: DklsCurve> Party<C> {
 
             // Let us retrieve the session id for multiplication.
             // Note that we reverse the roles again.
-            let mul_sid = [
-                "Multiplication protocol".as_bytes(),
-                &self.party_index.as_u8().to_be_bytes(),
-                &counterparty.as_u8().to_be_bytes(),
-                &self.session_id,
-                &data.sign_id,
-                &self.derivation_data.chain_code,
-            ]
-            .concat();
+            let mul_sid = self.mul_session_id(data, self.party_index, counterparty);
 
             let mul_receiver = self.mul_receivers.get(&counterparty).ok_or_else(|| {
                 Abort::recoverable(
@@ -2201,6 +2212,40 @@ mod tests {
     }
 
     /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
+    /// Every key derived from the same shares and every sign id gives the
+    /// multiplication and the zero shares their own session id, and the
+    /// multiplication id depends on the roles.
+    #[test]
+    fn test_signing_session_ids_are_distinct_per_key() {
+        let parameters = Parameters::new(2, 3).unwrap();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let base = &parties[0];
+        let keys = [base.clone(), base.derive_child(0, no_address).unwrap()];
+
+        let one = PartyIndex::new(1).unwrap();
+        let two = PartyIndex::new(2).unwrap();
+        let data = SignData {
+            sign_id: vec![7u8; crate::utilities::ID_LEN],
+            counterparties: vec![two],
+            message_hash: [3u8; 32],
+        };
+        let mut other_sign_id = data.clone();
+        other_sign_id.sign_id[0] ^= 1;
+
+        let mut mul_ids = BTreeSet::new();
+        let mut zero_ids = BTreeSet::new();
+        for key in &keys {
+            for sign_data in [&data, &other_sign_id] {
+                assert!(mul_ids.insert(key.mul_session_id(sign_data, one, two)));
+                assert!(mul_ids.insert(key.mul_session_id(sign_data, two, one)));
+                assert!(zero_ids.insert(key.zero_session_id(sign_data)));
+            }
+        }
+    }
+
     /// Runs party 2's phase 1 under `party_two_data` and feeds its message to
     /// party 1's phase 2, which runs under the original session data.
     fn phase2_with_party_two_data(party_two_data: impl FnOnce(&mut SignData)) -> Result<(), Abort> {
