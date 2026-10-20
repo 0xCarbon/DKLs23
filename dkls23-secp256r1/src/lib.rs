@@ -5,10 +5,14 @@
 //!
 //! - **NEO3**: [`compute_neo3_address`]
 //! - **Sui**: [`compute_sui_address`]
+//! - **Tezos** (`tz3`): [`compute_tezos_address`]
 
 pub use dkls23_core::*;
 
-use blake2::{digest::consts::U32, Blake2b, Digest as Blake2Digest};
+use blake2::{
+    digest::consts::{U20, U32},
+    Blake2b, Digest as Blake2Digest,
+};
 use elliptic_curve::sec1::ToSec1Point;
 use ripemd::Ripemd160;
 use sha2::Sha256;
@@ -70,7 +74,7 @@ pub fn compute_neo3_address(pk: &p256::AffinePoint) -> String {
     bs58::encode(payload).into_string()
 }
 
-/// [`AddressScheme`] implementation for NEO3 addresses on NIST P-256.
+/// [`AddressScheme`](dkls23_core::curve::AddressScheme) implementation for NEO3 addresses on NIST P-256.
 pub struct Neo3Address;
 
 impl dkls23_core::curve::AddressScheme<p256::NistP256> for Neo3Address {
@@ -105,12 +109,45 @@ pub fn compute_sui_address(pk: &p256::AffinePoint) -> String {
     format!("0x{}", hex::encode(hash))
 }
 
-/// [`AddressScheme`] implementation for Sui addresses on NIST P-256.
+/// [`AddressScheme`](dkls23_core::curve::AddressScheme) implementation for Sui addresses on NIST P-256.
 pub struct SuiAddress;
 
 impl dkls23_core::curve::AddressScheme<p256::NistP256> for SuiAddress {
     fn compute_address(pk: &p256::AffinePoint) -> String {
         compute_sui_address(pk)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tezos
+// ---------------------------------------------------------------------------
+
+/// Tezos Base58Check prefix for P-256 public key hashes (`tz3`).
+const TEZOS_TZ3_PREFIX: [u8; 3] = [6, 161, 164];
+
+/// Computes a Tezos `tz3` address from a NIST P-256 public key:
+/// `Base58Check([6, 161, 164] || BLAKE2b-160(compressed_pubkey))`.
+///
+/// Returns a 36-character address starting with `tz3`.
+#[must_use]
+pub fn compute_tezos_address(pk: &p256::AffinePoint) -> String {
+    let hash = Blake2b::<U20>::digest(pk.to_sec1_point(true).as_bytes());
+
+    let mut payload = Vec::with_capacity(27);
+    payload.extend_from_slice(&TEZOS_TZ3_PREFIX);
+    payload.extend_from_slice(&hash);
+    let checksum = double_sha256_checksum(&payload);
+    payload.extend_from_slice(&checksum);
+
+    bs58::encode(payload).into_string()
+}
+
+/// [`AddressScheme`](dkls23_core::curve::AddressScheme) implementation for Tezos `tz3` addresses.
+pub struct TezosAddress;
+
+impl dkls23_core::curve::AddressScheme<p256::NistP256> for TezosAddress {
+    fn compute_address(pk: &p256::AffinePoint) -> String {
+        compute_tezos_address(pk)
     }
 }
 
@@ -170,5 +207,14 @@ mod tests {
             "Sui address should be 66 chars (0x + 64 hex), got: {}",
             address.len()
         );
+    }
+
+    /// Expected address from an independent implementation using the octez
+    /// `tz3` prefix.
+    #[test]
+    fn test_tezos_address() {
+        let address = compute_tezos_address(&test_pubkey());
+        assert_eq!(address, "tz3bqAfFRnSA6dfPRG8XR6MBMmo6HZTTG44V");
+        assert_eq!(address.len(), 36);
     }
 }

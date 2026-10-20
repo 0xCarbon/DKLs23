@@ -13,6 +13,7 @@ Built on [`dkls23-core`](https://crates.io/crates/dkls23-core) — provides conc
 |-------|----------|----------------|
 | NEO3 | `compute_neo3_address` | Base58Check (`N...`) |
 | Sui | `compute_sui_address` | Hex (`0x...`) |
+| Tezos | `compute_tezos_address` | `tz3` Base58Check |
 
 ## Usage
 

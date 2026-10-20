@@ -9,8 +9,8 @@ The curve-generic core ([`dkls23-core`](https://crates.io/crates/dkls23-core)) i
 
 | Feature | Module | Curve | Chains |
 |---------|--------|-------|--------|
-| `secp256k1` (default) | `dkls23::secp256k1` | secp256k1 | Ethereum (+ all EVM), Bitcoin, Cosmos, TRON |
-| `secp256r1` | `dkls23::secp256r1` | NIST P-256 | NEO3, Sui |
+| `secp256k1` (default) | `dkls23::secp256k1` | secp256k1 | Ethereum (+ all EVM), Bitcoin, Litecoin, Dogecoin, Bitcoin Cash, Cosmos, TRON, XRP, Filecoin, Tezos |
+| `secp256r1` | `dkls23::secp256r1` | NIST P-256 | NEO3, Sui, Tezos |
 
 ## Usage
 

@@ -2,8 +2,10 @@ allocvec
 Arbitrum
 bealore
 bech
+bitcoincash
 btc
 btreemap
+cashaddr
 commitlint
 commitlintrc
 consts
@@ -24,6 +26,9 @@ Litecoin
 ltc
 Misrouted
 misrouting
+nopad
+octez
+polymod
 PUSHDATA
 quux
 recoverably

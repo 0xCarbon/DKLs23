@@ -18,6 +18,7 @@ ripemd = "0.2"
 hex = "0.4"
 bech32 = "0.12"
 bs58 = "0.5"
+blake2 = "0.11"
 
 [dev-dependencies]
 group = { version = "0.14", default-features = false }

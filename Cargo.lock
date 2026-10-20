@@ -212,6 +212,7 @@ name = "dkls23-secp256k1"
 version = "0.6.0"
 dependencies = [
  "bech32",
+ "blake2",
  "bs58",
  "dkls23-core",
  "elliptic-curve",

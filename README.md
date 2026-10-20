@@ -21,8 +21,8 @@ DKLs23 is an open-source implementation of the [DKLs23 Threshold ECDSA protocol]
 |-------|-------------|---|
 | [`dkls23`](dkls23/) | Umbrella crate: core + curves behind features | [![crates.io](https://img.shields.io/crates/v/dkls23.svg)](https://crates.io/crates/dkls23) |
 | [`dkls23-core`](dkls23-core/) | Curve-generic core protocol | [![crates.io](https://img.shields.io/crates/v/dkls23-core.svg)](https://crates.io/crates/dkls23-core) |
-| [`dkls23-secp256k1`](dkls23-secp256k1/) | secp256k1 — Ethereum, Bitcoin, Cosmos, TRON | [![crates.io](https://img.shields.io/crates/v/dkls23-secp256k1.svg)](https://crates.io/crates/dkls23-secp256k1) |
-| [`dkls23-secp256r1`](dkls23-secp256r1/) | NIST P-256 — NEO3, Sui | [![crates.io](https://img.shields.io/crates/v/dkls23-secp256r1.svg)](https://crates.io/crates/dkls23-secp256r1) |
+| [`dkls23-secp256k1`](dkls23-secp256k1/) | secp256k1 — Ethereum, Bitcoin, Litecoin, Dogecoin, Bitcoin Cash, Cosmos, TRON, XRP, Filecoin, Tezos | [![crates.io](https://img.shields.io/crates/v/dkls23-secp256k1.svg)](https://crates.io/crates/dkls23-secp256k1) |
+| [`dkls23-secp256r1`](dkls23-secp256r1/) | NIST P-256 — NEO3, Sui, Tezos | [![crates.io](https://img.shields.io/crates/v/dkls23-secp256r1.svg)](https://crates.io/crates/dkls23-secp256r1) |
 
 ## libtss
 

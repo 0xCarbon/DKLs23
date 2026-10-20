@@ -3,8 +3,9 @@
 //! Re-exports the curve-generic core at the crate root and each curve
 //! instantiation as a module, selected by features:
 //!
-//! - `secp256k1` (default): [`secp256k1`] — Ethereum, Bitcoin, Cosmos, TRON
-//! - `secp256r1`: `secp256r1` — NEO3, Sui
+//! - `secp256k1` (default): [`secp256k1`] — Ethereum, Bitcoin, Litecoin,
+//!   Dogecoin, Bitcoin Cash, Cosmos, TRON, XRP, Filecoin, Tezos
+//! - `secp256r1`: `secp256r1` — NEO3, Sui, Tezos
 //! - `serde` (default): serialization of key shares and protocol messages
 //!
 //! ```toml
@@ -21,12 +22,13 @@
 
 pub use dkls23_core::*;
 
-/// secp256k1 instantiation: type aliases and Ethereum, Bitcoin, Cosmos and
-/// TRON address derivation.
+/// secp256k1 instantiation: type aliases and address derivation for
+/// Ethereum, Bitcoin, Litecoin, Dogecoin, Bitcoin Cash, Cosmos, TRON, XRP,
+/// Filecoin and Tezos.
 #[cfg(feature = "secp256k1")]
 pub use dkls23_secp256k1 as secp256k1;
 
-/// NIST P-256 instantiation: type aliases and NEO3 and Sui address
+/// NIST P-256 instantiation: type aliases and NEO3, Sui and Tezos address
 /// derivation.
 #[cfg(feature = "secp256r1")]
 pub use dkls23_secp256r1 as secp256r1;
