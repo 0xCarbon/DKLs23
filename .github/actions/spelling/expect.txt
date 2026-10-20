@@ -11,6 +11,7 @@ commitlintrc
 consts
 decommitment
 dkls
+Dogecoin
 dogecoin
 ECDLP
 ENCPROOF
@@ -55,6 +56,7 @@ UInconsistency
 varint
 versioned
 WPKH
+wpkh
 xcarbon
 XCoordinate
 xmd
