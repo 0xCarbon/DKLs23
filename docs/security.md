@@ -46,9 +46,10 @@ carried in messages the protocol already sends:
 
 Each side's freshness protects that side even if the other repeats its value,
 so reusing a `sign_id` (for example on a retry after an abort) does not leak
-key material. The phase-2 session binding also covers the receiver nonce the
-message answers, so a message built on a stale phase-1 message from an
-earlier attempt is a recoverable `SessionBindingMismatch`, not a ban. A fresh
+key material. The phase-2 session binding also covers both parties' phase-1
+OT extension nonces, so a message mixing attempts (built on a stale phase-1
+message, or answering a different attempt than the one whose commitment we
+hold) is a recoverable `SessionBindingMismatch`, not a ban. A fresh
 `sign_id` per attempt is still recommended.
 
 ## Memory Safety

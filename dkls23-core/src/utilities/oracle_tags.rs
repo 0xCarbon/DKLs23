@@ -34,7 +34,7 @@ pub const TAG_OTE_RANDOMIZE: &[u8] = b"dkls23/ot/extension/randomize/v1";
 pub const TAG_MUL_GADGET: &[u8] = b"dkls23/mul/gadget/v1";
 /// Multiplication receiver transcript oracle (Step 3 message digest).
 pub const TAG_MUL_TRANSCRIPT_RECEIVER: &[u8] = b"dkls23/mul/transcript/receiver/v1";
-/// Multiplication transcript oracle (Step 3 including the sender's `tau`).
+/// Multiplication transcript oracle (Step 3 including the sender's salt and `tau`).
 pub const TAG_MUL_TRANSCRIPT: &[u8] = b"dkls23/mul/transcript/v1";
 /// Multiplication chi-tilde oracle.
 pub const TAG_MUL_CHI_TILDE: &[u8] = b"dkls23/mul/chi-tilde/v2";

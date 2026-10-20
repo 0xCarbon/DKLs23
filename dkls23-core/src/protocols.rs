@@ -295,7 +295,8 @@ pub enum AbortReason {
         party: PartyIndex,
     },
     /// A message belongs to a different signing session (sign id, message,
-    /// signer set or key) than ours.
+    /// signer set or key) or, for a phase-2 message, a different attempt (its
+    /// OT extension nonces) than ours.
     SessionBindingMismatch {
         counterparty: PartyIndex,
     },

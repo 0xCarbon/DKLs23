@@ -114,7 +114,8 @@ pub struct MulDataToKeepReceiver<C: DklsCurve> {
     )]
     pub extended_seeds: Vec<PRGOutput>,
     /// Digest of the receiver's OT extension message from Step 3. The
-    /// shared random values of Step 4 are derived from it and from `tau`.
+    /// shared random values of Step 4 are derived from it, the sender's salt
+    /// and `tau`.
     pub ote_transcript: HashOutput,
     /// The receiver's OT extension nonce from Step 3, needed to finish it.
     pub ote_nonce: OteNonce,
@@ -156,7 +157,7 @@ fn receiver_transcript(session_id: &[u8], data: &OTEDataToSender) -> HashOutput 
 /// Computes the shared random values of Step 4.
 ///
 /// They are derived from the whole transcript of Step 3, including the
-/// sender's OT corrections `tau` (DKLs19, Protocol 9).
+/// sender's salt and OT corrections `tau` (DKLs19, Protocol 9).
 fn shared_random_values<C: DklsCurve>(
     session_id: &[u8],
     receiver_transcript: &HashOutput,
@@ -941,6 +942,21 @@ mod tests {
 
         let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
         let error = result.expect_err("tampered verify_u should fail");
+        assert!(error.description.contains("Consistency check failed"));
+    }
+
+    /// Tests that a tampered sender salt is rejected: it changes the
+    /// receiver's OT outputs and the shared random values.
+    #[test]
+    fn test_multiplication_rejects_tampered_ote_salt() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, mut data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
+        data_to_receiver.ote_salt[0] ^= 1;
+
+        let error = mul_receiver
+            .run_phase2(&session_id, &data_to_keep, &data_to_receiver)
+            .expect_err("tampered salt must be rejected");
         assert!(error.description.contains("Consistency check failed"));
     }
 

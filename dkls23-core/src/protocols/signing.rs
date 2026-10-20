@@ -50,7 +50,7 @@ use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver}
 use crate::utilities::oracle_tags::{
     TAG_SIGN_MUL_SESSION, TAG_SIGN_SESSION_BINDING, TAG_SIGN_ZERO_SESSION,
 };
-use crate::utilities::ot::extension::OTEDataToSender;
+use crate::utilities::ot::extension::{OTEDataToSender, OteNonce};
 use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
@@ -171,6 +171,9 @@ pub struct KeepPhase2to3<C: DklsCurve> {
     pub commitment: HashOutput,
     pub mul_keep: MulDataToKeepReceiver<C>,
     pub chi: C::Scalar,
+    /// The counterparty's OT extension nonce from the phase-1 message we
+    /// answered, which its phase-2 message must name as its own.
+    pub counterparty_ote_nonce: OteNonce,
 }
 
 /// Unique keep - Signing.
@@ -306,10 +309,10 @@ impl<C: DklsCurve> Party<C> {
     ///
     /// Covers the DKG session id, the sign id, the chain code and public key
     /// (the key being used), the message hash, the signer set, the phase and
-    /// the direction. A phase-2 message also covers the multiplication
-    /// receiver's OT extension nonce it answers (`answered_nonce`), which is
-    /// fresh in every attempt, so a message built on a stale phase-1 message
-    /// from an earlier attempt with the same sign id is caught too. A receiver
+    /// the direction. A phase-2 message also covers the OT extension nonces of
+    /// the phase-1 messages of both directions (`attempt_nonces`: the one it
+    /// answers, then the sender's own), which are fresh in every attempt, so a
+    /// message mixing attempts with the same sign id is caught too. A receiver
     /// compares it with its own value before any OT or multiplication work,
     /// so a message from a different session or attempt is reported as a
     /// recoverable mismatch instead of a failed OT check.
@@ -319,7 +322,7 @@ impl<C: DklsCurve> Party<C> {
         phase: u8,
         sender: PartyIndex,
         receiver: PartyIndex,
-        answered_nonce: &[u8],
+        attempt_nonces: &[u8],
     ) -> HashOutput {
         tagged_hash(
             TAG_SIGN_SESSION_BINDING,
@@ -331,7 +334,7 @@ impl<C: DklsCurve> Party<C> {
                 &data.message_hash,
                 &Self::signers(data, self.party_index),
                 &[phase, sender.as_u8(), receiver.as_u8()],
-                answered_nonce,
+                attempt_nonces,
             ],
         )
     }
@@ -684,6 +687,7 @@ impl<C: DklsCurve> Party<C> {
                     commitment: message.commitment,
                     mul_keep: current_kept.mul_keep.clone(),
                     chi: current_kept.chi,
+                    counterparty_ote_nonce: message.mul_transmit.nonce,
                 },
             );
             transmit.push(TransmitPhase2to3 {
@@ -696,7 +700,7 @@ impl<C: DklsCurve> Party<C> {
                     2,
                     self.party_index,
                     counterparty,
-                    &message.mul_transmit.nonce,
+                    &[message.mul_transmit.nonce, current_kept.mul_keep.ote_nonce].concat(),
                 ),
                 // Check-adjust
                 gamma_u,
@@ -821,7 +825,11 @@ impl<C: DklsCurve> Party<C> {
                     2,
                     counterparty,
                     self.party_index,
-                    &current_kept.mul_keep.ote_nonce,
+                    &[
+                        current_kept.mul_keep.ote_nonce,
+                        current_kept.counterparty_ote_nonce,
+                    ]
+                    .concat(),
                 )
             {
                 return Err(Abort::recoverable(
@@ -2403,7 +2411,7 @@ mod tests {
             .unwrap();
 
         // Party 2 continues attempt B.
-        let (unique_kept_2to3, kept_2to3, _) = parties[1]
+        let (unique_kept_2to3, kept_2to3, from_party_two) = parties[1]
             .sign_phase2(
                 all_data.get(&party_two).unwrap(),
                 unique_kept_1to2.get(&party_two).unwrap(),
@@ -2424,6 +2432,109 @@ mod tests {
             abort.reason,
             AbortReason::SessionBindingMismatch { counterparty } if counterparty == party_one
         ));
+
+        // Party 1 holds the stale attempt's commitment from party 2, but party
+        // 2 answers attempt B: a session mismatch as well, not a decommitment
+        // failure.
+        let (unique_kept_1_2to3, kept_1_2to3, _) = parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &stale,
+            )
+            .unwrap();
+        let abort = parties[0]
+            .sign_phase3(
+                all_data.get(&party_one).unwrap(),
+                &unique_kept_1_2to3,
+                &kept_1_2to3,
+                &from_party_two,
+            )
+            .expect_err("a message from another attempt must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { counterparty } if counterparty == party_two
+        ));
+    }
+
+    /// Two complete signings with identical sign data both succeed and use
+    /// independent nonces.
+    #[test]
+    fn test_repeated_sign_data_signs_twice() {
+        let mut signatures = Vec::new();
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        for attempt in 0..2 {
+            let (unique_kept_1to2, kept_1to2, received_1to2) = if attempt == 0 {
+                (
+                    unique_kept_1to2.clone(),
+                    kept_1to2.clone(),
+                    received_1to2.clone(),
+                )
+            } else {
+                rerun_two_party_phase1(&parties, &all_data)
+            };
+            let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+                &parties,
+                &all_data,
+                &unique_kept_1to2,
+                &kept_1to2,
+                &received_1to2,
+            );
+            let (x_coord, broadcasts) = run_two_party_phase3(
+                &parties,
+                &all_data,
+                &unique_kept_2to3,
+                &kept_2to3,
+                &received_2to3,
+            );
+            let party_one = PartyIndex::new(1).unwrap();
+            let data = all_data.get(&party_one).unwrap();
+            let (signature, _) = parties[0]
+                .sign_phase4(data, &x_coord, &broadcasts, true)
+                .unwrap();
+            assert!(verify_ecdsa_signature::<TestCurve>(
+                &data.message_hash,
+                &parties[0].pk,
+                &x_coord,
+                &signature
+            ));
+            signatures.push((x_coord, signature));
+        }
+        assert_ne!(signatures[0], signatures[1]);
+    }
+
+    /// Runs phase 1 again for both parties with the same sign data.
+    #[allow(clippy::type_complexity)]
+    fn rerun_two_party_phase1(
+        parties: &[Party<TestCurve>],
+        all_data: &BTreeMap<PartyIndex, SignData>,
+    ) -> (
+        BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>>,
+        BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>>,
+        BTreeMap<PartyIndex, Vec<TransmitPhase1to2>>,
+    ) {
+        let mut unique_kept = BTreeMap::new();
+        let mut kept = BTreeMap::new();
+        let mut sent: Vec<TransmitPhase1to2> = Vec::new();
+        for (i, party) in parties.iter().enumerate() {
+            let index = PartyIndex::new(i as u8 + 1).unwrap();
+            let (unique_keep, keep, transmit) =
+                party.sign_phase1(all_data.get(&index).unwrap()).unwrap();
+            unique_kept.insert(index, unique_keep);
+            kept.insert(index, keep);
+            sent.extend(transmit);
+        }
+        let mut received: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        for message in sent {
+            received
+                .entry(message.parties.receiver)
+                .or_default()
+                .push(message);
+        }
+        (unique_kept, kept, received)
     }
 
     /// Tampered OT data under a correct session binding is still cheating.
