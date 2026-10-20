@@ -1,5 +1,6 @@
 allocvec
 Arbitrum
+basepoint
 bealore
 bech
 bitcoincash
@@ -10,6 +11,8 @@ commitlint
 commitlintrc
 consts
 decommitment
+delayedprivkey
+delayedpubkey
 dkls
 Dogecoin
 dogecoin
@@ -22,10 +25,14 @@ fischlin
 fixint
 Fordefi
 hrp
+htlcprivkey
+htlcpubkey
 idx
 keypair
 libdkls
 Litecoin
+localprivkey
+localpubkey
 ltc
 masterpassphrase
 Misrouted
@@ -34,11 +41,15 @@ nopad
 octez
 pkh
 polymod
+presignatures
 PUSHDATA
 quux
+recomputes
 recoverably
 REQUIERMENT
 rerandomization
+revocationprivkey
+revocationpubkey
 rfc
 ripemd
 rlib
@@ -63,3 +74,5 @@ xmd
 xrp
 Zeroization
 zeroized
+Zeroizing
+zeroizing

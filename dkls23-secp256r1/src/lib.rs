@@ -217,4 +217,53 @@ mod tests {
         assert_eq!(address, "tz3bqAfFRnSA6dfPRG8XR6MBMmo6HZTTG44V");
         assert_eq!(address.len(), 36);
     }
+
+    /// The BOLT 3 derivations are curve-generic: the parties' shares and the
+    /// public key package move to the same key on P-256 too.
+    #[test]
+    fn test_bolt3_derive_p256() {
+        use dkls23_core::protocols::re_key::re_key;
+        use dkls23_core::protocols::Parameters;
+
+        let parameters = Parameters::new(2, 3).unwrap();
+        let secret_key = p256::Scalar::from(15u64);
+        let (parties, package) = re_key::<p256::NistP256>(
+            &parameters,
+            &[7u8; 32],
+            &secret_key,
+            None,
+            compute_neo3_address,
+        );
+        let per_commitment_secret = p256::Scalar::from(3u64);
+        let per_commitment_point = (test_pubkey() * per_commitment_secret).to_affine();
+
+        let local = package.bolt3_derive(&per_commitment_point).unwrap();
+        let revocation = package
+            .bolt3_derive_revocation(&per_commitment_point)
+            .unwrap();
+        for party in &parties {
+            let derived = party
+                .bolt3_derive(&per_commitment_point, compute_neo3_address)
+                .unwrap();
+            assert_eq!(local.verifying_key(), &derived.pk);
+            assert!(local.verify_share(
+                party.party_index,
+                &(test_pubkey() * derived.poly_point).to_affine()
+            ));
+
+            let derived = party
+                .bolt3_derive_revocation(
+                    &per_commitment_point,
+                    &per_commitment_secret,
+                    compute_neo3_address,
+                )
+                .unwrap();
+            assert_eq!(revocation.verifying_key(), &derived.pk);
+            assert!(revocation.verify_share(
+                party.party_index,
+                &(test_pubkey() * derived.poly_point).to_affine()
+            ));
+        }
+        assert_ne!(local.verifying_key(), package.verifying_key());
+    }
 }

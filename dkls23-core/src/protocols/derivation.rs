@@ -219,9 +219,11 @@ impl<C: DklsCurve> Party<C> {
     /// The BIP-32 chain code this party derives children with.
     ///
     /// Established at DKG (or supplied to `re_key`), shared by every party,
-    /// and left unchanged by refresh and by scalar tweaks. Pair it with
+    /// and left unchanged by refresh and by BOLT 3 derivations. Pair it with
     /// [`PublicKeyPackage::derive_child`] so package-side and party-side
-    /// derivation agree. The chain code is public material.
+    /// derivation agree. It is not secret, but together with the public key
+    /// it forms an extended public key that reveals every non-hardened child
+    /// public key, so share it only where that is acceptable.
     #[must_use]
     pub fn chain_code(&self) -> &ChainCode {
         &self.derivation_data.chain_code

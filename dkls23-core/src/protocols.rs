@@ -12,6 +12,7 @@ use crate::protocols::derivation::DerivData;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::zero_shares::ZeroShare;
 
+pub mod bolt3;
 pub mod derivation;
 pub mod dkg;
 pub mod dkg_session;

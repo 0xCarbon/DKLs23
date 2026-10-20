@@ -2211,10 +2211,9 @@ mod tests {
         ));
     }
 
-    /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
-    /// Every key derived from the same shares and every sign id gives the
-    /// multiplication and the zero shares their own session id, and the
-    /// multiplication id depends on the roles.
+    /// Every key derived from the same shares (BIP-32 child, BOLT 3 key) and
+    /// every sign id gives the multiplication and the zero shares their own
+    /// session id, and the multiplication id depends on the roles.
     #[test]
     fn test_signing_session_ids_are_distinct_per_key() {
         let parameters = Parameters::new(2, 3).unwrap();
@@ -2223,7 +2222,15 @@ mod tests {
         let (parties, _) =
             re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
         let base = &parties[0];
-        let keys = [base.clone(), base.derive_child(0, no_address).unwrap()];
+        let per_commitment_point = (ProjectivePoint::GENERATOR * Scalar::from(5u64)).to_affine();
+        let keys = [
+            base.clone(),
+            base.derive_child(0, no_address).unwrap(),
+            base.bolt3_derive(&per_commitment_point, no_address)
+                .unwrap(),
+            base.bolt3_derive_revocation(&per_commitment_point, &Scalar::from(5u64), no_address)
+                .unwrap(),
+        ];
 
         let one = PartyIndex::new(1).unwrap();
         let two = PartyIndex::new(2).unwrap();
@@ -2350,6 +2357,7 @@ mod tests {
         );
     }
 
+    /// Tests if phase 3 emits a ban abort on gamma_u inconsistency.
     #[test]
     fn test_sign_phase3_bans_on_inconsistent_gamma_u() {
         let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =

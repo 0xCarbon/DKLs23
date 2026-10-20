@@ -32,7 +32,7 @@ tagged, length-delimited hashes of:
 - DKG session ID
 - Signing session ID (`SignData::sign_id`)
 - BIP-32 chain code and public key (bind to the key in use, including
-  derived keys)
+  BIP-32 children and BOLT 3 derived keys)
 - Both party indices, in multiplication-role order (multiplication only)
 
 The multiplication's OT extension is derived from this session ID, so a
@@ -60,6 +60,41 @@ derived from it, including a retry after an abort. Generate a fresh random
   `[u8; 32]`. This is a potential timing side-channel, though exploitation
   requires an attacker who can both supply malicious messages AND measure
   sub-microsecond timing differences.
+
+## BOLT 3 Key Derivation
+
+`protocols/bolt3.rs` derives Lightning per-commitment and revocation key
+shares. The tweaks are BOLT 3 hashes of public points that every party
+computes itself; there is no API that applies a caller-supplied scalar. This is
+deliberate: a signature on hash `m` under `a*X` is also a valid signature on
+hash `m/a` under `X`, so whoever chooses a multiplicative factor `a` could
+turn an approved signature into one under the base key on a message of their
+choice.
+
+With the factor and offset derived by hashing, a caller can grind the
+per-commitment point but cannot pick the outputs. A signature under a derived
+key `a*X + c*G` corresponds under `X` to the hash `(m + r*c)/a`, which depends
+on the nonce `r`; `r` is fixed only after the message and the per-commitment
+point. This relies on two things: parties sign hashes they compute from
+transactions they validate, and there are no presignatures (no `r` known
+before the message and key are fixed).
+
+Derived parties share the base key's OT and multiplication state. Signing
+session ids include the public key, so the base key and every derived key
+run their multiplications under distinct ids for the same `sign_id`. Because
+the state is shared:
+- a `BanCounterparty` abort under any derived key applies to the base key
+  and every key derived from it;
+- a leaked derived private key reveals the base key (`x = (x' - c)/a`, with
+  `a` public; `c` is public for `bolt3_derive` and known to the counterparty
+  for the revocation key), and a leaked derived share reveals the base share
+  the same way.
+
+Signers that derive with different per-commitment points hold different
+public keys and abort with a recoverable `SessionBindingMismatch`. The
+revocation derivation takes the counterparty's per-commitment secret and
+rejects it unless it matches the per-commitment point; callers should hold it
+in zeroizing storage.
 
 ## Deterministic RNG (`insecure-rng` feature)
 

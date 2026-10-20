@@ -109,6 +109,20 @@ BIP-32 non-hardened derivation adapted for threshold setting. Each party derives
 their share individually so the reconstructed key corresponds to BIP-32
 derivation of the original master key.
 
+### BOLT 3 Key Derivation (`protocols/bolt3.rs`)
+
+Lightning's per-commitment keys ([BOLT 3](https://github.com/lightning/bolts/blob/master/03-transactions.md#key-derivation)):
+`Party::bolt3_derive` and `Party::bolt3_derive_revocation` map each party's
+share, and the `PublicKeyPackage` functions of the same name map the group key
+and every verifying share, by the same affine map `x -> a*x + c`. Because the
+Lagrange coefficients used in signing sum to one, the reconstructed key moves
+by exactly that map. Each party computes the BOLT 3 hashes itself from the
+group key and the per-commitment point; the revocation derivation also takes
+the per-commitment secret and checks it against the point. As in BIP-32
+derivation, OT correlations, zero-share seeds and multiplication state are
+reused; signing session ids include the public key to keep each key's
+sessions distinct. Unlike BIP-32, the chain code is left unchanged.
+
 ## Security Boundaries
 
 ### Abort Classification
