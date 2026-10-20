@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "dkls23-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bincode",
  "elliptic-curve",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "dkls23-secp256k1"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bech32",
  "bs58",
@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "dkls23-secp256r1"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "blake2",
  "bs58",
