@@ -10,9 +10,10 @@ use elliptic_curve::point::AffineCoordinates;
 use elliptic_curve::scalar::IsHigh;
 use elliptic_curve::sec1::{FromSec1Point, ModulusSize, ToSec1Point};
 use elliptic_curve::{CurveArithmetic, FieldBytesSize, PrimeCurve};
-use rustcrypto_ff::{Field, PrimeField};
-use rustcrypto_group::prime::{PrimeCurveAffine, PrimeGroup};
-use rustcrypto_group::{Curve as GroupCurve, Group, GroupEncoding};
+use ff::{Field, PrimeField};
+use group::prime::{PrimeCurveAffine, PrimeGroup};
+use group::CurveAffine;
+use group::{Curve as GroupCurve, Group, GroupEncoding};
 
 /// Marker trait bundling all elliptic-curve bounds needed by DKLs23.
 ///
@@ -21,12 +22,13 @@ use rustcrypto_group::{Curve as GroupCurve, Group, GroupEncoding};
 /// this via the blanket impl.
 ///
 /// The associated-type bounds in the supertrait ensure that callers get
-/// `GroupEncoding`, `PrimeCurveAffine`, `Reduce`, `Field`, etc. for free
+/// `GroupEncoding`, `CurveAffine`, `Reduce`, `Field`, etc. for free
 /// whenever they write `C: DklsCurve`.
 pub trait DklsCurve:
     CurveArithmetic<
         AffinePoint: GroupEncoding
-                         + PrimeCurveAffine<
+                         + PrimeCurveAffine
+                         + CurveAffine<
             Curve = <Self as CurveArithmetic>::ProjectivePoint,
             Scalar = <Self as CurveArithmetic>::Scalar,
         > + AffineCoordinates<FieldRepr = elliptic_curve::FieldBytes<Self>>,
@@ -37,7 +39,7 @@ pub trait DklsCurve:
                     + PrimeField,
         ProjectivePoint: Group
                              + PrimeGroup
-                             + GroupCurve<AffineRepr = <Self as CurveArithmetic>::AffinePoint>,
+                             + GroupCurve<Affine = <Self as CurveArithmetic>::AffinePoint>,
     > + PrimeCurve
     + Sized
     + 'static
@@ -50,7 +52,8 @@ where
     C: CurveArithmetic + PrimeCurve + Sized + 'static,
     C::Uint: ArrayEncoding,
     <C as CurveArithmetic>::AffinePoint: GroupEncoding
-        + PrimeCurveAffine<
+        + PrimeCurveAffine
+        + CurveAffine<
             Curve = <C as CurveArithmetic>::ProjectivePoint,
             Scalar = <C as CurveArithmetic>::Scalar,
         > + AffineCoordinates<FieldRepr = elliptic_curve::FieldBytes<C>>
@@ -59,7 +62,7 @@ where
     <C as CurveArithmetic>::Scalar:
         Reduce<C::Uint> + Reduce<elliptic_curve::FieldBytes<C>> + IsHigh + Field + PrimeField,
     <C as CurveArithmetic>::ProjectivePoint:
-        Group + PrimeGroup + GroupCurve<AffineRepr = <C as CurveArithmetic>::AffinePoint>,
+        Group + PrimeGroup + GroupCurve<Affine = <C as CurveArithmetic>::AffinePoint>,
     FieldBytesSize<C>: ModulusSize,
 {
 }

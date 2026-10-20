@@ -53,9 +53,9 @@
 
 use std::collections::BTreeMap;
 
-use rustcrypto_ff::Field;
-use rustcrypto_group::prime::PrimeCurveAffine;
-use rustcrypto_group::Curve as GroupCurve;
+use ff::Field;
+use group::Curve as GroupCurve;
+use group::CurveAffine;
 
 use rand::RngExt;
 
@@ -388,7 +388,7 @@ pub(crate) fn step5<C: DklsCurve>(
     }
 
     // Initializes what will be the public key.
-    let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+    let identity = <C::AffinePoint as CurveAffine>::identity();
     let mut pk = identity;
 
     // Verify that all points come from the same polynomial. To do so, for each contiguous set of parties,
@@ -764,8 +764,8 @@ pub fn phase4<C: DklsCurve>(
     // This is practically impossible, but easy to check.
     // We also verify that pk is not the generator point, because
     // otherwise it would be trivial to find the "total" secret key.
-    let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
-    let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+    let identity = <C::AffinePoint as CurveAffine>::identity();
+    let generator = <C::AffinePoint as CurveAffine>::generator();
     if pk == identity || pk == generator {
         return Err(Abort::recoverable(
             data.party_index,

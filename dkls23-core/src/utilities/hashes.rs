@@ -7,9 +7,9 @@ use core::any::TypeId;
 
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::{CurveArithmetic, FieldBytes};
+use ff::PrimeField;
+use group::{Curve as GroupCurve, Group, GroupEncoding};
 use hash2curve::{ExpandMsg, ExpandMsgXmd, MapToCurve};
-use rustcrypto_ff::PrimeField;
-use rustcrypto_group::{Curve as GroupCurve, Group, GroupEncoding};
 use sha2::{Digest, Sha256};
 
 use crate::curve::DklsCurve;

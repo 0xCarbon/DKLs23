@@ -12,8 +12,8 @@ use crate::utilities::oracle_tags::TAG_ZERO_SHARE_FRAGMENT;
 
 use crate::curve::DklsCurve;
 use crate::utilities::rng;
+use ff::Field;
 use rand::RngExt;
-use rustcrypto_ff::Field;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)

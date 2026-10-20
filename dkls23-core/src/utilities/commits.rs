@@ -8,8 +8,8 @@ use crate::utilities::hashes::{point_to_bytes, tagged_hash, HashOutput};
 use crate::utilities::oracle_tags::TAG_COMMITMENT;
 use crate::utilities::rng;
 use elliptic_curve::CurveArithmetic;
+use group::GroupEncoding;
 use rand::RngExt;
-use rustcrypto_group::GroupEncoding;
 use subtle::ConstantTimeEq;
 
 // Computational security parameter lambda_c from DKLs23 (divided by 8)

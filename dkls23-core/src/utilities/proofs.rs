@@ -35,10 +35,10 @@
 
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::FieldBytes;
+use ff::Field;
+use group::Curve as GroupCurve;
+use group::CurveAffine;
 use rand::{Rng, RngExt};
-use rustcrypto_ff::Field;
-use rustcrypto_group::prime::PrimeCurveAffine;
-use rustcrypto_group::Curve as GroupCurve;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
@@ -119,7 +119,7 @@ impl<C: DklsCurve> InteractiveDLogProof<C> {
             scalar_rand_commitment = <C::Scalar as Field>::random(&mut rng);
         }
 
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         let point_rand_commitment = (generator * scalar_rand_commitment).to_affine();
 
         (scalar_rand_commitment, point_rand_commitment)
@@ -172,7 +172,7 @@ impl<C: DklsCurve> InteractiveDLogProof<C> {
         // The challenge will have T bits, so we first extend it to 256 bits.
         let challenge_scalar = challenge_to_scalar::<C>(&self.challenge);
 
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
 
         // We compare the values that should agree.
         let point_verify =
@@ -281,7 +281,7 @@ impl<C: DklsCurve> DLogProof<C> {
                 );
 
                 // Let's take the first hash here.
-                let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+                let generator = <C::AffinePoint as CurveAffine>::generator();
                 let first_msg = [
                     &point_to_bytes::<C>(&generator),
                     &rc_as_bytes[..],
@@ -311,7 +311,7 @@ impl<C: DklsCurve> DLogProof<C> {
                     );
 
                     // Second hash now.
-                    let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+                    let generator = <C::AffinePoint as CurveAffine>::generator();
                     let second_msg = [
                         &point_to_bytes::<C>(&generator),
                         &rc_as_bytes[..],
@@ -353,7 +353,7 @@ impl<C: DklsCurve> DLogProof<C> {
         let proofs = [first_proofs, last_proofs].concat();
 
         // We save the point.
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         let point = (generator * scalar).to_affine();
 
         Ok(DLogProof {
@@ -397,7 +397,7 @@ impl<C: DklsCurve> DLogProof<C> {
         // We concatenate the vector of random commitments.
         let rc_as_bytes = vec_rc_as_bytes.concat();
 
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         for i in 0..(R / 2) {
             // We compare the hashes
             let first_msg = [
@@ -738,7 +738,7 @@ impl<C: DklsCurve> EncProof<C> {
         // PRELIMINARIES
 
         // g is the generator in this case.
-        let base_g = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let base_g = <C::AffinePoint as CurveAffine>::generator();
 
         // We compute u and v from Section 3 in the paper.
         // Be careful: these are not point_u and point_v from CPProof.
@@ -887,7 +887,7 @@ impl<C: DklsCurve> EncProof<C> {
     #[must_use]
     pub fn verify(&self, session_id: &[u8]) -> bool {
         // We check if the proofs are compatible.
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         if (self.proof0.base_g != generator)
         || (self.proof0.base_g != self.proof1.base_g)
         || (self.proof0.base_h != self.proof1.base_h)
@@ -1078,7 +1078,7 @@ mod tests {
         let log_base_h = <Scalar as Field>::random(&mut rng::get_rng());
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
 
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let base_g = (generator * log_base_g).to_affine();
         let base_h = (generator * log_base_h).to_affine();
 
@@ -1112,7 +1112,7 @@ mod tests {
         let log_point_u = <Scalar as Field>::random(&mut rng::get_rng());
         let log_point_v = <Scalar as Field>::random(&mut rng::get_rng());
 
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let base_g = (generator * log_base_g).to_affine();
         let base_h = (generator * log_base_h).to_affine();
         let point_u = (generator * log_point_u).to_affine();
@@ -1135,7 +1135,7 @@ mod tests {
         let log_point_u = <Scalar as Field>::random(&mut rng::get_rng());
         let log_point_v = <Scalar as Field>::random(&mut rng::get_rng());
 
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let base_g = (generator * log_base_g).to_affine();
         let base_h = (generator * log_base_h).to_affine();
         let point_u = (generator * log_point_u).to_affine();
@@ -1159,7 +1159,7 @@ mod tests {
         let session_id = rng::get_rng().random::<[u8; 32]>();
 
         let log_base_h = <Scalar as Field>::random(&mut rng::get_rng());
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let base_h = (generator * log_base_h).to_affine();
 
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
@@ -1180,7 +1180,7 @@ mod tests {
     fn test_enc_proof_rejects_incompatible_subproofs() {
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let log_base_h = <Scalar as Field>::random(&mut rng::get_rng());
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let base_h = (generator * log_base_h).to_affine();
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let bit: bool = rng::get_rng().random();
@@ -1196,7 +1196,7 @@ mod tests {
     fn test_enc_proof_rejects_challenge_sum_mismatch() {
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let log_base_h = <Scalar as Field>::random(&mut rng::get_rng());
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let base_h = (generator * log_base_h).to_affine();
         let scalar = <Scalar as Field>::random(&mut rng::get_rng());
         let bit: bool = rng::get_rng().random();
@@ -1210,7 +1210,7 @@ mod tests {
     /// Tests that oversized interactive challenges are rejected during verification.
     #[test]
     fn test_interactive_dlog_proof_rejects_oversized_challenge() {
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let proof: InteractiveDLogProof<TestCurve> = InteractiveDLogProof {
             challenge: vec![0u8; (T / 8 + 1) as usize],
             challenge_response: <Scalar as Field>::ZERO,
@@ -1222,7 +1222,7 @@ mod tests {
     /// Tests that empty challenges are rejected during verification.
     #[test]
     fn test_interactive_dlog_proof_rejects_empty_challenge() {
-        let generator = <AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <AffinePoint as CurveAffine>::generator();
         let proof: InteractiveDLogProof<TestCurve> = InteractiveDLogProof {
             challenge: vec![],
             challenge_response: <Scalar as Field>::ZERO,

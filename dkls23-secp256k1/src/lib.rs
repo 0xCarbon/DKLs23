@@ -222,7 +222,7 @@ fn double_sha256_checksum(data: &[u8]) -> [u8; 4] {
 mod tests {
     use super::*;
     use elliptic_curve::ops::Reduce;
-    use rustcrypto_group::prime::PrimeCurveAffine;
+    use group::CurveAffine;
 
     fn test_keypair() -> k256::AffinePoint {
         let sk = k256::Scalar::reduce(&k256::U256::from_be_hex(

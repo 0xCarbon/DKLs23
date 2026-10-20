@@ -17,9 +17,9 @@ use ripemd::Ripemd160;
 use sha2::{Digest, Sha256, Sha512};
 
 use elliptic_curve::ops::Reduce;
-use rustcrypto_ff::PrimeField;
-use rustcrypto_group::prime::PrimeCurveAffine;
-use rustcrypto_group::Curve;
+use ff::PrimeField;
+use group::Curve;
+use group::CurveAffine;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::curve::DklsCurve;
@@ -170,10 +170,10 @@ impl<C: DklsCurve> DerivData<C> {
         // the resulting secret key also shifts by the same amount.
         // Note that the tweak depends only on public data.
         let new_poly_point = self.poly_point + tweak;
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         let new_pk = ((generator * tweak) + self.pk).to_affine();
 
-        let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+        let identity = <C::AffinePoint as CurveAffine>::identity();
         if new_pk == identity {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",
@@ -335,11 +335,11 @@ impl<C: DklsCurve> PublicKeyPackage<C> {
             ));
         }
 
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         let tweak_point = generator * tweak;
         let new_verifying_key = (tweak_point + *self.verifying_key()).to_affine();
 
-        let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+        let identity = <C::AffinePoint as CurveAffine>::identity();
         if new_verifying_key == identity {
             return Err(ErrorDeriv::new(
                 "Very improbable: Child index results in value not allowed by BIP-32!",

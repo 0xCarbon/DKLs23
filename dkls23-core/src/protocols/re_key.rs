@@ -10,9 +10,9 @@
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
-use rustcrypto_ff::Field;
-use rustcrypto_group::prime::PrimeCurveAffine;
-use rustcrypto_group::Curve;
+use ff::Field;
+use group::Curve;
+use group::CurveAffine;
 
 use crate::curve::DklsCurve;
 use crate::utilities::rng;
@@ -49,7 +49,7 @@ pub fn re_key<C: DklsCurve>(
     address_fn: impl Fn(&C::AffinePoint) -> String,
 ) -> (Vec<Party<C>>, PublicKeyPackage<C>) {
     // Public key.
-    let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+    let generator = <C::AffinePoint as CurveAffine>::generator();
     let pk = (generator * *secret_key).to_affine();
 
     // We will compute "poly_point" for each party with this polynomial

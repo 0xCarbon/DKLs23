@@ -16,9 +16,9 @@
 //! several times. As this will be our case for the OT extension, there are
 //! "batch" variants for each of the phases.
 
+use ff::Field;
+use group::Curve as GroupCurve;
 use rand::RngExt;
-use rustcrypto_ff::Field;
-use rustcrypto_group::Curve as GroupCurve;
 
 use crate::curve::DklsCurve;
 use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_point, HashOutput};

@@ -973,9 +973,9 @@ mod tests {
     use super::*;
     use crate::utilities::hashes::scalar_to_bytes;
     use elliptic_curve::CurveArithmetic;
+    use ff::Field;
     use k256::Secp256k1;
     use rand::RngExt;
-    use rustcrypto_ff::Field;
     use std::collections::HashSet;
 
     type TestCurve = Secp256k1;

@@ -8,15 +8,15 @@ repository = "https://github.com/0xCarbon/DKLs23"
 readme = "README.md"
 
 [dependencies]
-elliptic-curve = { version = "0.14.0-rc.29", features = ["arithmetic", "sec1"] }
-rustcrypto-ff = "0.14.0-rc.0"
-rustcrypto-group = "0.14.0-rc.0"
-k256 = { version = "0.14.0-rc.8", features = ["hash2curve"] }
-p256 = { version = "0.14.0-rc.8", features = ["hash2curve"] }
-hash2curve = "0.14.0-rc.11"
-sha2 = "0.11.0-rc.5"
-hmac = "0.13.0-rc.5"
-ripemd = "0.2.0-rc.5"
+elliptic-curve = { version = "0.14.1", features = ["arithmetic", "sec1"] }
+ff = "0.14"
+group = "0.14"
+k256 = { version = "0.14", features = ["hash2curve"] }
+p256 = { version = "0.14", features = ["hash2curve"] }
+hash2curve = "0.14"
+sha2 = "0.11"
+hmac = "0.13"
+ripemd = "0.2"
 rand = "0.10"
 hex = "0.4"
 bincode = { version = "1", optional = true }
