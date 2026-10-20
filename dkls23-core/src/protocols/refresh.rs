@@ -85,7 +85,7 @@
 
 use std::collections::BTreeMap;
 
-use rustcrypto_ff::Field;
+use ff::Field;
 
 use crate::curve::DklsCurve;
 use crate::utilities::hashes::{tagged_hash, HashOutput};
@@ -402,8 +402,7 @@ impl<C: DklsCurve> Party<C> {
         )?;
 
         // The public key calculated above should be the zero point on the curve.
-        if verifying_pk != <C::AffinePoint as rustcrypto_group::prime::PrimeCurveAffine>::identity()
-        {
+        if verifying_pk != <C::AffinePoint as group::CurveAffine>::identity() {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::PolynomialInconsistency,
@@ -869,8 +868,7 @@ impl<C: DklsCurve> Party<C> {
         )?;
 
         // The public key calculated above should be the zero point on the curve.
-        if verifying_pk != <C::AffinePoint as rustcrypto_group::prime::PrimeCurveAffine>::identity()
-        {
+        if verifying_pk != <C::AffinePoint as group::CurveAffine>::identity() {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::PolynomialInconsistency,

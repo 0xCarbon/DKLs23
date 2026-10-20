@@ -16,8 +16,8 @@ pub const TAG_ENCPROOF_FS: &[u8] = b"dkls23/proofs/enc/fs/v1";
 /// Zero-share fragment derivation oracle.
 pub const TAG_ZERO_SHARE_FRAGMENT: &[u8] = b"dkls23/zero-share/fragment/v1";
 
-/// Base OT hash-to-point oracle.
-pub const TAG_OT_BASE_H: &[u8] = b"dkls23/ot/base/h/v1";
+/// Base OT hash-to-curve oracle (RFC 9380 domain-separation tag).
+pub const TAG_OT_BASE_H: &[u8] = b"dkls23/ot/base/h/v2";
 /// Base OT message derivation oracle.
 pub const TAG_OT_BASE_MSG: &[u8] = b"dkls23/ot/base/msg/v1";
 

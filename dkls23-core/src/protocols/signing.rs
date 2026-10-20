@@ -33,9 +33,9 @@
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::point::AffineCoordinates;
 use elliptic_curve::scalar::IsHigh;
-use rustcrypto_ff::{Field, PrimeField};
-use rustcrypto_group::prime::PrimeCurveAffine;
-use rustcrypto_group::Curve;
+use ff::{Field, PrimeField};
+use group::Curve;
+use group::CurveAffine;
 use std::collections::{BTreeMap, BTreeSet};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -315,7 +315,7 @@ impl<C: DklsCurve> Party<C> {
         let instance_key = C::Scalar::random(&mut rng::get_rng());
         let inversion_mask = C::Scalar::random(&mut rng::get_rng());
 
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         let instance_point = (generator * instance_key).to_affine();
 
         // Step 6 - Prepare the messages to keep and to send.
@@ -477,7 +477,7 @@ impl<C: DklsCurve> Party<C> {
 
         // These are sk_i and pk_i from the paper.
         let key_share = (self.poly_point * l) + unique_kept.zeta;
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         let public_share = (generator * key_share).to_affine();
 
         // This is the input for the multiplication protocol.
@@ -693,7 +693,7 @@ impl<C: DklsCurve> Party<C> {
                     },
                 ));
             }
-            let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+            let identity = <C::AffinePoint as CurveAffine>::identity();
             if message.instance_point == identity {
                 return Err(Abort::recoverable(
                     self.party_index,
@@ -772,7 +772,7 @@ impl<C: DklsCurve> Party<C> {
             }
 
             // First consistency checks.
-            let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+            let generator = <C::AffinePoint as CurveAffine>::generator();
 
             if (message.instance_point * current_kept.chi) != ((generator * d_u) + message.gamma_u)
             {
@@ -820,7 +820,7 @@ impl<C: DklsCurve> Party<C> {
         // should not be the point at infinity (this is not specified on
         // DKLs23 but actually on ECDSA itself). In any case, the probability
         // of this happening is very low.
-        if total_instance_point == <C::AffinePoint as PrimeCurveAffine>::identity() {
+        if total_instance_point == <C::AffinePoint as CurveAffine>::identity() {
             return Err(Abort::recoverable(
                 self.party_index,
                 AbortReason::PolynomialInconsistency,
@@ -900,7 +900,7 @@ impl<C: DklsCurve> Party<C> {
         }
 
         let s_bytes: elliptic_curve::FieldBytes<C> = s.into();
-        let signature = hex::encode(&s_bytes);
+        let signature = hex::encode(s_bytes);
 
         let verification =
             verify_ecdsa_signature::<C>(&data.message_hash, &self.pk, x_coord, &signature);
@@ -917,7 +917,7 @@ impl<C: DklsCurve> Party<C> {
         // R = (G * msg_hash + pk * r_x) / s
         let rx_scalar = reduce_hex_bytes::<C>(x_coord);
         let msg_scalar = reduce_hash_bytes::<C>(&data.message_hash);
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+        let generator = <C::AffinePoint as CurveAffine>::generator();
         let first = generator * msg_scalar;
         let second = self.pk * rx_scalar;
         let s_inverse = s.invert().unwrap();
@@ -926,7 +926,7 @@ impl<C: DklsCurve> Party<C> {
         // Compute recovery id from the signature point R.
         //
         // y-parity: determined from the compressed SEC1 prefix byte (0x02=even, 0x03=odd).
-        let compressed = rustcrypto_group::GroupEncoding::to_bytes(&signature_point);
+        let compressed = group::GroupEncoding::to_bytes(&signature_point);
         let is_y_odd = compressed.as_ref()[0] == 0x03;
 
         // is_x_reduced: true when R.x (as a field element) >= the curve order n,
@@ -958,7 +958,7 @@ fn parse_hex_to_scalar<C: DklsCurve>(hex_value: &str) -> Option<C::Scalar> {
         return None;
     }
     let field_bytes: &elliptic_curve::FieldBytes<C> = bytes.as_slice().try_into().ok()?;
-    Option::from(<C::Scalar as PrimeField>::from_repr(field_bytes.clone()))
+    Option::from(<C::Scalar as PrimeField>::from_repr(*field_bytes))
 }
 
 /// Reduces a 32-byte hash output into a scalar for curve `C`.
@@ -1014,9 +1014,9 @@ pub fn verify_ecdsa_signature<C: DklsCurve>(
     let first = msg_scalar * inverse_s;
     let second = rx_as_scalar * inverse_s;
 
-    let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
+    let generator = <C::AffinePoint as CurveAffine>::generator();
     let point_to_check = ((generator * first) + (*pk * second)).to_affine();
-    let identity = <C::AffinePoint as PrimeCurveAffine>::identity();
+    let identity = <C::AffinePoint as CurveAffine>::identity();
     if point_to_check == identity {
         return false;
     }
