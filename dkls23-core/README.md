@@ -19,7 +19,7 @@ This is the curve-generic core — most users should depend on a curve-specific 
 - [`dkls23-secp256k1`](https://crates.io/crates/dkls23-secp256k1) — for Ethereum, Bitcoin, Cosmos, TRON
 - [`dkls23-secp256r1`](https://crates.io/crates/dkls23-secp256r1) — for NEO3, Sui
 
-Use `dkls23-core` directly only if you need to implement a custom curve via the `DklsCurve` trait.
+Use `dkls23-core` directly only if you need a custom curve via the `DklsCurve` trait. Any RustCrypto curve that implements RFC 9380 hash-to-curve (`GroupDigest`) qualifies.
 
 ```toml
 [dependencies]

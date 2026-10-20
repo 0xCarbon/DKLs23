@@ -28,9 +28,11 @@ random scalar `r` using `Scalar::random()` (not vulnerable to the Fordefi
 `Scalar::from_bytes` on untrusted input).
 
 The point `h` is derived from the session id and the receiver's seed with
-RFC 9380 `hash_to_curve` (`secp256k1_XMD:SHA-256_SSWU_RO_` for secp256k1,
+RFC 9380 `hash_to_curve`, using the curve's random-oracle suite from its
+`GroupDigest` implementation (`secp256k1_XMD:SHA-256_SSWU_RO_` for secp256k1,
 `P256_XMD:SHA-256_SSWU_RO_` for P-256), matching the hash `{0,1}* -> G` in
-the paper.
+the paper. `DklsCurve` therefore requires `GroupDigest`; for `k256` and `p256`
+enable their `group-digest` feature.
 
 ### OT Extension (`utilities/ot/extension.rs`)
 

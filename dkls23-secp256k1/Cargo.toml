@@ -10,7 +10,7 @@ readme = "README.md"
 [dependencies]
 dkls23-core = { version = "0.5.2", path = "../dkls23-core" }
 elliptic-curve = { version = "0.14.1", features = ["sec1"] }
-k256 = { version = "0.14" }
+k256 = { version = "0.14", features = ["group-digest"] }
 sha2 = "0.11"
 sha3 = "0.11"
 keccak = "0.2"

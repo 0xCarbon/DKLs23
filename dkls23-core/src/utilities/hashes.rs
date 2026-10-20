@@ -3,13 +3,10 @@
 //! Each subprotocol uses a different random oracle via [`tagged_hash`]
 //! and fixed tags in `utilities::oracle_tags`.
 
-use core::any::TypeId;
-
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::{CurveArithmetic, FieldBytes};
-use ff::PrimeField;
-use group::{Curve as GroupCurve, Group, GroupEncoding};
-use hash2curve::{ExpandMsg, ExpandMsgXmd, MapToCurve};
+use group::{Curve as GroupCurve, GroupEncoding};
+use hash2curve::GroupDigest;
 use sha2::{Digest, Sha256};
 
 use crate::curve::DklsCurve;
@@ -56,100 +53,27 @@ where
 
 /// Length-delimited tagged hash with result as a curve point.
 ///
-/// For secp256k1 and P-256 this is RFC 9380 `hash_to_curve` with the
-/// `secp256k1_XMD:SHA-256_SSWU_RO_` and `P256_XMD:SHA-256_SSWU_RO_` suites.
-/// The DST is `tag || "-with-" || suite_id`, and the message is the
-/// length-delimited encoding of `components` used by [`tagged_hash`].
-///
-/// Other curves fall back to try-and-increment on SEC1 compressed points.
+/// This is RFC 9380 `hash_to_curve` with the curve's random-oracle suite
+/// ([`GroupDigest`]), e.g. `secp256k1_XMD:SHA-256_SSWU_RO_` or
+/// `P256_XMD:SHA-256_SSWU_RO_`. The DST is `tag || "-with-" || suite_id`,
+/// and the message is the length-delimited encoding of `components` used
+/// by [`tagged_hash`].
 ///
 /// The running time depends only on the inputs, which must be public.
-///
-/// # Panics
-///
-/// Panics if `C` is not one of the RFC 9380 curves above and its point
-/// encoding is not SEC1 compressed.
 #[must_use]
 pub fn tagged_hash_as_point<C: DklsCurve>(tag: &[u8], components: &[&[u8]]) -> C::AffinePoint {
     let mut msg = Vec::with_capacity(components.iter().map(|c| 8 + c.len()).sum::<usize>());
     for component in components {
         append_len_prefixed(&mut msg, component);
     }
-
-    let curve = TypeId::of::<C>();
-    if curve == TypeId::of::<k256::Secp256k1>() {
-        rfc9380_hash_to_point::<k256::Secp256k1, C>(tag, b"secp256k1_XMD:SHA-256_SSWU_RO_", &msg)
-    } else if curve == TypeId::of::<p256::NistP256>() {
-        rfc9380_hash_to_point::<p256::NistP256, C>(tag, b"P256_XMD:SHA-256_SSWU_RO_", &msg)
-    } else {
-        try_and_increment_hash_to_point::<C>(tag, &msg)
-    }
+    hash_to_curve::<C>(tag, &msg)
 }
 
-/// RFC 9380 `hash_to_curve` on curve `H`, returned as a point of `C`.
-///
-/// The caller guarantees that `H` and `C` are the same curve.
-fn rfc9380_hash_to_point<H, C>(tag: &[u8], suite_id: &[u8], msg: &[u8]) -> C::AffinePoint
-where
-    H: MapToCurve,
-    H::AffinePoint: GroupEncoding,
-    ExpandMsgXmd<Sha256>: ExpandMsg<H::SecurityLevel>,
-    C: DklsCurve,
-{
-    let point =
-        hash2curve::hash_from_bytes::<H, ExpandMsgXmd<Sha256>>(&[msg], &[tag, b"-with-", suite_id])
-            .expect("DST and output length are within RFC 9380 limits");
-    let bytes = point.to_affine().to_bytes();
-
-    let mut repr = <C::AffinePoint as GroupEncoding>::Repr::default();
-    repr.as_mut().copy_from_slice(bytes.as_ref());
-    Option::from(<C::AffinePoint as GroupEncoding>::from_bytes(&repr))
-        .expect("H and C are the same curve")
-}
-
-/// Try-and-increment hash to a SEC1 compressed point with even `y`.
-///
-/// Candidate x-coordinates come from SHA-256 in counter mode.
-fn try_and_increment_hash_to_point<C: DklsCurve>(tag: &[u8], msg: &[u8]) -> C::AffinePoint {
-    const MAX_ATTEMPTS: u32 = 1 << 16;
-
-    let mut repr = <C::AffinePoint as GroupEncoding>::Repr::default();
-    let x_len = repr.as_ref().len() - 1;
-    // For a prime-order curve, the group order and the base field have the
-    // same bit length up to one bit, so masking to NUM_BITS keeps candidates
-    // close to the field size.
-    let excess_bits = (8 * x_len).saturating_sub(<C::Scalar as PrimeField>::NUM_BITS as usize);
-
-    for attempt in 0..MAX_ATTEMPTS {
-        let candidate = repr.as_mut();
-        candidate[0] = 0x02;
-        for (block, chunk) in (0u32..).zip(candidate[1..].chunks_mut(SECURITY as usize)) {
-            let digest = tagged_hash(
-                tag,
-                &[
-                    b"try-and-increment",
-                    msg,
-                    &attempt.to_be_bytes(),
-                    &block.to_be_bytes(),
-                ],
-            );
-            chunk.copy_from_slice(&digest[..chunk.len()]);
-        }
-        for (i, byte) in candidate[1..].iter_mut().enumerate() {
-            let excess_in_byte = excess_bits.saturating_sub(8 * i).min(8);
-            *byte &= 0xffu8.checked_shr(excess_in_byte as u32).unwrap_or(0);
-        }
-
-        let point: Option<C::AffinePoint> =
-            Option::from(<C::AffinePoint as GroupEncoding>::from_bytes(&repr));
-        if let Some(point) = point {
-            if !bool::from(C::ProjectivePoint::from(point).is_identity()) {
-                return point;
-            }
-        }
-    }
-
-    panic!("hash to point failed: point encoding of C is not SEC1 compressed")
+/// RFC 9380 `hash_to_curve` of `msg` with DST `tag || "-with-" || suite_id`.
+fn hash_to_curve<C: DklsCurve>(tag: &[u8], msg: &[u8]) -> C::AffinePoint {
+    <C as GroupDigest>::hash_from_bytes(&[msg], &[tag, b"-with-", C::HASH_TO_CURVE_ID])
+        .expect("DST and output length are within RFC 9380 limits")
+        .to_affine()
 }
 
 /// Reduce a 32-byte hash output into a scalar for curve `C`.
@@ -193,6 +117,7 @@ mod tests {
 
     use super::*;
     use crate::utilities::rng;
+    use hash2curve::ExpandMsgXmd;
     use k256::elliptic_curve::{point::AffineCoordinates, Field};
     use k256::{AffinePoint, Scalar, Secp256k1};
     use p256::NistP256;
@@ -211,40 +136,30 @@ mod tests {
     /// `tag || "-with-" || suite_id`.
     #[test]
     fn test_rfc9380_test_vectors() {
-        fn check<C>(suite_id: &[u8], msg: &[u8], x: &str, y: &str)
-        where
-            C: DklsCurve + MapToCurve,
-            ExpandMsgXmd<Sha256>: ExpandMsg<C::SecurityLevel>,
-        {
-            let point = rfc9380_hash_to_point::<C, C>(b"QUUX-V01-CS02", suite_id, msg);
+        fn check<C: DklsCurve>(msg: &[u8], x: &str, y: &str) {
+            let point = hash_to_curve::<C>(b"QUUX-V01-CS02", msg);
             let y = hex::decode(y).unwrap();
             assert_eq!(hex::encode(point.x()), x);
             assert_eq!(bool::from(point.y_is_odd()), y[31] & 1 == 1);
         }
 
-        let k256 = b"secp256k1_XMD:SHA-256_SSWU_RO_";
         check::<Secp256k1>(
-            k256,
             b"",
             "c1cae290e291aee617ebaef1be6d73861479c48b841eaba9b7b5852ddfeb1346",
             "64fa678e07ae116126f08b022a94af6de15985c996c3a91b64c406a960e51067",
         );
         check::<Secp256k1>(
-            k256,
             b"abc",
             "3377e01eab42db296b512293120c6cee72b6ecf9f9205760bd9ff11fb3cb2c4b",
             "7f95890f33efebd1044d382a01b1bee0900fb6116f94688d487c6c7b9c8371f6",
         );
 
-        let p256 = b"P256_XMD:SHA-256_SSWU_RO_";
         check::<NistP256>(
-            p256,
             b"",
             "2c15230b26dbc6fc9a37051158c95b79656e17a1a920b11394ca91c44247d3e4",
             "8a7a74985cc5c776cdfe4b1f19884970453912e9d31528c060be9ab5c43e8415",
         );
         check::<NistP256>(
-            p256,
             b"abc",
             "0bb8b87485551aa43ed54f009230450b492fead5f1cc91658775dac4a3388a0f",
             "5c41b3d0731a27a7b14bc0bf0ccded2d8751f83493404c84a88e71ffd424212e",
@@ -315,29 +230,6 @@ mod tests {
             )),
             "02d62753e8e5ad43b7432a7955ad3185e307992652ac807d130c0a8cc35cee60ff"
         );
-    }
-
-    /// Tests that the try-and-increment fallback is deterministic and
-    /// returns valid, input-dependent, non-identity points.
-    #[test]
-    fn test_try_and_increment_hash_to_point() {
-        for i in 0u32..64 {
-            let msg = i.to_be_bytes();
-            let point = try_and_increment_hash_to_point::<Secp256k1>(b"tag", &msg);
-            assert_ne!(point, AffinePoint::IDENTITY);
-            assert!(!bool::from(point.y_is_odd()));
-            assert_eq!(
-                point,
-                try_and_increment_hash_to_point::<Secp256k1>(b"tag", &msg)
-            );
-            assert_ne!(
-                point,
-                try_and_increment_hash_to_point::<Secp256k1>(b"other", &msg)
-            );
-
-            let point = try_and_increment_hash_to_point::<NistP256>(b"tag", &msg);
-            assert_ne!(point, p256::AffinePoint::IDENTITY);
-        }
     }
 
     /// Tests if [`scalar_to_bytes`] converts a `Scalar`
