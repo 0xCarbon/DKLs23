@@ -1,7 +1,6 @@
 Arbitrum
 bealore
 bech
-bincode
 btc
 btreemap
 commitlint

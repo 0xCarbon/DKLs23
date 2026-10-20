@@ -17,7 +17,7 @@ hmac = "0.13"
 ripemd = "0.2"
 rand = "0.10"
 hex = "0.4"
-bincode = { version = "1", optional = true }
+postcard = { version = "1.1", default-features = false, features = ["alloc"], optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_bytes = { version = "0.11.12", optional = true }
 zeroize = { version = "1", features = ["derive"] }
@@ -34,5 +34,5 @@ serde_json = "1"
 
 [features]
 default = ["serde"]
-serde = ["dep:serde", "dep:serde_bytes", "dep:bincode"]
+serde = ["dep:serde", "dep:serde_bytes", "dep:postcard"]
 insecure-rng = []
