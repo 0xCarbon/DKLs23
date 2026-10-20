@@ -48,14 +48,13 @@ pub struct PhaseInput {
 const FRAME_HEADER_LEN: usize = 5; // 1 byte tag + 4 bytes length
 
 fn encode_frame<T: MessageTag>(message: &T) -> Result<Vec<u8>, MessageError> {
-    let payload =
-        postcard::to_allocvec(message).map_err(|e| MessageError::Serialization(e.to_string()))?;
-    let len = u32::try_from(payload.len())
+    // Serialize straight after a placeholder header, then fill in the length.
+    let mut buf = vec![T::TAG, 0, 0, 0, 0];
+    buf = postcard::to_extend(message, buf)
+        .map_err(|e| MessageError::Serialization(e.to_string()))?;
+    let len = u32::try_from(buf.len() - FRAME_HEADER_LEN)
         .map_err(|_| MessageError::Serialization("payload exceeds u32::MAX".into()))?;
-    let mut buf = Vec::with_capacity(FRAME_HEADER_LEN + payload.len());
-    buf.push(T::TAG);
-    buf.extend_from_slice(&len.to_be_bytes());
-    buf.extend_from_slice(&payload);
+    buf[1..FRAME_HEADER_LEN].copy_from_slice(&len.to_be_bytes());
     Ok(buf)
 }
 
@@ -415,5 +414,16 @@ mod tests {
             input.get_broadcast::<MsgB>(1).unwrap_err(),
             MessageError::Deserialization(_)
         ));
+    }
+
+    #[test]
+    fn test_frame_layout() {
+        let mut output = PhaseOutput::new();
+        output.add_broadcast(&MsgA { value: 300 }).unwrap();
+        // tag, big-endian payload length, postcard varint 300 = [0xAC, 0x02].
+        assert_eq!(
+            output.broadcasts[0],
+            vec![MSG_A_TAG, 0, 0, 0, 2, 0xAC, 0x02]
+        );
     }
 }
