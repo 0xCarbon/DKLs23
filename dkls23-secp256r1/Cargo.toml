@@ -18,7 +18,7 @@ bs58 = "0.5"
 hex = "0.4"
 
 [dev-dependencies]
-group = "0.14"
+group = { version = "0.14", default-features = false }
 
 [features]
 default = ["serde"]
