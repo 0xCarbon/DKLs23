@@ -953,7 +953,7 @@ mod tests {
             .iter()
             .position(|bit| !bit)
             .expect("some choice bit is 0");
-        for row in [0, OT_WIDTH as usize - 1] {
+        for row in 0..OT_WIDTH as usize {
             let mut tampered = data_to_receiver.clone();
             tampered.vector_of_tau[row][column] += Scalar::ONE;
 

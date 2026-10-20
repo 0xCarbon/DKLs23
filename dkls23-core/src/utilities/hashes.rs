@@ -60,6 +60,12 @@ where
 /// by [`tagged_hash`].
 ///
 /// The running time depends only on the inputs, which must be public.
+///
+/// # Panics
+///
+/// Panics if the curve's `expand_message` rejects the input. The XMD suites
+/// of secp256k1 and P-256 never do: a DST over 255 bytes is hashed down as
+/// RFC 9380 specifies, and the output length is fixed.
 #[must_use]
 pub fn tagged_hash_as_point<C: DklsCurve>(tag: &[u8], components: &[&[u8]]) -> C::AffinePoint {
     let mut msg = Vec::with_capacity(components.iter().map(|c| 8 + c.len()).sum::<usize>());

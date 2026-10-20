@@ -20,13 +20,14 @@
 //!
 //! Every tweak is a hash of public points, and each party computes it from
 //! the group key and the per-commitment point. A raw caller-supplied tweak is
-//! deliberately not exposed: a signature on hash `m` under `a·X` is also a
-//! valid signature on hash `m/a` under `X`, so whoever chooses a
+//! deliberately not exposed: a signature `(r, s)` on hash `m` under `a·X`
+//! gives the valid signature `(r, s/a)` on hash `m/a` under `X`, so whoever
+//! chooses a
 //! multiplicative factor can turn an approved signature into a signature
 //! under the base key on a message of their choice. A caller can still grind
 //! the per-commitment point, but cannot pick the hash outputs; and a
-//! signature under a derived key `a·X + c·G` corresponds under `X` to the
-//! hash `(m + r·c)/a`, which depends on the nonce `r`, fixed only after the
+//! signature `(r, s)` under a derived key `a·X + c·G` gives `(r, s/a)` under
+//! `X` on the hash `(m + r·c)/a`, which depends on the nonce `r`, fixed only after the
 //! message and the per-commitment point. This relies on the parties signing
 //! hashes they compute from transactions they validate, and on there being
 //! no presignatures.
@@ -72,10 +73,10 @@ pub enum Bolt3Error {
     /// `per_commitment_secret·G` is not the per-commitment point.
     PerCommitmentSecretMismatch,
     /// A BOLT 3 hash is zero or not below the group order.
-    HashNotAScalar,
+    HashOutOfRange,
     /// The curve's scalars are not 32 bytes, so a SHA-256 output is not one.
     UnsupportedCurve,
-    /// The derived public key is the identity point.
+    /// The base or the derived public key is the identity point.
     IdentityPublicKey,
 }
 
@@ -91,7 +92,7 @@ impl fmt::Display for Bolt3Error {
                     "per-commitment secret does not match the per-commitment point"
                 )
             }
-            Bolt3Error::HashNotAScalar => write!(f, "BOLT 3 hash is not a valid scalar"),
+            Bolt3Error::HashOutOfRange => write!(f, "BOLT 3 hash is not a valid scalar"),
             Bolt3Error::UnsupportedCurve => write!(f, "curve scalars are not 32 bytes"),
             Bolt3Error::IdentityPublicKey => write!(f, "derived public key is the identity point"),
         }
@@ -125,11 +126,18 @@ fn digest_to_scalar<C: DklsCurve>(digest: &[u8]) -> Result<C::Scalar, Bolt3Error
     let scalar: Option<C::Scalar> = Option::from(<C::Scalar as PrimeField>::from_repr(*bytes));
     scalar
         .filter(|value| !bool::from(value.is_zero()))
-        .ok_or(Bolt3Error::HashNotAScalar)
+        .ok_or(Bolt3Error::HashOutOfRange)
 }
 
-fn check_per_commitment_point<C: DklsCurve>(point: &C::AffinePoint) -> Result<(), Bolt3Error> {
-    if *point == <C::AffinePoint as CurveAffine>::identity() {
+fn check_points<C: DklsCurve>(
+    basepoint: &C::AffinePoint,
+    per_commitment_point: &C::AffinePoint,
+) -> Result<(), Bolt3Error> {
+    let identity = <C::AffinePoint as CurveAffine>::identity();
+    if *basepoint == identity {
+        return Err(Bolt3Error::IdentityPublicKey);
+    }
+    if *per_commitment_point == identity {
         return Err(Bolt3Error::InvalidPerCommitmentPoint);
     }
     Ok(())
@@ -149,7 +157,7 @@ impl<C: DklsCurve> ShareMap<C> {
         basepoint: &C::AffinePoint,
         per_commitment_point: &C::AffinePoint,
     ) -> Result<(Self, C::Scalar), Bolt3Error> {
-        check_per_commitment_point::<C>(per_commitment_point)?;
+        check_points::<C>(basepoint, per_commitment_point)?;
         let tweak = bolt3_hash::<C>(per_commitment_point, basepoint)?;
         let generator = <C::AffinePoint as CurveAffine>::generator();
         let map = ShareMap {
@@ -167,7 +175,7 @@ impl<C: DklsCurve> ShareMap<C> {
         basepoint: &C::AffinePoint,
         per_commitment_point: &C::AffinePoint,
     ) -> Result<(Self, C::Scalar), Bolt3Error> {
-        check_per_commitment_point::<C>(per_commitment_point)?;
+        check_points::<C>(basepoint, per_commitment_point)?;
         let factor = bolt3_hash::<C>(basepoint, per_commitment_point)?;
         let commitment_factor = bolt3_hash::<C>(per_commitment_point, basepoint)?;
         let map = ShareMap {
@@ -418,14 +426,14 @@ mod tests {
     fn reconstruct(parties: &[&Party<TestCurve>]) -> Scalar {
         parties.iter().fold(Scalar::ZERO, |sum, party| {
             let i = Scalar::from(u64::from(party.party_index.as_u8()));
-            let lagrange = parties
+            let coefficient = parties
                 .iter()
                 .filter(|other| other.party_index != party.party_index)
                 .fold(Scalar::ONE, |product, other| {
                     let j = Scalar::from(u64::from(other.party_index.as_u8()));
                     product * j * (j - i).invert().unwrap()
                 });
-            sum + party.poly_point * lagrange
+            sum + party.poly_point * coefficient
         })
     }
 
@@ -634,7 +642,7 @@ mod tests {
         for rejected in [vec![0u8; 32], order, vec![0xff; 32]] {
             assert_eq!(
                 digest_to_scalar::<TestCurve>(&rejected).unwrap_err(),
-                Bolt3Error::HashNotAScalar
+                Bolt3Error::HashOutOfRange
             );
         }
         assert_eq!(
@@ -775,6 +783,25 @@ mod tests {
         assert_eq!(
             package.bolt3_derive_revocation(&identity).unwrap_err(),
             Bolt3Error::InvalidPerCommitmentPoint
+        );
+    }
+
+    #[test]
+    fn test_bolt3_rejects_identity_basepoint() {
+        let parameters = Parameters::new(THRESHOLD, SHARE_COUNT).unwrap();
+        let shares = (1..=SHARE_COUNT)
+            .map(|i| (PartyIndex::new(i).unwrap(), AffinePoint::IDENTITY))
+            .collect();
+        let package = PublicKeyPackage::<TestCurve>::new(AffinePoint::IDENTITY, shares, parameters);
+        assert_eq!(
+            package.bolt3_derive(&per_commitment_point()).unwrap_err(),
+            Bolt3Error::IdentityPublicKey
+        );
+        assert_eq!(
+            package
+                .bolt3_derive_revocation(&per_commitment_point())
+                .unwrap_err(),
+            Bolt3Error::IdentityPublicKey
         );
     }
 

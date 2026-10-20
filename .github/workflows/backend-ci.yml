@@ -34,4 +34,4 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --workspace --release
+          args: --workspace --release --features dkls23/secp256r1

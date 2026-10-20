@@ -33,12 +33,13 @@ tagged, length-delimited hashes of:
 - Signing session ID (`SignData::sign_id`)
 - BIP-32 chain code and public key (bind to the key in use, including
   BIP-32 children and BOLT 3 derived keys)
+- Message hash and signer set
 - Both party indices, in multiplication-role order (multiplication only)
 
 The multiplication's OT extension is derived from this session ID, so a
-`sign_id` must be unique for every signing session of a key and of every key
-derived from it, including a retry after an abort. Generate a fresh random
-`sign_id` for each session.
+`sign_id` must be unique for every signing session of a given key (each
+derived key counts separately), including a retry after an abort. Generate a
+fresh random `sign_id` for each session.
 
 ## Memory Safety
 
@@ -66,14 +67,16 @@ derived from it, including a retry after an abort. Generate a fresh random
 `protocols/bolt3.rs` derives Lightning per-commitment and revocation key
 shares. The tweaks are BOLT 3 hashes of public points that every party
 computes itself; there is no API that applies a caller-supplied scalar. This is
-deliberate: a signature on hash `m` under `a*X` is also a valid signature on
-hash `m/a` under `X`, so whoever chooses a multiplicative factor `a` could
+deliberate: a signature `(r, s)` on hash `m` under `a*X` gives the valid
+signature `(r, s/a)` on hash `m/a` under `X`, so whoever chooses a
+multiplicative factor `a` could
 turn an approved signature into one under the base key on a message of their
 choice.
 
 With the factor and offset derived by hashing, a caller can grind the
 per-commitment point but cannot pick the outputs. A signature under a derived
-key `a*X + c*G` corresponds under `X` to the hash `(m + r*c)/a`, which depends
+key `a*X + c*G` gives the signature `(r, s/a)` under `X` on the hash
+`(m + r*c)/a`, which depends
 on the nonce `r`; `r` is fixed only after the message and the per-commitment
 point. This relies on two things: parties sign hashes they compute from
 transactions they validate, and there are no presignatures (no `r` known

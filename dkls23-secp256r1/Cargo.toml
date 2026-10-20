@@ -8,7 +8,7 @@ repository = "https://github.com/0xCarbon/DKLs23"
 readme = "README.md"
 
 [dependencies]
-dkls23-core = { version = "0.6.0", path = "../dkls23-core" }
+dkls23-core = { version = "0.6.0", path = "../dkls23-core", default-features = false }
 elliptic-curve = { version = "0.14.1", features = ["sec1"] }
 p256 = { version = "0.14", features = ["group-digest"] }
 ripemd = "0.2"

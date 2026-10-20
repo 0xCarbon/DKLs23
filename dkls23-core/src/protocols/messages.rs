@@ -60,8 +60,11 @@ fn encode_frame<T: MessageTag>(message: &T) -> Result<Vec<u8>, MessageError> {
 
 fn find_in_stream<T: MessageTag>(stream: &[u8]) -> Result<T, MessageError> {
     let mut offset = 0;
+    // `offset <= stream.len()` holds throughout, so the remaining length is
+    // computed by subtraction; adding a peer-supplied length could overflow
+    // `usize` on 32-bit targets.
     while offset < stream.len() {
-        if offset + FRAME_HEADER_LEN > stream.len() {
+        if stream.len() - offset < FRAME_HEADER_LEN {
             return Err(MessageError::InvalidFrame("truncated header".into()));
         }
         let tag = stream[offset];
@@ -72,14 +75,14 @@ fn find_in_stream<T: MessageTag>(stream: &[u8]) -> Result<T, MessageError> {
             stream[offset + 4],
         ]) as usize;
         offset += FRAME_HEADER_LEN;
-        if offset + len > stream.len() {
+        if stream.len() - offset < len {
             return Err(MessageError::InvalidFrame("truncated payload".into()));
         }
         if tag == T::TAG {
             // Deserialize from the payload slice only: postcard reads every
             // element from the input, so an internal length prefix cannot
             // claim more data than the frame header already validated. The
-            // payload must be consumed exactly, so a frame has one encoding.
+            // payload must be consumed exactly.
             let payload = &stream[offset..offset + len];
             let (message, rest) = postcard::take_from_bytes::<T>(payload)
                 .map_err(|e| MessageError::Deserialization(e.to_string()))?;
@@ -425,5 +428,24 @@ mod tests {
             output.broadcasts[0],
             vec![MSG_A_TAG, 0, 0, 0, 2, 0xAC, 0x02]
         );
+    }
+
+    #[test]
+    fn test_frame_length_near_u32_max_rejected() {
+        for len in [u32::MAX, u32::MAX - 4] {
+            for tag in [MSG_A_TAG, MSG_B_TAG] {
+                let mut buf = vec![tag];
+                buf.extend_from_slice(&len.to_be_bytes());
+                let mut input = PhaseInput {
+                    broadcasts: BTreeMap::new(),
+                    p2p: BTreeMap::new(),
+                };
+                input.broadcasts.insert(1, buf);
+                assert!(matches!(
+                    input.get_broadcast::<MsgA>(1).unwrap_err(),
+                    MessageError::InvalidFrame(_)
+                ));
+            }
+        }
     }
 }

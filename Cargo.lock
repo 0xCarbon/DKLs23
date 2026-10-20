@@ -219,7 +219,6 @@ dependencies = [
  "group",
  "hex",
  "k256",
- "keccak",
  "ripemd",
  "sha2",
  "sha3",

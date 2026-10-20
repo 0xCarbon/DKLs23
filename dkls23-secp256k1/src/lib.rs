@@ -282,6 +282,15 @@ impl dkls23_core::curve::AddressScheme<k256::Secp256k1> for LitecoinAddress {
     }
 }
 
+/// [`AddressScheme`](dkls23_core::curve::AddressScheme) implementation for Litecoin P2PKH addresses.
+pub struct LitecoinP2pkhAddress;
+
+impl dkls23_core::curve::AddressScheme<k256::Secp256k1> for LitecoinP2pkhAddress {
+    fn compute_address(pk: &k256::AffinePoint) -> String {
+        compute_ltc_p2pkh_address(pk)
+    }
+}
+
 /// [`AddressScheme`](dkls23_core::curve::AddressScheme) implementation for Dogecoin P2PKH addresses.
 pub struct DogecoinAddress;
 
