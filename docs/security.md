@@ -36,10 +36,17 @@ tagged, length-delimited hashes of:
 - Message hash and signer set
 - Both party indices, in multiplication-role order (multiplication only)
 
-The multiplication's OT extension is derived from this session ID, so a
-`sign_id` must be unique for every signing session of a given key (each
-derived key counts separately), including a retry after an abort. Generate a
-fresh random `sign_id` for each session.
+The multiplication's OT extension does not rely on this session ID being
+unique. Each execution also mixes in fresh randomness from both parties,
+carried in messages the protocol already sends:
+- the receiver's nonce (in its Step 3 message) enters the PRG expansion and
+  the consistency challenges, so its pads are fresh in every execution;
+- the sender's salt (sent with `tau`) enters the output randomization, so its
+  outputs are fresh in every execution.
+
+Each side's freshness protects that side even if the other repeats its value,
+so reusing a `sign_id` (for example on a retry after an abort) is safe. A
+fresh `sign_id` per session is still recommended.
 
 ## Memory Safety
 

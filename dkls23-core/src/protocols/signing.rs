@@ -57,10 +57,10 @@ use crate::utilities::rng;
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignData {
-    /// Identifies this signing session. It must be unique for every signing
-    /// session of a given key (each derived key counts separately), including
-    /// a retry after an abort: the multiplication's OT extension is derived
-    /// from it. Generate a fresh random value per session.
+    /// Identifies this signing session; all signers must use the same value.
+    /// A fresh value per session is recommended, but reusing one (for example
+    /// on a retry after an abort) is safe: each multiplication's OT extension
+    /// also mixes in fresh randomness from both parties.
     pub sign_id: Vec<u8>,
     /// Vector containing the indices of the parties participating in the protocol (without us).
     pub counterparties: Vec<PartyIndex>,

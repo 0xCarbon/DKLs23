@@ -23,6 +23,8 @@ pub const TAG_OT_BASE_MSG: &[u8] = b"dkls23/ot/base/msg/v1";
 
 /// OTE PRG expansion oracle.
 pub const TAG_OTE_PRG: &[u8] = b"dkls23/ot/extension/prg/v1";
+/// OTE per-execution session-id oracle (caller session id and receiver nonce).
+pub const TAG_OTE_SESSION: &[u8] = b"dkls23/ot/extension/session/v1";
 /// OTE consistency-check chi oracle.
 pub const TAG_OTE_CHI: &[u8] = b"dkls23/ot/extension/chi/v1";
 /// OTE final randomization oracle.
@@ -68,6 +70,7 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_OT_BASE_H,
     TAG_OT_BASE_MSG,
     TAG_OTE_PRG,
+    TAG_OTE_SESSION,
     TAG_OTE_CHI,
     TAG_OTE_RANDOMIZE,
     TAG_MUL_GADGET,

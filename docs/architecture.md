@@ -45,6 +45,11 @@ Implements Functionality 3 from DKLs19 using:
 The "forced-reuse" technique from DKLs23 is implemented: a single batch of Bob's
 OT instances is reused across all elements of Alice's input vector.
 
+Each execution runs under a session id that includes a fresh receiver nonce
+(sent with `u`), and the sender's output randomization includes a fresh salt
+(sent with `tau`), so a repeated caller session id never repeats the receiver's
+pads or the sender's outputs.
+
 **Security note**: OT correlations are reused across signing sessions. If the
 COTe consistency check fails, the counterparty MUST be permanently banned from
 all future sessions (see `AbortKind::BanCounterparty`).

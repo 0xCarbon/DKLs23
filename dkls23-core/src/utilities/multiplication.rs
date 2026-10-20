@@ -25,7 +25,7 @@ use crate::utilities::rng;
 use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::extension::{
-    OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
+    OTEDataToSender, OTEReceiver, OTESender, OteNonce, PRGOutput, BATCH_SIZE,
 };
 use crate::utilities::ot::ErrorOT;
 use rand::RngExt;
@@ -85,6 +85,8 @@ pub struct MulReceiver<C: DklsCurve> {
 )]
 pub struct MulDataToReceiver<C: DklsCurve> {
     pub vector_of_tau: Vec<Vec<C::Scalar>>,
+    /// The sender's fresh salt for the OT extension's output randomization.
+    pub ote_salt: OteNonce,
     pub verify_r: HashOutput,
     pub verify_u: Vec<C::Scalar>,
     pub gamma_sender: Vec<C::Scalar>,
@@ -114,6 +116,8 @@ pub struct MulDataToKeepReceiver<C: DklsCurve> {
     /// Digest of the receiver's OT extension message from Step 3. The
     /// shared random values of Step 4 are derived from it and from `tau`.
     pub ote_transcript: HashOutput,
+    /// The receiver's OT extension nonce from Step 3, needed to finish it.
+    pub ote_nonce: OteNonce,
     #[zeroize(skip)]
     #[cfg_attr(feature = "serde", serde(skip))]
     _curve: PhantomData<C>,
@@ -141,6 +145,7 @@ fn receiver_transcript(session_id: &[u8], data: &OTEDataToSender) -> HashOutput 
         TAG_MUL_TRANSCRIPT_RECEIVER,
         &[
             session_id,
+            &data.nonce,
             &data.u.concat(),
             &data.verify_x,
             &data.verify_t.concat(),
@@ -155,15 +160,17 @@ fn receiver_transcript(session_id: &[u8], data: &OTEDataToSender) -> HashOutput 
 fn shared_random_values<C: DklsCurve>(
     session_id: &[u8],
     receiver_transcript: &HashOutput,
+    ote_salt: &OteNonce,
     vector_of_tau: &[Vec<C::Scalar>],
 ) -> (Vec<C::Scalar>, Vec<C::Scalar>) {
     let tau_rows: Vec<Vec<u8>> = vector_of_tau
         .iter()
         .map(|row| row.iter().flat_map(scalar_to_bytes::<C>).collect())
         .collect();
-    let mut components: Vec<&[u8]> = Vec::with_capacity(2 + tau_rows.len());
+    let mut components: Vec<&[u8]> = Vec::with_capacity(3 + tau_rows.len());
     components.push(session_id);
     components.push(receiver_transcript);
+    components.push(ote_salt);
     components.extend(tau_rows.iter().map(Vec::as_slice));
     let transcript = tagged_hash(TAG_MUL_TRANSCRIPT, &components);
 
@@ -329,9 +336,10 @@ impl<C: DklsCurve> MulSender<C> {
 
         let ot_outputs: Vec<Vec<C::Scalar>>;
         let vector_of_tau: Vec<Vec<C::Scalar>>; // Used by the receiver to finish the OT protocol.
+        let ote_salt: OteNonce; // Likewise.
         match result {
-            Ok((out, tau)) => {
-                (ot_outputs, vector_of_tau) = (out, tau);
+            Ok((out, tau, salt)) => {
+                (ot_outputs, vector_of_tau, ote_salt) = (out, tau, salt);
             }
             Err(error) => {
                 return Err(ErrorMul::new(&format!(
@@ -349,6 +357,7 @@ impl<C: DklsCurve> MulSender<C> {
         let (chi_tilde, chi_hat) = shared_random_values::<C>(
             session_id,
             &receiver_transcript(session_id, data),
+            &ote_salt,
             &vector_of_tau,
         );
 
@@ -412,6 +421,7 @@ impl<C: DklsCurve> MulSender<C> {
 
         let data_to_receiver = MulDataToReceiver {
             vector_of_tau,
+            ote_salt,
             verify_r,
             verify_u,
             gamma_sender: gamma,
@@ -564,6 +574,7 @@ impl<C: DklsCurve> MulReceiver<C> {
             choice_bits,
             extended_seeds,
             ote_transcript,
+            ote_nonce: data_to_sender.nonce,
             _curve: PhantomData,
         };
 
@@ -602,6 +613,8 @@ impl<C: DklsCurve> MulReceiver<C> {
 
         let result = self.ote_receiver.run_phase2::<C>(
             &ote_sid,
+            &data_kept.ote_nonce,
+            &data_received.ote_salt,
             OT_WIDTH,
             &data_kept.choice_bits,
             &data_kept.extended_seeds,
@@ -625,6 +638,7 @@ impl<C: DklsCurve> MulReceiver<C> {
         let (chi_tilde, chi_hat) = shared_random_values::<C>(
             session_id,
             &data_kept.ote_transcript,
+            &data_received.ote_salt,
             &data_received.vector_of_tau,
         );
 
