@@ -2459,7 +2459,7 @@ mod tests {
         ));
     }
 
-    /// Two complete signings with identical sign data both succeed and use
+    /// Signing twice with identical sign data succeeds both times, with
     /// independent nonces.
     #[test]
     fn test_repeated_sign_data_signs_twice() {
