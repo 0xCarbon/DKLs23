@@ -23,7 +23,7 @@ Use `dkls23-core` directly only if you need a custom curve via the `DklsCurve` t
 
 ```toml
 [dependencies]
-dkls23-core = "0.5"
+dkls23-core = "0.6"
 ```
 
 ## API Levels

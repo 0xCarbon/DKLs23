@@ -18,7 +18,7 @@ Built on [`dkls23-core`](https://crates.io/crates/dkls23-core) — provides conc
 
 ```toml
 [dependencies]
-dkls23-secp256r1 = "0.5"
+dkls23-secp256r1 = "0.6"
 ```
 
 ## Features
