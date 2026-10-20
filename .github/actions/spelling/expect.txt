@@ -11,10 +11,12 @@ commitlintrc
 consts
 decommitment
 dkls
+dogecoin
 ECDLP
 ENCPROOF
 EVM
 fabio
+filecoin
 fischlin
 fixint
 Fordefi
@@ -24,10 +26,12 @@ keypair
 libdkls
 Litecoin
 ltc
+masterpassphrase
 Misrouted
 misrouting
 nopad
 octez
+pkh
 polymod
 PUSHDATA
 quux
@@ -46,6 +50,7 @@ screenshots
 segwit
 SSWU
 supertrait
+tezos
 UInconsistency
 varint
 versioned
@@ -53,5 +58,6 @@ WPKH
 xcarbon
 XCoordinate
 xmd
+xrp
 Zeroization
 zeroized

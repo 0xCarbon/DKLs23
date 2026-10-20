@@ -148,3 +148,9 @@ https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0
 
 # ignore Filecoin f1 addresses
 \bf1[a-z2-7]{39}\b
+
+# ignore the bech32 / CashAddr charset literal
+qpzry9x8gf2tvdw0s3jn54khce6mua7l
+
+# ignore quoted hex of any case (test vectors)
+(['"])[0-9A-Fa-f]{40,}\g{-1}
