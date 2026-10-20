@@ -25,6 +25,7 @@ ltc
 Misrouted
 misrouting
 PUSHDATA
+quux
 recoverably
 REQUIERMENT
 rerandomization
@@ -37,6 +38,7 @@ Rustfmt
 rustup
 screenshots
 segwit
+sswu
 supertrait
 UInconsistency
 varint
@@ -44,5 +46,6 @@ versioned
 WPKH
 xcarbon
 XCoordinate
+xmd
 Zeroization
 zeroized

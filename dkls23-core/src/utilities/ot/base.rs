@@ -18,11 +18,10 @@
 
 use rand::RngExt;
 use rustcrypto_ff::Field;
-use rustcrypto_group::prime::PrimeCurveAffine;
 use rustcrypto_group::Curve as GroupCurve;
 
 use crate::curve::DklsCurve;
-use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
+use crate::utilities::hashes::{point_to_bytes, tagged_hash, tagged_hash_as_point, HashOutput};
 use crate::utilities::oracle_tags::{TAG_OT_BASE_H, TAG_OT_BASE_MSG};
 use crate::utilities::ot::ErrorOT;
 use crate::utilities::proofs::{DLogProof, EncProof};
@@ -113,9 +112,7 @@ impl<C: DklsCurve> OTSender<C> {
         enc_proof: &EncProof<C>,
     ) -> Result<(HashOutput, HashOutput), ErrorOT> {
         // We reconstruct h from the seed (as in the paper).
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
-        let h = (generator * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, seed]))
-            .to_affine();
+        let h = tagged_hash_as_point::<C>(TAG_OT_BASE_H, &[session_id, seed]);
 
         // We verify the proof.
         let verification = enc_proof.verify(session_id);
@@ -203,9 +200,7 @@ impl OTReceiver {
         let r = <C::Scalar as Field>::random(&mut rng::get_rng());
 
         // We compute h as in the paper.
-        let generator = <C::AffinePoint as PrimeCurveAffine>::generator();
-        let h = (generator * tagged_hash_as_scalar::<C>(TAG_OT_BASE_H, &[session_id, &self.seed]))
-            .to_affine();
+        let h = tagged_hash_as_point::<C>(TAG_OT_BASE_H, &[session_id, &self.seed]);
 
         // We prove our data.
         let proof = EncProof::<C>::prove(session_id, &h, &r, bit);

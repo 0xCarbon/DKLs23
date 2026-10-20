@@ -223,9 +223,11 @@ dependencies = [
  "bincode",
  "elliptic-curve",
  "getrandom",
+ "hash2curve",
  "hex",
  "hmac",
  "k256",
+ "p256",
  "rand",
  "ripemd",
  "rustcrypto-ff",
@@ -344,6 +346,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash2curve"
+version = "0.14.0-rc.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c9bac5054f91e736a52b5e6dfeaf13daa9fb7f5e6817e45e6c7b27013e633ef"
+dependencies = [
+ "digest",
+ "elliptic-curve",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -433,6 +445,8 @@ dependencies = [
  "cpubits",
  "ecdsa",
  "elliptic-curve",
+ "hash2curve",
+ "primeorder",
  "serdect",
  "sha2",
  "signature",
@@ -515,6 +529,7 @@ checksum = "44f0a10fe314869359cb2901342b045f4e5a962ef9febc006f03d2a8c848fe4c"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
+ "hash2curve",
  "primefield",
  "primeorder",
  "serdect",
