@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "dkls23",
     "dkls23-core",
     "dkls23-secp256k1",
     "dkls23-secp256r1",
