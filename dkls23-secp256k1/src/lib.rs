@@ -252,6 +252,7 @@ mod tests {
             42,
             "Bitcoin P2WPKH address should be 42 chars"
         );
+        assert_eq!(address, "bc1qgzz5kypj5dc9c9sndewpa8x560spd3pymcqvqp");
     }
 
     #[test]
@@ -262,6 +263,7 @@ mod tests {
             address.starts_with("cosmos1"),
             "Cosmos address should start with 'cosmos1', got: {address}"
         );
+        assert_eq!(address, "cosmos1gzz5kypj5dc9c9sndewpa8x560spd3pydz78yv");
     }
 
     #[test]
@@ -284,5 +286,6 @@ mod tests {
             "TRON address should start with 'T', got: {address}"
         );
         assert_eq!(address.len(), 34, "TRON address should be 34 chars");
+        assert_eq!(address, "TDtXWdEzw5XAtumHt7M143Y2bajq11LNJu");
     }
 }
