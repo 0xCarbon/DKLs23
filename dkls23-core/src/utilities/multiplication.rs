@@ -7,7 +7,7 @@
 //! The first paper also gives some orientations on how to implement the protocol
 //! in only two-rounds (see page 8 and Section 5.1) which we adopt here.
 
-use rustcrypto_ff::Field;
+use ff::Field;
 use std::marker::PhantomData;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};

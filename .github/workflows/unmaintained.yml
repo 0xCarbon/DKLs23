@@ -26,7 +26,9 @@ jobs:
           # Known exceptions:
           # - bincode v1: repo archived but crate is stable, widely used, and
           #   pinned behind the optional "serde" feature gate.
-          EXCEPTIONS="bincode"
+          # - cfg-if: repo archived but crate is complete and stable; pulled in
+          #   transitively by rand, getrandom, and RustCrypto crates.
+          EXCEPTIONS="bincode cfg-if"
           OUTPUT=$(cargo unmaintained 2>&1) || true
           # Filter out accepted exceptions and check if anything remains
           echo "$OUTPUT"
@@ -34,7 +36,7 @@ jobs:
           FILTERED=$(echo "$OUTPUT" \
             | sed 's/\x1b\[[0-9;]*m//g' \
             | grep -v '^\s*$' \
-            | grep -vE '^(warning:|Error:|Scanning |\*)' \
+            | grep -vE '^(warning:|Error:|Scanning |Prefetching |\*)' \
             | grep -vE "^($(echo $EXCEPTIONS | tr ' ' '|'))\b" \
             || true)
           if [ -n "$FILTERED" ]; then

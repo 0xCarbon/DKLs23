@@ -134,7 +134,7 @@ fn double_sha256_checksum(data: &[u8]) -> [u8; 4] {
 mod tests {
     use super::*;
     use elliptic_curve::CurveArithmetic;
-    use rustcrypto_group::prime::PrimeCurveAffine;
+    use group::CurveAffine;
 
     fn test_pubkey() -> p256::AffinePoint {
         <p256::NistP256 as CurveArithmetic>::AffinePoint::generator()
