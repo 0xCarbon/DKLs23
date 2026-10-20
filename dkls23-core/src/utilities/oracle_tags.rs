@@ -30,10 +30,14 @@ pub const TAG_OTE_RANDOMIZE: &[u8] = b"dkls23/ot/extension/randomize/v1";
 
 /// Multiplication public gadget oracle.
 pub const TAG_MUL_GADGET: &[u8] = b"dkls23/mul/gadget/v1";
+/// Multiplication receiver transcript oracle (Step 3 message digest).
+pub const TAG_MUL_TRANSCRIPT_RECEIVER: &[u8] = b"dkls23/mul/transcript/receiver/v1";
+/// Multiplication transcript oracle (Step 3 including the sender's `tau`).
+pub const TAG_MUL_TRANSCRIPT: &[u8] = b"dkls23/mul/transcript/v1";
 /// Multiplication chi-tilde oracle.
-pub const TAG_MUL_CHI_TILDE: &[u8] = b"dkls23/mul/chi-tilde/v1";
+pub const TAG_MUL_CHI_TILDE: &[u8] = b"dkls23/mul/chi-tilde/v2";
 /// Multiplication chi-hat oracle.
-pub const TAG_MUL_CHI_HAT: &[u8] = b"dkls23/mul/chi-hat/v1";
+pub const TAG_MUL_CHI_HAT: &[u8] = b"dkls23/mul/chi-hat/v2";
 /// Multiplication verify-r oracle.
 pub const TAG_MUL_VERIFY: &[u8] = b"dkls23/mul/verify/v1";
 
@@ -60,6 +64,8 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_OTE_CHI,
     TAG_OTE_RANDOMIZE,
     TAG_MUL_GADGET,
+    TAG_MUL_TRANSCRIPT_RECEIVER,
+    TAG_MUL_TRANSCRIPT,
     TAG_MUL_CHI_TILDE,
     TAG_MUL_CHI_HAT,
     TAG_MUL_VERIFY,

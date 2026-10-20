@@ -53,6 +53,10 @@ Realizes Functionality 3.5 (Random Vector OLE) using Protocol 1 from DKLs19.
 Produces correlated randomness `(a, b)` such that `a * x + b = c` where `x` is
 the receiver's input. Used to compute shares of products during signing.
 
+The shared random values `chi_tilde`, `chi_hat` of the consistency check are
+derived by Fiat-Shamir from the whole OT extension transcript, including the
+sender's corrections `tau` (DKLs19, Protocol 9).
+
 ### Zero Shares (`utilities/zero_shares.rs`)
 
 Functionality 3.4: produces shares of zero using committed seeds. Each pair of
