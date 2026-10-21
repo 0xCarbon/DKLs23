@@ -1,6 +1,6 @@
 [package]
 name = "dkls23-secp256k1"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0 OR MIT"
@@ -9,7 +9,7 @@ repository = "https://github.com/0xCarbon/DKLs23"
 readme = "README.md"
 
 [dependencies]
-dkls23-core = { version = "0.6.0", path = "../dkls23-core", default-features = false }
+dkls23-core = { version = "0.6.1", path = "../dkls23-core", default-features = false }
 elliptic-curve = { version = "0.14.1", features = ["sec1"] }
 k256 = { version = "0.14", features = ["group-digest"] }
 sha2 = "0.11"
