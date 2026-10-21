@@ -54,6 +54,10 @@ pub const TAG_SIGN_ZERO_SESSION: &[u8] = b"dkls23/sign/zero-session/v1";
 
 /// Refresh session-id chaining oracle (previous session id, refresh id).
 pub const TAG_REFRESH_SESSION: &[u8] = b"dkls23/refresh/session/v1";
+/// Complete-refresh multiplication session-id oracle.
+pub const TAG_REFRESH_MUL_SESSION: &[u8] = b"dkls23/refresh/mul-session/v1";
+/// Signing oracle for a pair's multiplication setup (both public gadgets).
+pub const TAG_SIGN_PAIR_SETUP: &[u8] = b"dkls23/sign/pair-setup/v1";
 
 /// Fast-refresh OT re-randomization oracle for `r0'`.
 pub const TAG_REFRESH_FAST_R0: &[u8] = b"dkls23/refresh/fast/r0/v1";
@@ -89,6 +93,8 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_SIGN_MUL_SESSION,
     TAG_SIGN_ZERO_SESSION,
     TAG_REFRESH_SESSION,
+    TAG_REFRESH_MUL_SESSION,
+    TAG_SIGN_PAIR_SETUP,
     TAG_REFRESH_FAST_R0,
     TAG_REFRESH_FAST_R1,
     TAG_REFRESH_FAST_B,

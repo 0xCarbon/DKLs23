@@ -46,9 +46,9 @@ use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 
 use crate::utilities::commits::{commit, verify_commitment};
 use crate::utilities::hashes::{point_to_bytes, scalar_to_bytes, tagged_hash, HashOutput};
-use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
+use crate::utilities::multiplication::{ErrorMul, MulDataToKeepReceiver, MulDataToReceiver};
 use crate::utilities::oracle_tags::{
-    TAG_SIGN_MUL_SESSION, TAG_SIGN_SESSION_BINDING, TAG_SIGN_ZERO_SESSION,
+    TAG_SIGN_MUL_SESSION, TAG_SIGN_PAIR_SETUP, TAG_SIGN_SESSION_BINDING, TAG_SIGN_ZERO_SESSION,
 };
 use crate::utilities::ot::extension::{OTEDataToSender, OteNonce};
 use crate::utilities::rng;
@@ -316,6 +316,11 @@ impl<C: DklsCurve> Party<C> {
     /// compares it with its own value before any OT or multiplication work,
     /// so a message from a different session or attempt is reported as a
     /// recoverable mismatch instead of a failed OT check.
+    ///
+    /// It also covers the pair's multiplication setup (`pair_setup_digest`),
+    /// so parties whose pairwise initializations differ (for example, one of
+    /// them adopted a message from another run of the same session id) get a
+    /// recoverable mismatch, not a failed OT check.
     fn session_binding(
         &self,
         data: &SignData,
@@ -335,8 +340,66 @@ impl<C: DklsCurve> Party<C> {
                 &Self::signers(data, self.party_index),
                 &[phase, sender.as_u8(), receiver.as_u8()],
                 attempt_nonces,
+                &self.pair_setup_digest(if sender == self.party_index {
+                    receiver
+                } else {
+                    sender
+                }),
             ],
         )
+    }
+
+    /// Checks that both multiplication states with `counterparty` exist and
+    /// are well formed. A malformed local state is not the counterparty's
+    /// fault, so it is checked before anything derived from it.
+    fn check_pair_state(&self, counterparty: PartyIndex) -> Result<(), Abort> {
+        let missing = || {
+            Abort::recoverable(
+                self.party_index,
+                AbortReason::MissingMulState { counterparty },
+            )
+        };
+        let invalid = |error: ErrorMul| {
+            Abort::recoverable(
+                self.party_index,
+                AbortReason::InvalidLocalState {
+                    counterparty,
+                    detail: error.description,
+                },
+            )
+        };
+        let sender = self.mul_senders.get(&counterparty).ok_or_else(missing)?;
+        let receiver = self.mul_receivers.get(&counterparty).ok_or_else(missing)?;
+        sender.check_state().map_err(invalid)?;
+        receiver.check_state(None).map_err(invalid)
+    }
+
+    /// Digest of the multiplication setup with `counterparty`: the public
+    /// gadgets of both directions, the lower index's receiver first, so both
+    /// parties get the same value. Each gadget derives from the init message
+    /// of its direction, so a pair whose initializations come from different
+    /// runs gets different digests. Empty if a state is missing (the caller
+    /// then aborts on the lookup).
+    fn pair_setup_digest(&self, counterparty: PartyIndex) -> Vec<u8> {
+        let (Some(receiver), Some(sender)) = (
+            self.mul_receivers.get(&counterparty),
+            self.mul_senders.get(&counterparty),
+        ) else {
+            return Vec::new();
+        };
+        let (first, second) = if self.party_index < counterparty {
+            (&receiver.public_gadget, &sender.public_gadget)
+        } else {
+            (&sender.public_gadget, &receiver.public_gadget)
+        };
+        let gadget_bytes = |gadget: &Vec<C::Scalar>| -> Vec<u8> {
+            gadget.iter().flat_map(scalar_to_bytes::<C>).collect()
+        };
+        tagged_hash(
+            TAG_SIGN_PAIR_SETUP,
+            &[&gadget_bytes(first), &gadget_bytes(second)],
+        )
+        .to_vec()
     }
 
     /// Phase 1 for signing: Steps 4, 5 and 6 from
@@ -436,6 +499,7 @@ impl<C: DklsCurve> Party<C> {
 
             // First, let us compute a session id for it.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
+            self.check_pair_state(*counterparty)?;
             let mul_sid = self.mul_session_id(data, self.party_index, *counterparty);
 
             // We run the first phase.
@@ -625,6 +689,7 @@ impl<C: DklsCurve> Party<C> {
                     },
                 ));
             }
+            self.check_pair_state(counterparty)?;
             if message.session_binding
                 != self.session_binding(data, 1, counterparty, self.party_index, &[])
             {
@@ -832,6 +897,7 @@ impl<C: DklsCurve> Party<C> {
                     AbortReason::MissingMulState { counterparty },
                 )
             })?;
+            self.check_pair_state(counterparty)?;
             if message.session_binding
                 != self.session_binding(
                     data,

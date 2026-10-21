@@ -52,8 +52,12 @@ so reusing a `sign_id` (for example on a retry after an abort) does not leak
 key material. The phase-2 session binding also covers both parties' phase-1
 OT extension nonces, so a message mixing attempts (built on a stale phase-1
 message, or answering a different attempt than the one whose commitment we
-hold) is a recoverable `SessionBindingMismatch`, not a ban. A fresh
-`sign_id` per attempt is still recommended.
+hold) is a recoverable `SessionBindingMismatch`, not a ban. The binding also
+covers the pair's multiplication setup, so two parties whose pairwise
+initializations differ (for example, after a DKG or refresh retried under the
+same session id) get the same recoverable mismatch. A fresh `sign_id` per
+attempt, and a fresh session id per DKG or refresh attempt, are still
+recommended.
 
 ## Memory Safety
 

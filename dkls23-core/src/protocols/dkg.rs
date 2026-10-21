@@ -1272,12 +1272,16 @@ mod tests {
     }
 
     fn setup_two_party_dkg_phase4_inputs() -> DkgPhase4Inputs {
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        setup_two_party_dkg_phase4_inputs_with_sid(&session_id)
+    }
+
+    fn setup_two_party_dkg_phase4_inputs_with_sid(session_id: &[u8]) -> DkgPhase4Inputs {
         let parameters = Parameters {
             threshold: 2,
             share_count: 2,
         };
-        const SESSION_ID_LEN: usize = 32;
-        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1415,6 +1419,65 @@ mod tests {
             bip_broadcast_2to4,
             bip_broadcast_3to4,
         }
+    }
+
+    fn finish_two_party_dkg(data: &DkgPhase4Inputs, i: usize) -> Party<TestCurve> {
+        phase4::<TestCurve>(
+            &data.all_data[i],
+            &data.poly_points[i],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[i],
+            &data.zero_received_2to4[i],
+            &data.zero_received_3to4[i],
+            &data.mul_kept_3to4[i],
+            &data.mul_received_3to4[i],
+            &data.bip_broadcast_2to4,
+            &data.bip_broadcast_3to4,
+            no_address,
+        )
+        .unwrap()
+        .0
+    }
+
+    /// Two runs share a session id and party 1 adopts the other run's
+    /// multiplication-init message. Signing then reports a recoverable
+    /// session mismatch instead of blaming party 2.
+    #[test]
+    fn test_mul_init_from_another_run_is_a_recoverable_mismatch() {
+        use crate::protocols::signing::SignData;
+        use crate::protocols::AbortKind;
+
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let other_run = setup_two_party_dkg_phase4_inputs_with_sid(&session_id);
+        let mut run = setup_two_party_dkg_phase4_inputs_with_sid(&session_id);
+        run.mul_received_3to4[0] = other_run.mul_received_3to4[0].clone();
+        let parties = [finish_two_party_dkg(&run, 0), finish_two_party_dkg(&run, 1)];
+
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let message_hash = rng::get_rng().random::<HashOutput>();
+        let data: Vec<SignData> = (0..2)
+            .map(|i| SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties: vec![parties[1 - i].party_index],
+                message_hash,
+            })
+            .collect();
+        let phase1: Vec<_> = (0..2)
+            .map(|i| parties[i].sign_phase1(&data[i]).unwrap())
+            .collect();
+
+        // Party 2 receives party 1's phase-1 message.
+        let (unique_keep, keep, _) = &phase1[1];
+        let abort = parties[1]
+            .sign_phase2(&data[1], unique_keep, keep, &phase1[0].2)
+            .unwrap_err();
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert_eq!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch {
+                counterparty: parties[0].party_index
+            }
+        );
     }
 
     /// Tests if phase 4 aborts when multiplication-init messages are missing.

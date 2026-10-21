@@ -149,8 +149,9 @@ Aborts are classified via `AbortKind`:
   OT state. They MUST be permanently excluded from future sessions.
 
 Signing messages carry a session binding (DKG session id, sign id, key, message
-hash, signer set, phase and direction; phase-2 messages also cover both
-parties' phase-1 OT extension nonces, which are fresh per attempt). It is
+hash, signer set, phase, direction and the pair's multiplication setup (both
+public gadgets); phase-2 messages also cover both parties' phase-1 OT
+extension nonces, which are fresh per attempt). It is
 checked before any OT or multiplication work, so a message from a different
 session or attempt yields a `Recoverable` `SessionBindingMismatch` rather than
 a ban.

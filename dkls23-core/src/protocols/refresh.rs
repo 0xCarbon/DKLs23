@@ -91,7 +91,8 @@ use crate::curve::DklsCurve;
 use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::oracle_tags::{
-    TAG_REFRESH_FAST_B, TAG_REFRESH_FAST_R0, TAG_REFRESH_FAST_R1, TAG_REFRESH_SESSION,
+    TAG_REFRESH_FAST_B, TAG_REFRESH_FAST_R0, TAG_REFRESH_FAST_R1, TAG_REFRESH_MUL_SESSION,
+    TAG_REFRESH_SESSION,
 };
 use crate::utilities::ot;
 use crate::utilities::rng;
@@ -331,13 +332,12 @@ impl<C: DklsCurve> Party<C> {
 
             // We first compute a new session id.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
-            let mul_sid_receiver = [
-                "Multiplication protocol".as_bytes(),
+            let mul_sid_receiver = refresh_mul_session_id(
+                &self.session_id,
                 &self.party_index.as_u8().to_be_bytes(),
                 &i.to_be_bytes(),
                 refresh_sid,
-            ]
-            .concat();
+            );
 
             let (ot_sender, dlog_proof, nonce) = MulReceiver::<C>::init_phase1(&mul_sid_receiver);
 
@@ -346,13 +346,12 @@ impl<C: DklsCurve> Party<C> {
 
             // New session id as above.
             // Note that the indexes are now in the opposite order.
-            let mul_sid_sender = [
-                "Multiplication protocol".as_bytes(),
+            let mul_sid_sender = refresh_mul_session_id(
+                &self.session_id,
                 &i.to_be_bytes(),
                 &self.party_index.as_u8().to_be_bytes(),
                 refresh_sid,
-            ]
-            .concat();
+            );
 
             let (ot_receiver, correlation, vec_r, enc_proofs) =
                 MulSender::<C>::init_phase1(&mul_sid_sender);
@@ -644,13 +643,12 @@ impl<C: DklsCurve> Party<C> {
 
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
-            let mul_sid_receiver = [
-                "Multiplication protocol".as_bytes(),
+            let mul_sid_receiver = refresh_mul_session_id(
+                &self.session_id,
                 &self.party_index.as_u8().to_be_bytes(),
                 &target_party.as_u8().to_be_bytes(),
                 refresh_sid,
-            ]
-            .concat();
+            );
 
             let receiver_result = MulReceiver::<C>::init_phase2(
                 &message_kept.ot_sender,
@@ -680,13 +678,12 @@ impl<C: DklsCurve> Party<C> {
 
             // We retrieve the id used for multiplication. Note that the first party
             // is the receiver and the second, the sender.
-            let mul_sid_sender = [
-                "Multiplication protocol".as_bytes(),
+            let mul_sid_sender = refresh_mul_session_id(
+                &self.session_id,
                 &target_party.as_u8().to_be_bytes(),
                 &self.party_index.as_u8().to_be_bytes(),
                 refresh_sid,
-            ]
-            .concat();
+            );
 
             let sender_result = MulSender::<C>::init_phase2(
                 &message_kept.ot_receiver,
@@ -1241,6 +1238,21 @@ impl<C: DklsCurve> Party<C> {
 
         Ok(party)
     }
+}
+
+/// Session id of a complete refresh's multiplication initialization between
+/// a receiver and a sender, bound to the session being refreshed.
+fn refresh_mul_session_id(
+    session_id: &[u8],
+    receiver: &[u8],
+    sender: &[u8],
+    refresh_sid: &[u8],
+) -> Vec<u8> {
+    tagged_hash(
+        TAG_REFRESH_MUL_SESSION,
+        &[session_id, receiver, sender, refresh_sid],
+    )
+    .to_vec()
 }
 
 /// Refresh of a public key package.
