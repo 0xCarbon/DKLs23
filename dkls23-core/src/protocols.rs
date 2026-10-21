@@ -12,6 +12,7 @@ use crate::protocols::derivation::DerivData;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::zero_shares::ZeroShare;
 
+pub mod bolt3;
 pub mod derivation;
 pub mod dkg;
 pub mod dkg_session;
@@ -293,6 +294,12 @@ pub enum AbortReason {
     MissingMessageFromParty {
         party: PartyIndex,
     },
+    /// A message belongs to a different signing session (sign id, message,
+    /// signer set or key) or, for a phase-2 message, a different attempt (its
+    /// OT extension nonces) than ours.
+    SessionBindingMismatch {
+        counterparty: PartyIndex,
+    },
 
     // --- Cryptographic verification (severity varies) ---
     ProofVerificationFailed {
@@ -385,6 +392,12 @@ impl fmt::Display for AbortReason {
             }
             Self::MissingMessageFromParty { party } => {
                 write!(f, "missing message from party {party}")
+            }
+            Self::SessionBindingMismatch { counterparty } => {
+                write!(
+                    f,
+                    "message from party {counterparty} belongs to a different signing session"
+                )
             }
             Self::ProofVerificationFailed { counterparty } => {
                 write!(f, "proof verification failed for party {counterparty}")

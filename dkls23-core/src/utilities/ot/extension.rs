@@ -48,7 +48,7 @@ use crate::curve::DklsCurve;
 use crate::{RAW_SECURITY, STAT_SECURITY};
 
 use crate::utilities::hashes::{tagged_hash, tagged_hash_as_scalar, HashOutput};
-use crate::utilities::oracle_tags::{TAG_OTE_CHI, TAG_OTE_PRG, TAG_OTE_RANDOMIZE};
+use crate::utilities::oracle_tags::{TAG_OTE_CHI, TAG_OTE_PRG, TAG_OTE_RANDOMIZE, TAG_OTE_SESSION};
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
 
@@ -123,10 +123,28 @@ pub struct OTEReceiver {
     pub seeds1: Vec<HashOutput>,
 }
 
+/// Length of the fresh values each side contributes to one extension.
+pub const OTE_NONCE_LEN: usize = 32;
+
+/// A fresh value one side contributes to one extension: the receiver's
+/// nonce, or the sender's salt.
+pub type OteNonce = [u8; OTE_NONCE_LEN];
+
+/// Session id of one extension: the caller's session id and the receiver's
+/// fresh nonce.
+///
+/// The PRG expansion and the consistency challenges use it, so the receiver's
+/// pads are fresh in every execution even if the caller repeats a session id.
+fn extension_session_id(session_id: &[u8], receiver_nonce: &OteNonce) -> HashOutput {
+    tagged_hash(TAG_OTE_SESSION, &[session_id, receiver_nonce])
+}
+
 /// Data transmitted by the receiver to the sender after his first phase.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OTEDataToSender {
+    /// The receiver's fresh nonce for this extension.
+    pub nonce: OteNonce,
     #[cfg_attr(
         feature = "serde",
         serde(
@@ -208,7 +226,8 @@ impl OTESender {
     /// vector contains [`BATCH_SIZE`] scalars and `input_correlations` contains `ot_width`
     /// correlation vectors.
     ///
-    /// Output: Protocol's output and data to be sent to the receiver.
+    /// Output: Protocol's output and data to be sent to the receiver (the
+    /// vector of values tau and our fresh salt).
     /// The usual output would be just a vector of [`BATCH_SIZE`] scalars.
     /// However, we are executing the protocol `ot_width` times, so the result
     /// is a vector containing `ot_width` such vectors.
@@ -225,7 +244,7 @@ impl OTESender {
         ot_width: u8,
         input_correlations: &[Vec<C::Scalar>],
         data: &OTEDataToSender,
-    ) -> Result<(Vec<Vec<C::Scalar>>, Vec<Vec<C::Scalar>>), ErrorOT> {
+    ) -> Result<(Vec<Vec<C::Scalar>>, Vec<Vec<C::Scalar>>, OteNonce), ErrorOT> {
         // The protocol will be executed ot_width times using different input correlations.
         if input_correlations.len() != ot_width as usize {
             return Err(ErrorOT::new(
@@ -245,6 +264,14 @@ impl OTESender {
         if data.u.len() != KAPPA as usize || data.verify_t.len() != KAPPA as usize {
             return Err(ErrorOT::new("OTE data has incorrect dimensions"));
         }
+
+        // Everything below runs under the extension's session id, which
+        // includes the receiver's nonce. Our fresh salt enters the output
+        // randomization, so our outputs are fresh in every execution even if
+        // the receiver repeats its nonce and the caller its session id.
+        let extension_sid = extension_session_id(session_id, &data.nonce);
+        let session_id = extension_sid.as_slice();
+        let salt: OteNonce = rng::get_rng().random();
 
         // EXTEND
 
@@ -420,6 +447,7 @@ impl OTESender {
                     TAG_OTE_RANDOMIZE,
                     &[
                         session_id,
+                        &salt,
                         &j_bytes,
                         &iteration_bytes,
                         &transposed_q[j as usize],
@@ -429,6 +457,7 @@ impl OTESender {
                     TAG_OTE_RANDOMIZE,
                     &[
                         session_id,
+                        &salt,
                         &j_bytes,
                         &iteration_bytes,
                         &transposed_qj_plus_correlation,
@@ -468,8 +497,8 @@ impl OTESender {
         // Step 2 - No action for the sender.
 
         // Each v0 in vector_of_v0 is the output for the sender in each iteration.
-        // vector_of_tau has to be sent to the receiver.
-        Ok((vector_of_v0, vector_of_tau))
+        // vector_of_tau and the salt have to be sent to the receiver.
+        Ok((vector_of_v0, vector_of_tau, salt))
     }
 }
 
@@ -546,6 +575,13 @@ impl OTEReceiver {
                 "OTE receiver seed vectors have incorrect dimensions",
             ));
         }
+
+        // Everything below runs under the extension's session id, which
+        // includes our fresh nonce, so our pads are fresh in every execution
+        // even if the caller repeats its session id.
+        let nonce: OteNonce = rng::get_rng().random();
+        let extension_sid = extension_session_id(session_id, &nonce);
+        let session_id = extension_sid.as_slice();
         // EXTEND
 
         // Step 1 - Extend the choice bits by adding random noise.
@@ -698,6 +734,7 @@ impl OTEReceiver {
 
         // These values are transmitted to the sender.
         let data_to_sender = OTEDataToSender {
+            nonce,
             u,
             verify_x,
             verify_t,
@@ -709,9 +746,10 @@ impl OTEReceiver {
 
     /// Finishes the receiver's protocol and gives his output.
     ///
-    /// Input: Previous inputs, the OT width (see the remark [here](super::extension)),
-    /// the `extended_seeds` from the previous phase and the vector of values tau sent
-    /// by the sender.
+    /// Input: Previous inputs, our nonce from the previous phase
+    /// ([`OTEDataToSender::nonce`]), the sender's salt, the OT width (see the
+    /// remark [here](super::extension)), the `extended_seeds` from the previous
+    /// phase and the vector of values tau sent by the sender.
     ///
     /// Output: Protocol's output. The usual output would be just a vector of [`BATCH_SIZE`]
     /// scalars. However, we are executing the protocol `ot_width` times, so the result
@@ -720,9 +758,12 @@ impl OTEReceiver {
     /// # Errors
     ///
     /// Will return `Err` if the dimensions of one of the input vectors are invalid.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_phase2<C: DklsCurve>(
         &self,
         session_id: &[u8],
+        receiver_nonce: &OteNonce,
+        sender_salt: &OteNonce,
         ot_width: u8,
         choice_bits: &[bool],
         extended_seeds: &[PRGOutput],
@@ -750,6 +791,9 @@ impl OTEReceiver {
             }
         }
 
+        let extension_sid = extension_session_id(session_id, receiver_nonce);
+        let session_id = extension_sid.as_slice();
+
         // TRANSPOSE AND RANDOMIZE
 
         // Step 1 - We compute the transpose of extended_seeds and take the first BATCH_SIZE rows.
@@ -769,6 +813,7 @@ impl OTEReceiver {
                     TAG_OTE_RANDOMIZE,
                     &[
                         session_id,
+                        sender_salt,
                         &j_bytes,
                         &iteration_bytes,
                         &transposed_t[j as usize],
@@ -1108,18 +1153,75 @@ mod tests {
         for _ in 0..BATCH_SIZE {
             receiver_choice_bits.push(rng::get_rng().random());
         }
-        let (extended_seeds, _) = ote_receiver
+        let (extended_seeds, data_to_sender) = ote_receiver
             .run_phase1(&session_id, &receiver_choice_bits)
             .expect("OTE receiver phase1 should succeed");
 
         let wrong_choice_bits = vec![false; (BATCH_SIZE as usize) - 1];
         let tau = vec![vec![<Scalar as Field>::ZERO; BATCH_SIZE as usize]];
         let error = ote_receiver
-            .run_phase2::<TestCurve>(&session_id, 1, &wrong_choice_bits, &extended_seeds, &tau)
+            .run_phase2::<TestCurve>(
+                &session_id,
+                &data_to_sender.nonce,
+                &[0u8; OTE_NONCE_LEN],
+                1,
+                &wrong_choice_bits,
+                &extended_seeds,
+                &tau,
+            )
             .expect_err("wrong choice-bit length should fail");
         assert!(error
             .description
             .contains("Choice bits vector has incorrect length"));
+    }
+
+    /// The sender's outputs and tau are fresh in every execution, even when it
+    /// receives the same receiver message under the same session id.
+    #[test]
+    fn test_ote_sender_outputs_fresh_for_repeated_receiver_message() {
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let (ote_sender, correlations, data_to_sender) = prepare_ote_sender_inputs(&session_id, 1);
+
+        let (v0_first, tau_first, salt_first) = ote_sender
+            .run::<TestCurve>(&session_id, 1, &correlations, &data_to_sender)
+            .unwrap();
+        let (v0_second, tau_second, salt_second) = ote_sender
+            .run::<TestCurve>(&session_id, 1, &correlations, &data_to_sender)
+            .unwrap();
+
+        assert_ne!(salt_first, salt_second);
+        for j in 0..BATCH_SIZE as usize {
+            assert_ne!(v0_first[0][j], v0_second[0][j]);
+            assert_ne!(tau_first[0][j], tau_second[0][j]);
+        }
+    }
+
+    /// The receiver's pads are fresh in every execution, even for the same
+    /// session id and choice bits: no column of `u` repeats.
+    #[test]
+    fn test_ote_receiver_pads_fresh_for_repeated_session_id() {
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let (ot_sender, _) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, _, _, enc_proofs) = OTESender::init_phase1::<TestCurve>(&session_id);
+        let ote_receiver = OTEReceiver::init_phase2::<TestCurve>(
+            &ot_sender,
+            &session_id,
+            &ot_receiver.seed,
+            &enc_proofs,
+        )
+        .unwrap();
+        let choice_bits = vec![false; BATCH_SIZE as usize];
+
+        let (_, first) = ote_receiver.run_phase1(&session_id, &choice_bits).unwrap();
+        let (_, second) = ote_receiver.run_phase1(&session_id, &choice_bits).unwrap();
+
+        assert_ne!(first.nonce, second.nonce);
+        // The first BATCH_SIZE columns carry the (equal) choice bits; with a
+        // repeated PRG expansion they would be equal too.
+        let choice_bytes = (BATCH_SIZE / 8) as usize;
+        for (row_first, row_second) in first.u.iter().zip(&second.u) {
+            assert_ne!(row_first[..choice_bytes], row_second[..choice_bytes]);
+        }
     }
 
     /// Tests if the outputs for the OTE protocol
@@ -1203,9 +1305,10 @@ mod tests {
 
         let sender_outputs: Vec<Vec<Scalar>>;
         let vector_of_tau: Vec<Vec<Scalar>>;
+        let salt: OteNonce;
         match sender_result {
-            Ok((v0, t)) => {
-                (sender_outputs, vector_of_tau) = (v0, t);
+            Ok((v0, t, s)) => {
+                (sender_outputs, vector_of_tau, salt) = (v0, t, s);
             }
             Err(error) => {
                 panic!("OTE error: {:?}", error.description);
@@ -1218,6 +1321,8 @@ mod tests {
         // Phase 2 - Receiver
         let receiver_result = ote_receiver.run_phase2::<TestCurve>(
             &session_id,
+            &data_to_sender.nonce,
+            &salt,
             ot_width,
             &receiver_choice_bits,
             &extended_seeds,
@@ -1366,7 +1471,7 @@ mod tests {
         for _ in 0..BATCH_SIZE {
             receiver_choice_bits.push(rng::get_rng().random());
         }
-        let (extended_seeds, _) = ote_receiver
+        let (extended_seeds, data_to_sender) = ote_receiver
             .run_phase1(&session_id, &receiver_choice_bits)
             .expect("OTE receiver phase1 should succeed");
 
@@ -1374,6 +1479,8 @@ mod tests {
         let malformed_tau = vec![vec![<Scalar as Field>::ZERO; (BATCH_SIZE as usize) - 1]];
         let result = ote_receiver.run_phase2::<TestCurve>(
             &session_id,
+            &data_to_sender.nonce,
+            &[0u8; OTE_NONCE_LEN],
             1,
             &receiver_choice_bits,
             &extended_seeds,

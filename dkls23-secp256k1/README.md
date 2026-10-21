@@ -15,12 +15,20 @@ Built on [`dkls23-core`](https://crates.io/crates/dkls23-core) — provides conc
 | Bitcoin | `compute_btc_address` | P2WPKH Bech32 (`bc1q...`) |
 | Cosmos | `compute_cosmos_address` | Bech32 (configurable HRP) |
 | TRON | `compute_tron_address` | Base58Check (`T...`) |
+| Bitcoin (legacy) | `compute_btc_p2pkh_address` | P2PKH Base58Check (`1...`) |
+| Bitcoin (nested SegWit) | `compute_btc_p2sh_p2wpkh_address` | P2SH-P2WPKH Base58Check (`3...`) |
+| Litecoin | `compute_ltc_address` / `compute_ltc_p2pkh_address` | P2WPKH Bech32 (`ltc1q...`) / P2PKH (`L...`) |
+| Dogecoin | `compute_doge_address` | P2PKH Base58Check (`D...`) |
+| Bitcoin Cash | `compute_bch_address` | CashAddr (`bitcoincash:q...`) |
+| XRP Ledger | `compute_xrp_address` | Classic address (`r...`) |
+| Filecoin | `compute_filecoin_address` | `f1` secp256k1 address |
+| Tezos | `compute_tezos_address` | `tz2` Base58Check |
 
 ## Usage
 
 ```toml
 [dependencies]
-dkls23-secp256k1 = "0.5"
+dkls23-secp256k1 = "0.6"
 ```
 
 ## Features
@@ -34,6 +42,7 @@ dkls23-secp256k1 = "0.5"
 - **Threshold Signing** — produce ECDSA signatures with a subset of parties
 - **Key Refresh** — rotate key shares without changing the public key
 - **BIP-32 Derivation** — derive child keys from a master key share
+- **BOLT 3 Key Derivation** — Lightning per-commitment and revocation key shares
 
 For session orchestration, transport, and resumable flows, see [libtss](https://github.com/0xCarbon/libtss).
 

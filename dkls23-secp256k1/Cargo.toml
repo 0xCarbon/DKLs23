@@ -1,6 +1,6 @@
 [package]
 name = "dkls23-secp256k1"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 description = "DKLs23 Threshold ECDSA — secp256k1 / Ethereum"
@@ -8,16 +8,16 @@ repository = "https://github.com/0xCarbon/DKLs23"
 readme = "README.md"
 
 [dependencies]
-dkls23-core = { version = "0.5.2", path = "../dkls23-core" }
+dkls23-core = { version = "0.6.0", path = "../dkls23-core", default-features = false }
 elliptic-curve = { version = "0.14.1", features = ["sec1"] }
-k256 = { version = "0.14" }
+k256 = { version = "0.14", features = ["group-digest"] }
 sha2 = "0.11"
-sha3 = "0.11"
-keccak = "0.2"
+sha3 = "0.12"
 ripemd = "0.2"
 hex = "0.4"
-bech32 = "0.11"
+bech32 = "0.12"
 bs58 = "0.5"
+blake2 = "0.11"
 
 [dev-dependencies]
 group = { version = "0.14", default-features = false }

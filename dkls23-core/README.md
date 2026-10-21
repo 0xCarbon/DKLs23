@@ -11,6 +11,7 @@ This crate provides the cryptographic primitives and protocol logic for:
 - **Threshold Signing** — produce ECDSA signatures with a subset of parties
 - **Key Refresh** — rotate key shares without changing the public key
 - **BIP-32 Derivation** — derive child keys from a master key share
+- **BOLT 3 Key Derivation** — Lightning per-commitment and revocation key shares
 
 ## Usage
 
@@ -19,11 +20,11 @@ This is the curve-generic core — most users should depend on a curve-specific 
 - [`dkls23-secp256k1`](https://crates.io/crates/dkls23-secp256k1) — for Ethereum, Bitcoin, Cosmos, TRON
 - [`dkls23-secp256r1`](https://crates.io/crates/dkls23-secp256r1) — for NEO3, Sui
 
-Use `dkls23-core` directly only if you need to implement a custom curve via the `DklsCurve` trait.
+Use `dkls23-core` directly only if you need a custom curve via the `DklsCurve` trait. Any RustCrypto curve that implements RFC 9380 hash-to-curve (`GroupDigest`) qualifies.
 
 ```toml
 [dependencies]
-dkls23-core = "0.5"
+dkls23-core = "0.6"
 ```
 
 ## API Levels

@@ -28,9 +28,11 @@ random scalar `r` using `Scalar::random()` (not vulnerable to the Fordefi
 `Scalar::from_bytes` on untrusted input).
 
 The point `h` is derived from the session id and the receiver's seed with
-RFC 9380 `hash_to_curve` (`secp256k1_XMD:SHA-256_SSWU_RO_` for secp256k1,
+RFC 9380 `hash_to_curve`, using the curve's random-oracle suite from its
+`GroupDigest` implementation (`secp256k1_XMD:SHA-256_SSWU_RO_` for secp256k1,
 `P256_XMD:SHA-256_SSWU_RO_` for P-256), matching the hash `{0,1}* -> G` in
-the paper.
+the paper. `DklsCurve` therefore requires `GroupDigest`; for `k256` and `p256`
+enable their `group-digest` feature.
 
 ### OT Extension (`utilities/ot/extension.rs`)
 
@@ -43,6 +45,11 @@ Implements Functionality 3 from DKLs19 using:
 The "forced-reuse" technique from DKLs23 is implemented: a single batch of Bob's
 OT instances is reused across all elements of Alice's input vector.
 
+Each execution runs under a session id that includes a fresh receiver nonce
+(sent with `u`), and the sender's output randomization includes a fresh salt
+(sent with `tau`), so a repeated caller session id never repeats the receiver's
+pads or the sender's outputs.
+
 **Security note**: OT correlations are reused across signing sessions. If the
 COTe consistency check fails, the counterparty MUST be permanently banned from
 all future sessions (see `AbortKind::BanCounterparty`).
@@ -52,6 +59,10 @@ all future sessions (see `AbortKind::BanCounterparty`).
 Realizes Functionality 3.5 (Random Vector OLE) using Protocol 1 from DKLs19.
 Produces correlated randomness `(a, b)` such that `a * x + b = c` where `x` is
 the receiver's input. Used to compute shares of products during signing.
+
+The shared random values `chi_tilde`, `chi_hat` of the consistency check are
+derived by Fiat-Shamir from the whole OT extension transcript, including the
+receiver's nonce, the sender's salt and corrections `tau` (DKLs19, Protocol 9).
 
 ### Zero Shares (`utilities/zero_shares.rs`)
 
@@ -103,6 +114,20 @@ BIP-32 non-hardened derivation adapted for threshold setting. Each party derives
 their share individually so the reconstructed key corresponds to BIP-32
 derivation of the original master key.
 
+### BOLT 3 Key Derivation (`protocols/bolt3.rs`)
+
+Lightning's per-commitment keys ([BOLT 3](https://github.com/lightning/bolts/blob/master/03-transactions.md#key-derivation)):
+`Party::bolt3_derive` and `Party::bolt3_derive_revocation` map each party's
+share, and the `PublicKeyPackage` functions of the same name map the group key
+and every verifying share, by the same affine map `x -> a*x + c`. Because the
+Lagrange coefficients used in signing sum to one, the reconstructed key moves
+by exactly that map. Each party computes the BOLT 3 hashes itself from the
+group key and the per-commitment point; the revocation derivation also takes
+the per-commitment secret and checks it against the point. As in BIP-32
+derivation, OT correlations, zero-share seeds and multiplication state are
+reused; signing session ids include the public key to keep each key's
+sessions distinct. Unlike BIP-32, the chain code is left unchanged.
+
 ## Security Boundaries
 
 ### Abort Classification
@@ -111,6 +136,13 @@ Aborts are classified via `AbortKind`:
 - `Recoverable`: Protocol failure, safe to retry.
 - `BanCounterparty(index)`: The counterparty leaked information about reusable
   OT state. They MUST be permanently excluded from future sessions.
+
+Signing messages carry a session binding (DKG session id, sign id, key, message
+hash, signer set, phase and direction; phase-2 messages also cover both
+parties' phase-1 OT extension nonces, which are fresh per attempt). It is
+checked before any OT or multiplication work, so a message from a different
+session or attempt yields a `Recoverable` `SessionBindingMismatch` rather than
+a ban.
 
 ### Trust Model
 

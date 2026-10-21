@@ -45,15 +45,24 @@ use crate::curve::DklsCurve;
 use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 
 use crate::utilities::commits::{commit_point, verify_commitment_point};
-use crate::utilities::hashes::HashOutput;
+use crate::utilities::hashes::{point_to_bytes, tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
-use crate::utilities::ot::extension::OTEDataToSender;
+use crate::utilities::oracle_tags::{
+    TAG_SIGN_MUL_SESSION, TAG_SIGN_SESSION_BINDING, TAG_SIGN_ZERO_SESSION,
+};
+use crate::utilities::ot::extension::{OTEDataToSender, OteNonce};
 use crate::utilities::rng;
 
 /// Data needed to start the signature and is used during the phases.
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignData {
+    /// Identifies this signing session; all signers must use the same value.
+    /// A fresh value per attempt is recommended. Reusing one (for example on a
+    /// retry after an abort) does not leak key material, because each
+    /// multiplication's OT extension also mixes in fresh randomness from both
+    /// parties, and a message answering a stale attempt is detected as a
+    /// recoverable `SessionBindingMismatch`.
     pub sign_id: Vec<u8>,
     /// Vector containing the indices of the parties participating in the protocol (without us).
     pub counterparties: Vec<PartyIndex>,
@@ -70,6 +79,8 @@ pub struct SignData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransmitPhase1to2 {
     pub parties: PartiesMessage,
+    /// Binds the message to its signing session (see `session_binding`).
+    pub session_binding: HashOutput,
     pub commitment: HashOutput,
     #[zeroize(skip)]
     pub mul_transmit: OTEDataToSender,
@@ -89,6 +100,8 @@ pub struct TransmitPhase1to2 {
 )]
 pub struct TransmitPhase2to3<C: DklsCurve> {
     pub parties: PartiesMessage,
+    /// Binds the message to its signing session (see `session_binding`).
+    pub session_binding: HashOutput,
     #[zeroize(skip)]
     pub gamma_u: C::AffinePoint,
     #[zeroize(skip)]
@@ -158,6 +171,9 @@ pub struct KeepPhase2to3<C: DklsCurve> {
     pub commitment: HashOutput,
     pub mul_keep: MulDataToKeepReceiver<C>,
     pub chi: C::Scalar,
+    /// The counterparty's OT extension nonce from the phase-1 message we
+    /// answered, which its phase-2 message must name as its own.
+    pub counterparty_ote_nonce: OteNonce,
 }
 
 /// Unique keep - Signing.
@@ -232,6 +248,97 @@ mod message_tags {
 
 /// Implementations related to the `DKLs23` signing protocol ([read more](self)).
 impl<C: DklsCurve> Party<C> {
+    /// The signer set (us and the counterparties), sorted.
+    fn signers(data: &SignData, us: PartyIndex) -> Vec<u8> {
+        let mut signers: Vec<u8> = data
+            .counterparties
+            .iter()
+            .map(PartyIndex::as_u8)
+            .chain([us.as_u8()])
+            .collect();
+        signers.sort_unstable();
+        signers
+    }
+
+    /// Session id of the two-party multiplication in which `receiver` is the
+    /// multiplication receiver and `sender` the sender.
+    ///
+    /// Covers the DKG session id, the sign id, the key in use (chain code and
+    /// public key), the message hash and the signer set. Keys derived from
+    /// the same shares (BIP-32 children, BOLT 3 keys) reuse the OT state, so
+    /// the public key keeps each of their signing sessions under a distinct
+    /// id; the message hash and signer set keep a reused sign id from
+    /// repeating the id when either changes.
+    fn mul_session_id(
+        &self,
+        data: &SignData,
+        receiver: PartyIndex,
+        sender: PartyIndex,
+    ) -> HashOutput {
+        tagged_hash(
+            TAG_SIGN_MUL_SESSION,
+            &[
+                &self.session_id,
+                &data.sign_id,
+                &self.derivation_data.chain_code,
+                &point_to_bytes::<C>(&self.pk),
+                &data.message_hash,
+                &Self::signers(data, self.party_index),
+                &[receiver.as_u8(), sender.as_u8()],
+            ],
+        )
+    }
+
+    /// Session id of the zero-share computation, covering the same values as
+    /// [`Self::mul_session_id`] except the multiplication roles.
+    fn zero_session_id(&self, data: &SignData) -> HashOutput {
+        tagged_hash(
+            TAG_SIGN_ZERO_SESSION,
+            &[
+                &self.session_id,
+                &data.sign_id,
+                &self.derivation_data.chain_code,
+                &point_to_bytes::<C>(&self.pk),
+                &data.message_hash,
+                &Self::signers(data, self.party_index),
+            ],
+        )
+    }
+
+    /// Binds a signing message to its session.
+    ///
+    /// Covers the DKG session id, the sign id, the chain code and public key
+    /// (the key being used), the message hash, the signer set, the phase and
+    /// the direction. A phase-2 message also covers the OT extension nonces of
+    /// the phase-1 messages of both directions (`attempt_nonces`: the one it
+    /// answers, then the sender's own), which are fresh in every attempt, so a
+    /// message mixing attempts with the same sign id is caught too. A receiver
+    /// compares it with its own value before any OT or multiplication work,
+    /// so a message from a different session or attempt is reported as a
+    /// recoverable mismatch instead of a failed OT check.
+    fn session_binding(
+        &self,
+        data: &SignData,
+        phase: u8,
+        sender: PartyIndex,
+        receiver: PartyIndex,
+        attempt_nonces: &[u8],
+    ) -> HashOutput {
+        tagged_hash(
+            TAG_SIGN_SESSION_BINDING,
+            &[
+                &self.session_id,
+                &data.sign_id,
+                &self.derivation_data.chain_code,
+                &point_to_bytes::<C>(&self.pk),
+                &data.message_hash,
+                &Self::signers(data, self.party_index),
+                &[phase, sender.as_u8(), receiver.as_u8()],
+                attempt_nonces,
+            ],
+        )
+    }
+
     /// Phase 1 for signing: Steps 4, 5 and 6 from
     /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
     ///
@@ -332,17 +439,7 @@ impl<C: DklsCurve> Party<C> {
 
             // First, let us compute a session id for it.
             // As in Protocol 3.6 of DKLs23, we include the indexes from the parties.
-            // We also use both the sign id and the DKG id.
-            // The chain code binds the signing session to the derived key path.
-            let mul_sid = [
-                "Multiplication protocol".as_bytes(),
-                &self.party_index.as_u8().to_be_bytes(),
-                &counterparty.as_u8().to_be_bytes(),
-                &self.session_id,
-                &data.sign_id,
-                &self.derivation_data.chain_code,
-            ]
-            .concat();
+            let mul_sid = self.mul_session_id(data, self.party_index, *counterparty);
 
             // We run the first phase.
             let mul_receiver = self.mul_receivers.get(counterparty).ok_or_else(|| {
@@ -380,6 +477,13 @@ impl<C: DklsCurve> Party<C> {
                     sender: self.party_index,
                     receiver: *counterparty,
                 },
+                session_binding: self.session_binding(
+                    data,
+                    1,
+                    self.party_index,
+                    *counterparty,
+                    &[],
+                ),
                 commitment,
                 mul_transmit,
             });
@@ -390,15 +494,8 @@ impl<C: DklsCurve> Party<C> {
 
         // We first compute a session id.
         // Now, different to DKLs23, we won't put the indexes from the parties
-        // because the sign id refers only to this set of parties, hence
-        // it's simpler and almost equivalent to take just the following:
-        let zero_sid = [
-            "Zero shares protocol".as_bytes(),
-            &self.session_id,
-            &data.sign_id,
-            &self.derivation_data.chain_code,
-        ]
-        .concat();
+        // because the sign id refers only to this set of parties.
+        let zero_sid = self.zero_session_id(data);
 
         let zeta = self
             .zero_share
@@ -525,6 +622,14 @@ impl<C: DklsCurve> Party<C> {
                     },
                 ));
             }
+            if message.session_binding
+                != self.session_binding(data, 1, counterparty, self.party_index, &[])
+            {
+                return Err(Abort::recoverable(
+                    self.party_index,
+                    AbortReason::SessionBindingMismatch { counterparty },
+                ));
+            }
             let current_kept = kept.get(&counterparty).ok_or_else(|| {
                 Abort::recoverable(
                     self.party_index,
@@ -537,15 +642,7 @@ impl<C: DklsCurve> Party<C> {
 
             // Let us retrieve the session id for multiplication.
             // Note that the roles are now reversed.
-            let mul_sid = [
-                "Multiplication protocol".as_bytes(),
-                &counterparty.as_u8().to_be_bytes(),
-                &self.party_index.as_u8().to_be_bytes(),
-                &self.session_id,
-                &data.sign_id,
-                &self.derivation_data.chain_code,
-            ]
-            .concat();
+            let mul_sid = self.mul_session_id(data, counterparty, self.party_index);
 
             let mul_sender = self.mul_senders.get(&counterparty).ok_or_else(|| {
                 Abort::recoverable(
@@ -590,6 +687,7 @@ impl<C: DklsCurve> Party<C> {
                     commitment: message.commitment,
                     mul_keep: current_kept.mul_keep.clone(),
                     chi: current_kept.chi,
+                    counterparty_ote_nonce: message.mul_transmit.nonce,
                 },
             );
             transmit.push(TransmitPhase2to3 {
@@ -597,6 +695,13 @@ impl<C: DklsCurve> Party<C> {
                     sender: self.party_index,
                     receiver: counterparty,
                 },
+                session_binding: self.session_binding(
+                    data,
+                    2,
+                    self.party_index,
+                    counterparty,
+                    &[message.mul_transmit.nonce, current_kept.mul_keep.ote_nonce].concat(),
+                ),
                 // Check-adjust
                 gamma_u,
                 gamma_v,
@@ -714,6 +819,24 @@ impl<C: DklsCurve> Party<C> {
                     AbortReason::MissingMulState { counterparty },
                 )
             })?;
+            if message.session_binding
+                != self.session_binding(
+                    data,
+                    2,
+                    counterparty,
+                    self.party_index,
+                    &[
+                        current_kept.mul_keep.ote_nonce,
+                        current_kept.counterparty_ote_nonce,
+                    ]
+                    .concat(),
+                )
+            {
+                return Err(Abort::recoverable(
+                    self.party_index,
+                    AbortReason::SessionBindingMismatch { counterparty },
+                ));
+            }
 
             // Checking the committed value.
             let verification = verify_commitment_point::<C>(
@@ -733,15 +856,7 @@ impl<C: DklsCurve> Party<C> {
 
             // Let us retrieve the session id for multiplication.
             // Note that we reverse the roles again.
-            let mul_sid = [
-                "Multiplication protocol".as_bytes(),
-                &self.party_index.as_u8().to_be_bytes(),
-                &counterparty.as_u8().to_be_bytes(),
-                &self.session_id,
-                &data.sign_id,
-                &self.derivation_data.chain_code,
-            ]
-            .concat();
+            let mul_sid = self.mul_session_id(data, self.party_index, counterparty);
 
             let mul_receiver = self.mul_receivers.get(&counterparty).ok_or_else(|| {
                 Abort::recoverable(
@@ -2139,6 +2254,374 @@ mod tests {
         assert!(matches!(
             abort.reason,
             AbortReason::WrongMessageCount { .. }
+        ));
+    }
+
+    /// Every key derived from the same shares (BIP-32 child, BOLT 3 key),
+    /// sign id, message hash and signer set gives the multiplication and the
+    /// zero shares their own session id, and the multiplication id depends on
+    /// the roles.
+    #[test]
+    fn test_signing_session_ids_are_distinct_per_key() {
+        let parameters = Parameters::new(2, 3).unwrap();
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let (parties, _) =
+            re_key::<TestCurve>(&parameters, &session_id, &secret_key, None, no_address);
+        let base = &parties[0];
+        let per_commitment_point = (ProjectivePoint::GENERATOR * Scalar::from(5u64)).to_affine();
+        let keys = [
+            base.clone(),
+            base.derive_child(0, no_address).unwrap(),
+            base.bolt3_derive(&per_commitment_point, no_address)
+                .unwrap(),
+            base.bolt3_derive_revocation(&per_commitment_point, &Scalar::from(5u64), no_address)
+                .unwrap(),
+        ];
+
+        let one = PartyIndex::new(1).unwrap();
+        let two = PartyIndex::new(2).unwrap();
+        let data = SignData {
+            sign_id: vec![7u8; crate::utilities::ID_LEN],
+            counterparties: vec![two],
+            message_hash: [3u8; 32],
+        };
+        let mut other_sign_id = data.clone();
+        other_sign_id.sign_id[0] ^= 1;
+        let mut other_message = data.clone();
+        other_message.message_hash[0] ^= 1;
+        let mut other_signers = data.clone();
+        other_signers.counterparties = vec![PartyIndex::new(3).unwrap()];
+
+        let mut mul_ids = BTreeSet::new();
+        let mut zero_ids = BTreeSet::new();
+        for key in &keys {
+            for sign_data in [&data, &other_sign_id, &other_message, &other_signers] {
+                assert!(mul_ids.insert(key.mul_session_id(sign_data, one, two)));
+                assert!(mul_ids.insert(key.mul_session_id(sign_data, two, one)));
+                assert!(zero_ids.insert(key.zero_session_id(sign_data)));
+            }
+        }
+    }
+
+    /// Runs party 2's phase 1 under `party_two_data` and feeds its message to
+    /// party 1's phase 2, which runs under the original session data.
+    fn phase2_with_party_two_data(party_two_data: impl FnOnce(&mut SignData)) -> Result<(), Abort> {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, _) = setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+        let party_two = PartyIndex::new(2).unwrap();
+
+        let mut data = all_data.get(&party_two).unwrap().clone();
+        party_two_data(&mut data);
+        let (_, _, messages) = parties[1].sign_phase1(&data).unwrap();
+
+        parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &messages,
+            )
+            .map(|_| ())
+    }
+
+    /// A peer in a different signing session is a session mismatch, not
+    /// cheating: it must not ban an honest counterparty.
+    #[test]
+    fn test_sign_phase2_sign_id_mismatch_is_recoverable() {
+        let abort = phase2_with_party_two_data(|data| data.sign_id[0] ^= 1)
+            .expect_err("a different sign_id must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { counterparty } if counterparty.as_u8() == 2
+        ));
+    }
+
+    /// Parties signing different messages abort at phase 2, before any
+    /// multiplication work, instead of producing an invalid signature.
+    #[test]
+    fn test_sign_phase2_message_hash_mismatch_is_recoverable() {
+        let abort = phase2_with_party_two_data(|data| data.message_hash[0] ^= 1)
+            .expect_err("a different message hash must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { .. }
+        ));
+    }
+
+    /// A phase-2 message whose session binding does not match is rejected as
+    /// recoverable before the multiplication protocol is finished: invalid
+    /// multiplication data from another session must not cause a ban.
+    #[test]
+    fn test_sign_phase3_session_binding_mismatch_is_recoverable() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+        let party_one = PartyIndex::new(1).unwrap();
+
+        let mut tampered = received_2to3.get(&party_one).unwrap().clone();
+        tampered[0].session_binding[0] ^= 1;
+        tampered[0].mul_transmit.verify_r[0] ^= 1;
+
+        let abort = parties[0]
+            .sign_phase3(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_2to3.get(&party_one).unwrap(),
+                kept_2to3.get(&party_one).unwrap(),
+                &tampered,
+            )
+            .expect_err("a mismatched session binding must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { .. }
+        ));
+    }
+
+    /// A retry with the same sign id: party 1 answers party 2's phase-1
+    /// message from an earlier attempt. Party 2 must see a recoverable session
+    /// mismatch, not a failed multiplication check that bans party 1.
+    #[test]
+    fn test_stale_phase1_message_from_earlier_attempt_is_recoverable() {
+        // Attempt B: both parties run phase 1.
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+        let party_two = PartyIndex::new(2).unwrap();
+
+        // Attempt A of party 2, same sign id, delivered to party 1 instead.
+        let (_, _, stale) = parties[1]
+            .sign_phase1(all_data.get(&party_two).unwrap())
+            .unwrap();
+        let (_, _, from_party_one) = parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &stale,
+            )
+            .unwrap();
+
+        // Party 2 continues attempt B.
+        let (unique_kept_2to3, kept_2to3, from_party_two) = parties[1]
+            .sign_phase2(
+                all_data.get(&party_two).unwrap(),
+                unique_kept_1to2.get(&party_two).unwrap(),
+                kept_1to2.get(&party_two).unwrap(),
+                received_1to2.get(&party_two).unwrap(),
+            )
+            .unwrap();
+        let abort = parties[1]
+            .sign_phase3(
+                all_data.get(&party_two).unwrap(),
+                &unique_kept_2to3,
+                &kept_2to3,
+                &from_party_one,
+            )
+            .expect_err("a message built on a stale attempt must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { counterparty } if counterparty == party_one
+        ));
+
+        // Party 1 holds the stale attempt's commitment from party 2, but party
+        // 2 answers attempt B: a session mismatch as well, not a decommitment
+        // failure.
+        let (unique_kept_1_2to3, kept_1_2to3, _) = parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &stale,
+            )
+            .unwrap();
+        let abort = parties[0]
+            .sign_phase3(
+                all_data.get(&party_one).unwrap(),
+                &unique_kept_1_2to3,
+                &kept_1_2to3,
+                &from_party_two,
+            )
+            .expect_err("a message from another attempt must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { counterparty } if counterparty == party_two
+        ));
+    }
+
+    /// Signing twice with identical sign data succeeds both times, with
+    /// independent nonces.
+    #[test]
+    fn test_repeated_sign_data_signs_twice() {
+        let mut signatures = Vec::new();
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        for attempt in 0..2 {
+            let (unique_kept_1to2, kept_1to2, received_1to2) = if attempt == 0 {
+                (
+                    unique_kept_1to2.clone(),
+                    kept_1to2.clone(),
+                    received_1to2.clone(),
+                )
+            } else {
+                rerun_two_party_phase1(&parties, &all_data)
+            };
+            let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+                &parties,
+                &all_data,
+                &unique_kept_1to2,
+                &kept_1to2,
+                &received_1to2,
+            );
+            let (x_coord, broadcasts) = run_two_party_phase3(
+                &parties,
+                &all_data,
+                &unique_kept_2to3,
+                &kept_2to3,
+                &received_2to3,
+            );
+            let party_one = PartyIndex::new(1).unwrap();
+            let data = all_data.get(&party_one).unwrap();
+            let (signature, _) = parties[0]
+                .sign_phase4(data, &x_coord, &broadcasts, true)
+                .unwrap();
+            assert!(verify_ecdsa_signature::<TestCurve>(
+                &data.message_hash,
+                &parties[0].pk,
+                &x_coord,
+                &signature
+            ));
+            signatures.push((x_coord, signature));
+        }
+        assert_ne!(signatures[0], signatures[1]);
+    }
+
+    /// Runs phase 1 again for both parties with the same sign data.
+    #[allow(clippy::type_complexity)]
+    fn rerun_two_party_phase1(
+        parties: &[Party<TestCurve>],
+        all_data: &BTreeMap<PartyIndex, SignData>,
+    ) -> (
+        BTreeMap<PartyIndex, UniqueKeep1to2<TestCurve>>,
+        BTreeMap<PartyIndex, BTreeMap<PartyIndex, KeepPhase1to2<TestCurve>>>,
+        BTreeMap<PartyIndex, Vec<TransmitPhase1to2>>,
+    ) {
+        let mut unique_kept = BTreeMap::new();
+        let mut kept = BTreeMap::new();
+        let mut sent: Vec<TransmitPhase1to2> = Vec::new();
+        for (i, party) in parties.iter().enumerate() {
+            let index = PartyIndex::new(i as u8 + 1).unwrap();
+            let (unique_keep, keep, transmit) =
+                party.sign_phase1(all_data.get(&index).unwrap()).unwrap();
+            unique_kept.insert(index, unique_keep);
+            kept.insert(index, keep);
+            sent.extend(transmit);
+        }
+        let mut received: BTreeMap<PartyIndex, Vec<TransmitPhase1to2>> = BTreeMap::new();
+        for message in sent {
+            received
+                .entry(message.parties.receiver)
+                .or_default()
+                .push(message);
+        }
+        (unique_kept, kept, received)
+    }
+
+    /// Tampered OT data under a correct session binding is still cheating.
+    #[test]
+    fn test_sign_phase2_bans_on_tampered_ot_data() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+
+        let mut tampered = received_1to2.get(&party_one).unwrap().clone();
+        tampered[0].mul_transmit.u[0][0] ^= 1;
+
+        let abort = parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                &tampered,
+            )
+            .expect_err("tampered OT data must abort");
+        assert_eq!(
+            abort.kind,
+            AbortKind::BanCounterparty(PartyIndex::new(2).unwrap())
+        );
+    }
+
+    /// Encodes a message as a frame and decodes it back, checking that the
+    /// re-encoding is identical.
+    #[cfg(feature = "serde")]
+    fn frame_round_trip<T: crate::protocols::messages::MessageTag>(message: &T) -> T {
+        use crate::protocols::messages::{PhaseInput, PhaseOutput};
+
+        let mut output = PhaseOutput::new();
+        output.add_p2p(1, message).unwrap();
+        let input = PhaseInput {
+            broadcasts: BTreeMap::new(),
+            p2p: BTreeMap::from([(2, output.p2p[&1].clone())]),
+        };
+        let decoded: T = input.get_p2p(2).unwrap();
+
+        let mut again = PhaseOutput::new();
+        again.add_p2p(1, &decoded).unwrap();
+        assert_eq!(again.p2p[&1], output.p2p[&1]);
+        decoded
+    }
+
+    /// Signing completes with every message passed through the postcard
+    /// frame encoding.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_signing_messages_survive_frame_encoding() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let received_1to2: BTreeMap<_, Vec<_>> = received_1to2
+            .into_iter()
+            .map(|(index, messages)| (index, messages.iter().map(frame_round_trip).collect()))
+            .collect();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+        let received_2to3: BTreeMap<_, Vec<_>> = received_2to3
+            .into_iter()
+            .map(|(index, messages)| (index, messages.iter().map(frame_round_trip).collect()))
+            .collect();
+        let (x_coord, broadcasts) = run_two_party_phase3(
+            &parties,
+            &all_data,
+            &unique_kept_2to3,
+            &kept_2to3,
+            &received_2to3,
+        );
+        let broadcasts: Vec<_> = broadcasts.iter().map(frame_round_trip).collect();
+
+        let party_one = PartyIndex::new(1).unwrap();
+        let data = all_data.get(&party_one).unwrap();
+        let (signature, _) = parties[0]
+            .sign_phase4(data, &x_coord, &broadcasts, true)
+            .unwrap();
+        assert!(verify_ecdsa_signature::<TestCurve>(
+            &data.message_hash,
+            &parties[0].pk,
+            &x_coord,
+            &signature
         ));
     }
 
