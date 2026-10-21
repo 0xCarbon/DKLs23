@@ -654,6 +654,16 @@ impl<C: DklsCurve> Party<C> {
                     AbortReason::MissingMulState { counterparty },
                 )
             })?;
+            // A malformed local state is not the counterparty's fault.
+            mul_sender.check_state().map_err(|error| {
+                Abort::recoverable(
+                    self.party_index,
+                    AbortReason::InvalidLocalState {
+                        counterparty,
+                        detail: error.description,
+                    },
+                )
+            })?;
             let mul_result = mul_sender.run(&mul_sid, &input, &message.mul_transmit);
 
             let c_u: C::Scalar;
@@ -868,6 +878,18 @@ impl<C: DklsCurve> Party<C> {
                     AbortReason::MissingMulState { counterparty },
                 )
             })?;
+            // A malformed local state is not the counterparty's fault.
+            mul_receiver
+                .check_state(Some(&current_kept.mul_keep))
+                .map_err(|error| {
+                    Abort::recoverable(
+                        self.party_index,
+                        AbortReason::InvalidLocalState {
+                            counterparty,
+                            detail: error.description,
+                        },
+                    )
+                })?;
             let mul_result =
                 mul_receiver.run_phase2(&mul_sid, &current_kept.mul_keep, &message.mul_transmit);
 
@@ -2611,6 +2633,68 @@ mod tests {
         assert!(matches!(
             abort.reason,
             AbortReason::CommitmentMismatch { .. }
+        ));
+    }
+
+    /// A malformed (e.g. corrupted on disk) local multiplication state is a
+    /// recoverable local error, not a panic or a ban of the counterparty.
+    #[test]
+    fn test_malformed_local_mul_state_is_recoverable() {
+        let (mut parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+        let party_two = PartyIndex::new(2).unwrap();
+        parties[0]
+            .mul_senders
+            .get_mut(&party_two)
+            .unwrap()
+            .public_gadget
+            .pop();
+
+        let abort = parties[0]
+            .sign_phase2(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap(),
+                kept_1to2.get(&party_one).unwrap(),
+                received_1to2.get(&party_one).unwrap(),
+            )
+            .expect_err("a malformed local state must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::InvalidLocalState { .. }
+        ));
+
+        // The same for the receiver's kept data in phase 3.
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, mut kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+        kept_2to3
+            .get_mut(&party_one)
+            .unwrap()
+            .get_mut(&party_two)
+            .unwrap()
+            .mul_keep
+            .choice_bits
+            .pop();
+        let abort = parties[0]
+            .sign_phase3(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_2to3.get(&party_one).unwrap(),
+                kept_2to3.get(&party_one).unwrap(),
+                received_2to3.get(&party_one).unwrap(),
+            )
+            .expect_err("malformed kept data must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::InvalidLocalState { .. }
         ));
     }
 

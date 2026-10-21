@@ -25,7 +25,7 @@ use crate::utilities::rng;
 use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::extension::{
-    OTEDataToSender, OTEReceiver, OTESender, OteNonce, PRGOutput, BATCH_SIZE,
+    OTEDataToSender, OTEReceiver, OTESender, OteNonce, PRGOutput, BATCH_SIZE, KAPPA,
 };
 use crate::utilities::ot::ErrorOT;
 use rand::RngExt;
@@ -195,6 +195,23 @@ fn shared_random_values<C: DklsCurve>(
 
 // We implement the protocol.
 impl<C: DklsCurve> MulSender<C> {
+    /// Checks the dimensions of this (possibly deserialized) state, so that
+    /// a corrupted local state is reported as such instead of panicking or
+    /// failing a check that blames the counterparty.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the public gadget or the OT extension state has
+    /// incorrect dimensions.
+    pub fn check_state(&self) -> Result<(), ErrorMul> {
+        if self.public_gadget.len() != BATCH_SIZE as usize {
+            return Err(ErrorMul::new("Public gadget has incorrect length"));
+        }
+        self.ote_sender
+            .check_state()
+            .map_err(|error| ErrorMul::new(&error.description))
+    }
+
     // INITIALIZE
 
     // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
@@ -277,6 +294,11 @@ impl<C: DklsCurve> MulSender<C> {
         input: &[C::Scalar],
         data: &OTEDataToSender,
     ) -> Result<(Vec<C::Scalar>, MulDataToReceiver<C>), ErrorMul> {
+        self.check_state()?;
+        if input.len() != L as usize {
+            return Err(ErrorMul::new("Sender input has incorrect length"));
+        }
+
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - No action for the sender.
@@ -433,6 +455,35 @@ impl<C: DklsCurve> MulSender<C> {
 }
 
 impl<C: DklsCurve> MulReceiver<C> {
+    /// Checks the dimensions of this (possibly deserialized) state and, if
+    /// given, of the data kept from phase 1.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the public gadget, the OT extension state or the
+    /// kept data has incorrect dimensions.
+    pub fn check_state(
+        &self,
+        data_kept: Option<&MulDataToKeepReceiver<C>>,
+    ) -> Result<(), ErrorMul> {
+        if self.public_gadget.len() != BATCH_SIZE as usize {
+            return Err(ErrorMul::new("Public gadget has incorrect length"));
+        }
+        self.ote_receiver
+            .check_state()
+            .map_err(|error| ErrorMul::new(&error.description))?;
+        if let Some(kept) = data_kept {
+            if kept.choice_bits.len() != BATCH_SIZE as usize
+                || kept.extended_seeds.len() != KAPPA as usize
+            {
+                return Err(ErrorMul::new(
+                    "Kept multiplication data has incorrect dimensions",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     // INITIALIZE
 
     // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
@@ -521,6 +572,8 @@ impl<C: DklsCurve> MulReceiver<C> {
         &self,
         session_id: &[u8],
     ) -> Result<(C::Scalar, MulDataToKeepReceiver<C>, OTEDataToSender), ErrorMul> {
+        self.check_state(None)?;
+
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - We sample the choice bits and compute the pad b_tilde.
@@ -598,6 +651,7 @@ impl<C: DklsCurve> MulReceiver<C> {
         data_kept: &MulDataToKeepReceiver<C>,
         data_received: &MulDataToReceiver<C>,
     ) -> Result<Vec<C::Scalar>, ErrorMul> {
+        self.check_state(Some(data_kept))?;
         if data_received.verify_u.len() != L as usize
             || data_received.gamma_sender.len() != L as usize
         {

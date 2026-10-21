@@ -1072,6 +1072,20 @@ impl<C: DklsCurve> Party<C> {
                 )
             })?;
 
+            // A malformed local state is not the counterparty's fault.
+            mul_sender
+                .check_state()
+                .and_then(|()| mul_receiver.check_state(None))
+                .map_err(|error| {
+                    Abort::recoverable(
+                        self.party_index,
+                        AbortReason::InvalidLocalState {
+                            counterparty: their_index,
+                            detail: error.description,
+                        },
+                    )
+                })?;
+
             // We update the OT data.
 
             let mut new_ote_sender = mul_sender.ote_sender.clone();
@@ -1861,6 +1875,30 @@ mod tests {
             String::new()
         })
         .0
+    }
+
+    /// A malformed (e.g. corrupted on disk) local OT state is a recoverable
+    /// local error, not a panic.
+    #[test]
+    fn test_fast_refresh_rejects_malformed_local_state() {
+        let mut parties = two_of_three();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        let run = run_fast_refresh(&parties, &refresh_sid);
+        let two = PartyIndex::new(2).unwrap();
+        parties[0]
+            .mul_senders
+            .get_mut(&two)
+            .unwrap()
+            .ote_sender
+            .seeds
+            .pop();
+
+        let abort = finish_fast_refresh(&parties[0], 0, &refresh_sid, &run).unwrap_err();
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::InvalidLocalState { .. }
+        ));
     }
 
     /// A refresh adopted by one party only, even with a refresh id equal to

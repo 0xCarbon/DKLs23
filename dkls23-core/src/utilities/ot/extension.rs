@@ -158,6 +158,19 @@ pub struct OTEDataToSender {
 }
 
 impl OTESender {
+    /// Checks the dimensions of this (possibly deserialized) state.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the correlation or the seeds do not have
+    /// [`KAPPA`] entries.
+    pub fn check_state(&self) -> Result<(), ErrorOT> {
+        if self.correlation.len() != KAPPA as usize || self.seeds.len() != KAPPA as usize {
+            return Err(ErrorOT::new("OTE sender state has incorrect dimensions"));
+        }
+        Ok(())
+    }
+
     // INITIALIZE
 
     // According to KOS (Fig. 10), the initialization is done by applying the OT protocol
@@ -503,6 +516,21 @@ impl OTESender {
 }
 
 impl OTEReceiver {
+    /// Checks the dimensions of this (possibly deserialized) state.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if either seed vector does not have [`KAPPA`]
+    /// entries.
+    pub fn check_state(&self) -> Result<(), ErrorOT> {
+        if self.seeds0.len() != KAPPA as usize || self.seeds1.len() != KAPPA as usize {
+            return Err(ErrorOT::new(
+                "OTE receiver seed vectors have incorrect dimensions",
+            ));
+        }
+        Ok(())
+    }
+
     // INITIALIZE
 
     // According to KOS (Fig. 10), the initialization is done by applying the OT protocol
