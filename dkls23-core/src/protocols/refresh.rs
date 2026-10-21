@@ -90,7 +90,9 @@ use ff::Field;
 use crate::curve::DklsCurve;
 use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
-use crate::utilities::oracle_tags::{TAG_REFRESH_FAST_B, TAG_REFRESH_FAST_R0, TAG_REFRESH_FAST_R1};
+use crate::utilities::oracle_tags::{
+    TAG_REFRESH_FAST_B, TAG_REFRESH_FAST_R0, TAG_REFRESH_FAST_R1, TAG_REFRESH_SESSION,
+};
 use crate::utilities::ot;
 use crate::utilities::rng;
 use crate::utilities::zero_shares::{self, ZeroShare};
@@ -102,6 +104,15 @@ use crate::protocols::dkg::{
     TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
 };
 use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
+
+/// Session id of a party after a refresh: the previous session id chained
+/// with the refresh id. Parties that adopted different sets of refreshes
+/// (for example after a refresh that completed for some parties only) hold
+/// different session ids, so signing between them aborts with a recoverable
+/// session mismatch instead of failing an OT check.
+fn refreshed_session_id(previous: &[u8], refresh_sid: &[u8]) -> Vec<u8> {
+    tagged_hash(TAG_REFRESH_SESSION, &[previous, refresh_sid]).to_vec()
+}
 
 // STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
 
@@ -224,8 +235,14 @@ impl<C: DklsCurve> Party<C> {
                 continue;
             }
 
-            // Generate initial seeds.
-            let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
+            // Generate initial seeds, committed for this refresh and direction.
+            let context = ZeroShare::seed_context(
+                b"refresh-complete",
+                &[&self.session_id, refresh_sid],
+                self.party_index,
+                i_idx,
+            );
+            let (seed, commitment, salt) = ZeroShare::generate_seed_with_bound_commitment(&context);
 
             // We first send the commitments. We keep the rest to send later.
             let keep = KeepInitZeroSharePhase2to3 { seed, salt };
@@ -522,8 +539,15 @@ impl<C: DklsCurve> Party<C> {
                 })?;
 
             // We verify the commitment.
-            let verification = ZeroShare::verify_seed(
+            let context = ZeroShare::seed_context(
+                b"refresh-complete",
+                &[&self.session_id, refresh_sid],
+                *target_party,
+                self.party_index,
+            );
+            let verification = ZeroShare::verify_bound_seed(
                 &message_received_3.seed,
+                &context,
                 &message_received_2.commitment,
                 &message_received_3.salt,
             );
@@ -694,7 +718,9 @@ impl<C: DklsCurve> Party<C> {
         let party = Party {
             parameters: self.parameters.clone(),
             party_index: self.party_index,
-            session_id: refresh_sid.to_vec(), // We replace the old session id by the new one.
+            // The new session id chains the old one with the refresh id, so
+            // parties whose refresh histories differ never share one.
+            session_id: refreshed_session_id(&self.session_id, refresh_sid),
 
             poly_point: self.poly_point + correction_value, // We update poly_point.
             pk: self.pk,
@@ -770,8 +796,14 @@ impl<C: DklsCurve> Party<C> {
                 continue;
             }
 
-            // Generate initial seeds.
-            let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
+            // Generate initial seeds, committed for this refresh and direction.
+            let context = ZeroShare::seed_context(
+                b"refresh",
+                &[&self.session_id, refresh_sid],
+                self.party_index,
+                i_idx,
+            );
+            let (seed, commitment, salt) = ZeroShare::generate_seed_with_bound_commitment(&context);
 
             // We first send the commitments. We keep the rest to send later.
             keep.insert(i_idx, KeepRefreshPhase2to3 { seed, salt });
@@ -982,8 +1014,15 @@ impl<C: DklsCurve> Party<C> {
                 })?;
 
             // We verify the commitment.
-            let verification = ZeroShare::verify_seed(
+            let context = ZeroShare::seed_context(
+                b"refresh",
+                &[&self.session_id, refresh_sid],
+                *target_party,
+                self.party_index,
+            );
+            let verification = ZeroShare::verify_bound_seed(
                 &message_received_3.seed,
+                &context,
                 &message_received_2.commitment,
                 &message_received_3.salt,
             );
@@ -1156,7 +1195,9 @@ impl<C: DklsCurve> Party<C> {
         let party = Party {
             parameters: self.parameters.clone(),
             party_index: self.party_index,
-            session_id: refresh_sid.to_vec(), // We replace the old session id by the new one.
+            // The new session id chains the old one with the refresh id, so
+            // parties whose refresh histories differ never share one.
+            session_id: refreshed_session_id(&self.session_id, refresh_sid),
 
             poly_point: self.poly_point + correction_value, // We update poly_point.
             pk: self.pk,
@@ -1739,6 +1780,167 @@ mod tests {
     /// still capable of running the signing protocol.
     ///
     /// In this case, parties are sampled via the [`re_key`] function.
+    /// The messages of one fast refresh of `parties`, routed per receiver.
+    struct FastRefreshRun {
+        correction_values: Vec<k256::Scalar>,
+        proofs_commitments: Vec<ProofCommitment<Secp256k1>>,
+        kept_3to4: Vec<BTreeMap<PartyIndex, KeepRefreshPhase3to4>>,
+        received_2to4: Vec<Vec<TransmitRefreshPhase2to4>>,
+        received_3to4: Vec<Vec<TransmitRefreshPhase3to4>>,
+    }
+
+    fn run_fast_refresh(parties: &[Party<Secp256k1>], refresh_sid: &[u8]) -> FastRefreshRun {
+        let n = parties.len();
+        let fragments: Vec<Vec<k256::Scalar>> = parties.iter().map(Party::refresh_phase1).collect();
+        let poly_fragments: Vec<Vec<k256::Scalar>> = (0..n)
+            .map(|j| fragments.iter().map(|row| row[j]).collect())
+            .collect();
+
+        let mut correction_values = Vec::with_capacity(n);
+        let mut proofs_commitments = Vec::with_capacity(n);
+        let mut kept_2to3 = Vec::with_capacity(n);
+        let mut transmit_2to4 = Vec::new();
+        for (party, fragments) in parties.iter().zip(&poly_fragments) {
+            let (correction, proof, kept, transmit) = party.refresh_phase2(refresh_sid, fragments);
+            correction_values.push(correction);
+            proofs_commitments.push(proof);
+            kept_2to3.push(kept);
+            transmit_2to4.extend(transmit);
+        }
+        let mut kept_3to4 = Vec::with_capacity(n);
+        let mut transmit_3to4 = Vec::new();
+        for (party, kept) in parties.iter().zip(&kept_2to3) {
+            let (keep, transmit) = party.refresh_phase3(kept);
+            kept_3to4.push(keep);
+            transmit_3to4.extend(transmit);
+        }
+        let route_2 = |i: usize| {
+            transmit_2to4
+                .iter()
+                .filter(|m| m.parties.receiver == parties[i].party_index)
+                .cloned()
+                .collect()
+        };
+        let route_3 = |i: usize| {
+            transmit_3to4
+                .iter()
+                .filter(|m| m.parties.receiver == parties[i].party_index)
+                .cloned()
+                .collect()
+        };
+        FastRefreshRun {
+            correction_values,
+            proofs_commitments,
+            kept_3to4,
+            received_2to4: (0..n).map(route_2).collect(),
+            received_3to4: (0..n).map(route_3).collect(),
+        }
+    }
+
+    fn finish_fast_refresh(
+        party: &Party<Secp256k1>,
+        i: usize,
+        refresh_sid: &[u8],
+        run: &FastRefreshRun,
+    ) -> Result<Party<Secp256k1>, Abort> {
+        party.refresh_phase4(
+            refresh_sid,
+            &run.correction_values[i],
+            &run.proofs_commitments,
+            &run.kept_3to4[i],
+            &run.received_2to4[i],
+            &run.received_3to4[i],
+        )
+    }
+
+    fn two_of_three() -> Vec<Party<Secp256k1>> {
+        let parameters = Parameters::new(2, 3).unwrap();
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        let secret_key = k256::Scalar::random(&mut rng::get_rng());
+        re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
+            String::new()
+        })
+        .0
+    }
+
+    /// A refresh adopted by one party only, even with a refresh id equal to
+    /// the current session id: signing between the refreshed and the
+    /// unrefreshed party is a recoverable session mismatch, not a ban.
+    #[test]
+    fn test_partially_adopted_refresh_is_a_recoverable_mismatch() {
+        let parties = two_of_three();
+        let refresh_sid = parties[0].session_id.clone();
+        let run = run_fast_refresh(&parties, &refresh_sid);
+        let refreshed = finish_fast_refresh(&parties[0], 0, &refresh_sid, &run).unwrap();
+        assert_ne!(refreshed.session_id, parties[1].session_id);
+
+        let one = PartyIndex::new(1).unwrap();
+        let two = PartyIndex::new(2).unwrap();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>().to_vec();
+        let message_hash = tagged_hash(b"test-sign", &[b"Message to sign!"]);
+        let data_one = SignData {
+            sign_id: sign_id.clone(),
+            counterparties: vec![two],
+            message_hash,
+        };
+        let data_two = SignData {
+            sign_id,
+            counterparties: vec![one],
+            message_hash,
+        };
+        let (_, _, from_one) = refreshed.sign_phase1(&data_one).unwrap();
+        let (unique_two, kept_two, _) = parties[1].sign_phase1(&data_two).unwrap();
+        let abort = parties[1]
+            .sign_phase2(&data_two, &unique_two, &kept_two, &from_one)
+            .expect_err("parties with different refresh histories must not sign");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { .. }
+        ));
+    }
+
+    /// Seed commitments are bound to their refresh: a commitment and seed
+    /// replayed from an earlier refresh do not verify.
+    #[test]
+    fn test_fast_refresh_rejects_seed_from_earlier_refresh() {
+        let parties = two_of_three();
+        let first_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        let second_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        let earlier = run_fast_refresh(&parties, &first_sid);
+        let mut current = run_fast_refresh(&parties, &second_sid);
+
+        // Party 1 gets party 2's commitment and seed from the earlier refresh.
+        let two = PartyIndex::new(2).unwrap();
+        let stale_commitment = earlier.received_2to4[0]
+            .iter()
+            .find(|m| m.parties.sender == two)
+            .unwrap()
+            .clone();
+        for message in current.received_2to4[0].iter_mut() {
+            if message.parties.sender == two {
+                *message = stale_commitment.clone();
+            }
+        }
+        let stale_seed = earlier.received_3to4[0]
+            .iter()
+            .find(|m| m.parties.sender == two)
+            .unwrap()
+            .clone();
+        for message in current.received_3to4[0].iter_mut() {
+            if message.parties.sender == two {
+                *message = stale_seed.clone();
+            }
+        }
+
+        let abort = finish_fast_refresh(&parties[0], 0, &second_sid, &current)
+            .expect_err("a seed from an earlier refresh must not verify");
+        assert!(matches!(
+            abort.reason,
+            AbortReason::ZeroShareDecommitFailed { counterparty } if counterparty == two
+        ));
+    }
+
     #[test]
     fn test_refresh() {
         let threshold = rng::get_rng().random_range(2..=5); // You can change the ranges here.

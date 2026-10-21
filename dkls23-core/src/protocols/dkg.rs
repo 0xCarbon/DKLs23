@@ -512,8 +512,9 @@ pub fn phase2<C: DklsCurve>(
             continue;
         }
 
-        // Generate initial seeds.
-        let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
+        // Generate initial seeds, committed for this DKG and direction.
+        let context = ZeroShare::seed_context(b"dkg", &[&data.session_id], data.party_index, i_idx);
+        let (seed, commitment, salt) = ZeroShare::generate_seed_with_bound_commitment(&context);
 
         // We first send the commitments. We keep the rest to send later.
         zero_keep.insert(i_idx, KeepInitZeroSharePhase2to3 { seed, salt });
@@ -892,8 +893,11 @@ pub fn phase4<C: DklsCurve>(
             })?;
 
         // We verify the commitment.
-        let verification = ZeroShare::verify_seed(
+        let context =
+            ZeroShare::seed_context(b"dkg", &[&data.session_id], *target_party, data.party_index);
+        let verification = ZeroShare::verify_bound_seed(
             &message_received_3.seed,
+            &context,
             &message_received_2.commitment,
             &message_received_3.salt,
         );

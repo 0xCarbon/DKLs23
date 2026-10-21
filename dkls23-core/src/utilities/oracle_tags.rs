@@ -15,6 +15,8 @@ pub const TAG_ENCPROOF_FS: &[u8] = b"dkls23/proofs/enc/fs/v1";
 
 /// Zero-share fragment derivation oracle.
 pub const TAG_ZERO_SHARE_FRAGMENT: &[u8] = b"dkls23/zero-share/fragment/v1";
+/// Zero-share seed commitment context oracle (protocol, session ids, direction).
+pub const TAG_ZERO_SHARE_SEED_CONTEXT: &[u8] = b"dkls23/zero-share/seed-context/v1";
 
 /// Base OT hash-to-curve oracle (RFC 9380 domain-separation tag).
 pub const TAG_OT_BASE_H: &[u8] = b"dkls23/ot/base/h/v2";
@@ -50,6 +52,9 @@ pub const TAG_SIGN_MUL_SESSION: &[u8] = b"dkls23/sign/mul-session/v1";
 /// Signing zero-share session-id oracle.
 pub const TAG_SIGN_ZERO_SESSION: &[u8] = b"dkls23/sign/zero-session/v1";
 
+/// Refresh session-id chaining oracle (previous session id, refresh id).
+pub const TAG_REFRESH_SESSION: &[u8] = b"dkls23/refresh/session/v1";
+
 /// Fast-refresh OT re-randomization oracle for `r0'`.
 pub const TAG_REFRESH_FAST_R0: &[u8] = b"dkls23/refresh/fast/r0/v1";
 /// Fast-refresh OT re-randomization oracle for `r1'`.
@@ -67,6 +72,7 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_DLOG_PROOF_COMMITMENT,
     TAG_ENCPROOF_FS,
     TAG_ZERO_SHARE_FRAGMENT,
+    TAG_ZERO_SHARE_SEED_CONTEXT,
     TAG_OT_BASE_H,
     TAG_OT_BASE_MSG,
     TAG_OTE_PRG,
@@ -82,6 +88,7 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_SIGN_SESSION_BINDING,
     TAG_SIGN_MUL_SESSION,
     TAG_SIGN_ZERO_SESSION,
+    TAG_REFRESH_SESSION,
     TAG_REFRESH_FAST_R0,
     TAG_REFRESH_FAST_R1,
     TAG_REFRESH_FAST_B,
