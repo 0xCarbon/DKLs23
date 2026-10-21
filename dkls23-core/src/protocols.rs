@@ -320,12 +320,6 @@ pub enum AbortReason {
     SessionBindingMismatch {
         counterparty: PartyIndex,
     },
-    /// Our own (possibly deserialized) state for this counterparty is
-    /// malformed; the counterparty is not at fault.
-    InvalidLocalState {
-        counterparty: PartyIndex,
-        detail: String,
-    },
 
     // --- Cryptographic verification (severity varies) ---
     ProofVerificationFailed {
@@ -379,6 +373,14 @@ pub enum AbortReason {
 
     // --- Hex parsing ---
     InvalidHex {
+        detail: String,
+    },
+    // New variants go last: binary encodings (e.g. postcard) use variant
+    // ordinals.
+    /// Our own (possibly deserialized) state for this counterparty is
+    /// malformed; the counterparty is not at fault.
+    InvalidLocalState {
+        counterparty: PartyIndex,
         detail: String,
     },
 }
@@ -568,6 +570,37 @@ mod tests {
             let pi = PartyIndex::new(i).unwrap();
             assert_eq!(pi.as_u8(), i);
             assert_eq!(u8::from(pi), i);
+        }
+    }
+
+    /// AbortReason variant ordinals are part of binary encodings: these are
+    /// the 0.6.0 positions, and new variants must be appended.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn abort_reason_ordinals_are_stable() {
+        let one = PartyIndex::new(1).unwrap();
+        for (reason, ordinal) in [
+            (
+                AbortReason::SessionBindingMismatch { counterparty: one },
+                10u8,
+            ),
+            (AbortReason::CommitmentMismatch { counterparty: one }, 12),
+            (AbortReason::ZeroDenominator, 22),
+            (
+                AbortReason::InvalidHex {
+                    detail: String::new(),
+                },
+                28,
+            ),
+            (
+                AbortReason::InvalidLocalState {
+                    counterparty: one,
+                    detail: String::new(),
+                },
+                29,
+            ),
+        ] {
+            assert_eq!(postcard::to_allocvec(&reason).unwrap()[0], ordinal);
         }
     }
 
