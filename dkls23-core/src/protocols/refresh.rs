@@ -99,7 +99,7 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 
 use crate::protocols::derivation::DerivData;
 use crate::protocols::dkg::{
-    step2, step3, step5, KeepInitMulPhase3to4, KeepInitZeroSharePhase2to3,
+    check_own_point, step2, step3, step5, KeepInitMulPhase3to4, KeepInitZeroSharePhase2to3,
     KeepInitZeroSharePhase3to4, ProofCommitment, TransmitInitMulPhase3to4,
     TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
 };
@@ -422,12 +422,13 @@ impl<C: DklsCurve> Party<C> {
         // Again, the derivation part is omitted.
 
         // DKG
-        let (verifying_pk, _) = step5::<C>(
+        let (verifying_pk, corrections) = step5::<C>(
             &self.parameters,
             self.party_index,
             refresh_sid,
             proofs_commitments,
         )?;
+        check_own_point::<C>(self.party_index, correction_value, &corrections)?;
 
         // The public key calculated above should be the zero point on the curve.
         if verifying_pk != <C::AffinePoint as group::CurveAffine>::identity() {
@@ -903,12 +904,13 @@ impl<C: DklsCurve> Party<C> {
         // Again, the derivation part is omitted.
 
         // DKG
-        let (verifying_pk, _) = step5::<C>(
+        let (verifying_pk, corrections) = step5::<C>(
             &self.parameters,
             self.party_index,
             refresh_sid,
             proofs_commitments,
         )?;
+        check_own_point::<C>(self.party_index, correction_value, &corrections)?;
 
         // The public key calculated above should be the zero point on the curve.
         if verifying_pk != <C::AffinePoint as group::CurveAffine>::identity() {
@@ -1260,19 +1262,6 @@ impl<C: DklsCurve> PublicKeyPackage<C> {
         refresh_sid: &[u8],
         proofs_commitments: &[ProofCommitment<C>],
     ) -> Result<PublicKeyPackage<C>, AbortReason> {
-        // step5 skips the proof of the index it runs as (a party's own), so
-        // verify every proof here first.
-        for entry in proofs_commitments {
-            if !crate::utilities::proofs::DLogProof::<C>::decommit_verify(
-                &entry.proof,
-                &entry.commitment,
-                refresh_sid,
-            ) {
-                return Err(AbortReason::ProofVerificationFailed {
-                    counterparty: entry.index,
-                });
-            }
-        }
         // step5 needs some index to attribute an abort to; only its reason
         // is returned.
         let any_index = PartyIndex::new(1).expect("1 is a valid index");

@@ -396,17 +396,15 @@ pub(crate) fn step5<C: DklsCurve>(
                 },
             ));
         }
-        if party_j.index != party_index {
-            let verification =
-                DLogProof::<C>::decommit_verify(&party_j.proof, &party_j.commitment, session_id);
-            if !verification {
-                return Err(Abort::recoverable(
-                    party_index,
-                    AbortReason::ProofVerificationFailed {
-                        counterparty: party_j.index,
-                    },
-                ));
-            }
+        let verification =
+            DLogProof::<C>::decommit_verify(&party_j.proof, &party_j.commitment, session_id);
+        if !verification {
+            return Err(Abort::recoverable(
+                party_index,
+                AbortReason::ProofVerificationFailed {
+                    counterparty: party_j.index,
+                },
+            ));
         }
         committed_points.insert(party_j.index, party_j.proof.point);
     }
@@ -464,6 +462,29 @@ pub(crate) fn step5<C: DklsCurve>(
         }
     }
     Ok((pk, committed_points))
+}
+
+/// Checks that the point committed under our index is `own_scalar * G`.
+///
+/// # Errors
+///
+/// Returns a recoverable abort if the point is missing or differs.
+pub(crate) fn check_own_point<C: DklsCurve>(
+    party_index: PartyIndex,
+    own_scalar: &C::Scalar,
+    committed_points: &BTreeMap<PartyIndex, C::AffinePoint>,
+) -> Result<(), Abort> {
+    let expected = (<C::ProjectivePoint as group::Group>::generator() * own_scalar).to_affine();
+    if committed_points.get(&party_index) == Some(&expected) {
+        Ok(())
+    } else {
+        Err(Abort::recoverable(
+            party_index,
+            AbortReason::ProofVerificationFailed {
+                counterparty: party_index,
+            },
+        ))
+    }
 }
 
 // PHASES
@@ -786,6 +807,7 @@ pub fn phase4<C: DklsCurve>(
         &data.session_id,
         proofs_commitments,
     )?;
+    check_own_point::<C>(data.party_index, poly_point, &verifying_shares)?;
 
     // The public key cannot be the point at infinity.
     // This is practically impossible, but easy to check.
@@ -1430,6 +1452,44 @@ mod tests {
 
     /// Tests if the main steps of the protocol do not generate
     /// an unexpected [`Abort`] in the 2-of-2 scenario.
+    /// A party checks that the point committed under its own index is its
+    /// own `poly_point`, even when the substituted entry carries a valid proof.
+    #[test]
+    fn test_dkg_phase4_rejects_substituted_own_point() {
+        let mut data = setup_two_party_dkg_phase4_inputs();
+        let one = PartyIndex::new(1).unwrap();
+        let substitute = Scalar::random(&mut rng::get_rng());
+        let (proof, commitment) =
+            DLogProof::<TestCurve>::prove_commit(&substitute, &data.all_data[0].session_id)
+                .unwrap();
+        let own = data
+            .proofs_commitments
+            .iter_mut()
+            .find(|entry| entry.index == one)
+            .unwrap();
+        own.proof = proof;
+        own.commitment = commitment;
+
+        let abort = phase4::<TestCurve>(
+            &data.all_data[0],
+            &data.poly_points[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+            &data.bip_broadcast_2to4,
+            &data.bip_broadcast_3to4,
+            no_address,
+        )
+        .unwrap_err();
+        assert_eq!(
+            abort.reason,
+            AbortReason::ProofVerificationFailed { counterparty: one }
+        );
+    }
+
     #[test]
     fn test_dkg_t2_n2() {
         let parameters = Parameters {
