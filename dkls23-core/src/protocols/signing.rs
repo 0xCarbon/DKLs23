@@ -1089,10 +1089,6 @@ impl<C: DklsCurve> Party<C> {
     }
 }
 
-/// Parses a hex string as a canonical scalar for curve `C` (value must be < curve order n).
-///
-/// Returns `None` if the hex string is invalid or represents a value >= n.
-/// This enforces strict ECDSA range requirements for signature verification.
 /// The message a signer commits to in phase 1 for one counterparty: its
 /// instance point and the psi it will send to that counterparty in phase 2.
 fn instance_commitment_message<C: DklsCurve>(
@@ -1106,6 +1102,10 @@ fn instance_commitment_message<C: DklsCurve>(
     .concat()
 }
 
+/// Parses a hex string as a canonical scalar for curve `C` (value must be < curve order n).
+///
+/// Returns `None` if the hex string is invalid or represents a value >= n.
+/// This enforces strict ECDSA range requirements for signature verification.
 fn parse_hex_to_scalar<C: DklsCurve>(hex_value: &str) -> Option<C::Scalar> {
     let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {

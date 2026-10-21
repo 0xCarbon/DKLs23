@@ -106,12 +106,23 @@ use crate::protocols::dkg::{
 use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex, PublicKeyPackage};
 
 /// Session id of a party after a refresh: the previous session id chained
-/// with the refresh id. Parties that adopted different sets of refreshes
-/// (for example after a refresh that completed for some parties only) hold
-/// different session ids, so signing between them aborts with a recoverable
-/// session mismatch instead of failing an OT check.
-fn refreshed_session_id(previous: &[u8], refresh_sid: &[u8]) -> Vec<u8> {
-    tagged_hash(TAG_REFRESH_SESSION, &[previous, refresh_sid]).to_vec()
+/// with the refresh id and the refresh attempt (the phase-2 proof
+/// commitments of all parties, which are fresh in every attempt). Parties
+/// that adopted different refreshes, or different attempts of the same
+/// refresh, hold different session ids, so signing between them aborts with
+/// a recoverable session mismatch instead of failing an OT check.
+fn refreshed_session_id<C: DklsCurve>(
+    previous: &[u8],
+    refresh_sid: &[u8],
+    proofs_commitments: &[ProofCommitment<C>],
+) -> Vec<u8> {
+    let mut sorted: Vec<&ProofCommitment<C>> = proofs_commitments.iter().collect();
+    sorted.sort_by_key(|entry| entry.index);
+    let attempt: Vec<u8> = sorted
+        .iter()
+        .flat_map(|entry| [&[entry.index.as_u8()][..], &entry.commitment[..]].concat())
+        .collect();
+    tagged_hash(TAG_REFRESH_SESSION, &[previous, refresh_sid, &attempt]).to_vec()
 }
 
 // STRUCTS FOR MESSAGES TO TRANSMIT IN COMMUNICATION ROUNDS.
@@ -720,7 +731,7 @@ impl<C: DklsCurve> Party<C> {
             party_index: self.party_index,
             // The new session id chains the old one with the refresh id, so
             // parties whose refresh histories differ never share one.
-            session_id: refreshed_session_id(&self.session_id, refresh_sid),
+            session_id: refreshed_session_id(&self.session_id, refresh_sid, proofs_commitments),
 
             poly_point: self.poly_point + correction_value, // We update poly_point.
             pk: self.pk,
@@ -1211,7 +1222,7 @@ impl<C: DklsCurve> Party<C> {
             party_index: self.party_index,
             // The new session id chains the old one with the refresh id, so
             // parties whose refresh histories differ never share one.
-            session_id: refreshed_session_id(&self.session_id, refresh_sid),
+            session_id: refreshed_session_id(&self.session_id, refresh_sid, proofs_commitments),
 
             poly_point: self.poly_point + correction_value, // We update poly_point.
             pk: self.pk,
@@ -1249,6 +1260,19 @@ impl<C: DklsCurve> PublicKeyPackage<C> {
         refresh_sid: &[u8],
         proofs_commitments: &[ProofCommitment<C>],
     ) -> Result<PublicKeyPackage<C>, AbortReason> {
+        // step5 skips the proof of the index it runs as (a party's own), so
+        // verify every proof here first.
+        for entry in proofs_commitments {
+            if !crate::utilities::proofs::DLogProof::<C>::decommit_verify(
+                &entry.proof,
+                &entry.commitment,
+                refresh_sid,
+            ) {
+                return Err(AbortReason::ProofVerificationFailed {
+                    counterparty: entry.index,
+                });
+            }
+        }
         // step5 needs some index to attribute an abort to; only its reason
         // is returned.
         let any_index = PartyIndex::new(1).expect("1 is a valid index");
@@ -2009,6 +2033,64 @@ mod tests {
             abort.reason,
             AbortReason::SessionBindingMismatch { .. }
         ));
+    }
+
+    /// Two attempts of the same refresh id, adopted by different parties:
+    /// signing between them is a recoverable session mismatch, not a ban.
+    #[test]
+    fn test_different_attempts_of_one_refresh_are_a_recoverable_mismatch() {
+        let parties = two_of_three();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        let first = run_fast_refresh(&parties, &refresh_sid);
+        let second = run_fast_refresh(&parties, &refresh_sid);
+        let one_refreshed = finish_fast_refresh(&parties[0], 0, &refresh_sid, &first).unwrap();
+        let two_refreshed = finish_fast_refresh(&parties[1], 1, &refresh_sid, &second).unwrap();
+        assert_ne!(one_refreshed.session_id, two_refreshed.session_id);
+
+        let one = PartyIndex::new(1).unwrap();
+        let two = PartyIndex::new(2).unwrap();
+        let sign_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>().to_vec();
+        let message_hash = tagged_hash(b"test-sign", &[b"Message to sign!"]);
+        let data_one = SignData {
+            sign_id: sign_id.clone(),
+            counterparties: vec![two],
+            message_hash,
+        };
+        let data_two = SignData {
+            sign_id,
+            counterparties: vec![one],
+            message_hash,
+        };
+        let (_, _, from_one) = one_refreshed.sign_phase1(&data_one).unwrap();
+        let (unique_two, kept_two, _) = two_refreshed.sign_phase1(&data_two).unwrap();
+        let abort = two_refreshed
+            .sign_phase2(&data_two, &unique_two, &kept_two, &from_one)
+            .expect_err("parties holding different refresh attempts must not sign");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch { .. }
+        ));
+    }
+
+    /// The package refresh verifies every proof, including party 1's.
+    #[test]
+    fn test_public_key_package_refresh_verifies_every_proof() {
+        let (parties, package) = two_of_three_with_package();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        let run = run_fast_refresh(&parties, &refresh_sid);
+        let mut tampered = run.proofs_commitments.clone();
+        let first = tampered
+            .iter_mut()
+            .find(|entry| entry.index == PartyIndex::new(1).unwrap())
+            .unwrap();
+        first.commitment[0] ^= 1;
+        assert_eq!(
+            package.refresh(&refresh_sid, &tampered).unwrap_err(),
+            AbortReason::ProofVerificationFailed {
+                counterparty: PartyIndex::new(1).unwrap()
+            }
+        );
     }
 
     /// Seed commitments are bound to their refresh: a commitment and seed
