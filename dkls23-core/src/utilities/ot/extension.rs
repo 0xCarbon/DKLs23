@@ -223,7 +223,8 @@ impl OTESender {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the base OT fails (see the file above).
+    /// Will return `Err` if `correlation` or `vec_r` does not hold [`KAPPA`]
+    /// entries or if the base OT fails (see the file above).
     pub fn init_phase2<C: DklsCurve>(
         ot_receiver: &OTReceiver,
         session_id: &[u8],
@@ -231,6 +232,10 @@ impl OTESender {
         vec_r: &[C::Scalar],
         dlog_proof: &DLogProof<C>,
     ) -> Result<OTESender, ErrorOT> {
+        if correlation.len() != KAPPA as usize || vec_r.len() != KAPPA as usize {
+            return Err(ErrorOT::new("Wrong base OT batch size!"));
+        }
+
         // The outputs from the base OT become the sender's seeds.
         let seeds = ot_receiver.run_phase2_batch::<C>(session_id, vec_r, dlog_proof)?;
 
@@ -572,13 +577,18 @@ impl OTEReceiver {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the base OT fails (see the file above).
+    /// Will return `Err` if `enc_proofs` does not hold [`KAPPA`] proofs or
+    /// if the base OT fails (see the file above).
     pub fn init_phase2<C: DklsCurve>(
         ot_sender: &OTSender<C>,
         session_id: &[u8],
         seed: &Seed,
         enc_proofs: &[EncProof<C>],
     ) -> Result<OTEReceiver, ErrorOT> {
+        if enc_proofs.len() != KAPPA as usize {
+            return Err(ErrorOT::new("Wrong base OT batch size!"));
+        }
+
         // The outputs from the base OT become the receiver's seeds.
         let (seeds0, seeds1) = ot_sender.run_phase2_batch(session_id, seed, enc_proofs)?;
 
@@ -1063,6 +1073,43 @@ mod tests {
 
     type TestCurve = Secp256k1;
     type Scalar = <TestCurve as CurveArithmetic>::Scalar;
+
+    /// The base OT batch must hold exactly `KAPPA` instances on both sides.
+    #[test]
+    fn test_init_phase2_rejects_wrong_batch_size() {
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(&session_id);
+        let seed = ot_receiver.seed;
+
+        let short = &enc_proofs[..enc_proofs.len() - 1];
+        assert!(
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, short).is_err()
+        );
+        assert!(
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &[]).is_err()
+        );
+
+        let short_r = &vec_r[..vec_r.len() - 1];
+        let short_correlation = correlation[..correlation.len() - 1].to_vec();
+        assert!(OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            short_correlation,
+            short_r,
+            &dlog_proof,
+        )
+        .is_err());
+        assert!(OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            Vec::new(),
+            &vec_r,
+            &dlog_proof,
+        )
+        .is_err());
+    }
 
     fn prepare_ote_sender_inputs(
         session_id: &[u8; crate::utilities::ID_LEN],
