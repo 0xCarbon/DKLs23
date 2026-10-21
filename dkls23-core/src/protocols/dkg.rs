@@ -1467,9 +1467,11 @@ mod tests {
             .collect();
 
         // Party 2 receives party 1's phase-1 message.
-        let (unique_keep, keep, _) = &phase1[1];
+        let mut phase1 = phase1;
+        let (_, _, from_one) = phase1.remove(0);
+        let (unique_keep, keep, _) = phase1.remove(0);
         let abort = parties[1]
-            .sign_phase2(&data[1], unique_keep, keep, &phase1[0].2)
+            .sign_phase2(&data[1], unique_keep, keep, &from_one)
             .unwrap_err();
         assert_eq!(abort.kind, AbortKind::Recoverable);
         assert_eq!(

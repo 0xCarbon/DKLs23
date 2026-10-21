@@ -29,6 +29,25 @@
 //! through [`Party::sign_phase4`], are public low-level APIs for advanced
 //! resumable/stateless orchestration. [`crate::protocols::sign_session::SignSession`]
 //! remains the preferred high-level API.
+//!
+//! # Kept data is single-use
+//!
+//! [`Party::sign_phase2`] and [`Party::sign_phase3`] consume the data kept
+//! from the previous phase, and the kept-data types are not `Clone`, so a
+//! phase runs at most once per attempt. A caller that persists kept data
+//! (with the `serde` feature) must delete it before sending the phase's
+//! messages and must never run a phase again from a stored copy. After any
+//! abort, start a new attempt from phase 1. The kept data holds secrets: it
+//! is zeroized on drop and its `Debug` output names only the type.
+//!
+//! ```compile_fail
+//! use dkls23_core::curve::DklsCurve;
+//! use dkls23_core::protocols::signing::UniqueKeep1to2;
+//!
+//! fn copy<C: DklsCurve>(kept: &UniqueKeep1to2<C>) -> UniqueKeep1to2<C> {
+//!     kept.clone()
+//! }
+//! ```
 
 use elliptic_curve::ops::Reduce;
 use elliptic_curve::point::AffineCoordinates;
@@ -138,7 +157,9 @@ pub struct Broadcast3to4<C: DklsCurve> {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop)]
+// Tests copy kept data to replay it; callers cannot.
+#[cfg_attr(test, derive(Clone))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -156,7 +177,9 @@ pub struct KeepPhase1to2<C: DklsCurve> {
 /// Keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop)]
+// Tests copy kept data to replay it; callers cannot.
+#[cfg_attr(test, derive(Clone))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -179,7 +202,9 @@ pub struct KeepPhase2to3<C: DklsCurve> {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 1 and used in Phase 2.
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop)]
+// Tests copy kept data to replay it; callers cannot.
+#[cfg_attr(test, derive(Clone))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -199,7 +224,9 @@ pub struct UniqueKeep1to2<C: DklsCurve> {
 /// Unique keep - Signing.
 ///
 /// The message is produced during Phase 2 and used in Phase 3.
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop)]
+// Tests copy kept data to replay it; callers cannot.
+#[cfg_attr(test, derive(Clone))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -217,6 +244,20 @@ pub struct UniqueKeep2to3<C: DklsCurve> {
     #[zeroize(skip)]
     pub public_share: C::AffinePoint,
 }
+
+// The kept data holds secrets, so its `Debug` output names only the type.
+macro_rules! redacted_debug {
+    ($($name:ident),*) => {
+        $(
+            impl<C: DklsCurve> core::fmt::Debug for $name<C> {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    f.debug_struct(stringify!($name)).finish_non_exhaustive()
+                }
+            }
+        )*
+    };
+}
+redacted_debug!(KeepPhase1to2, KeepPhase2to3, UniqueKeep1to2, UniqueKeep2to3);
 
 // MessageTag implementations.
 #[cfg(feature = "serde")]
@@ -587,7 +628,9 @@ impl<C: DklsCurve> Party<C> {
     /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
     ///
     /// The inputs come from the previous phase. The messages received
-    /// should be gathered in a vector (in any order).
+    /// should be gathered in a vector (in any order). The kept data is
+    /// consumed: never run this phase again from a stored copy of it (see
+    /// [the module docs](self#kept-data-is-single-use)).
     ///
     /// The outputs should be kept or transmitted according to the conventions
     /// [here](self).
@@ -604,8 +647,8 @@ impl<C: DklsCurve> Party<C> {
     pub fn sign_phase2(
         &self,
         data: &SignData,
-        unique_kept: &UniqueKeep1to2<C>,
-        kept: &BTreeMap<PartyIndex, KeepPhase1to2<C>>,
+        unique_kept: UniqueKeep1to2<C>,
+        kept: BTreeMap<PartyIndex, KeepPhase1to2<C>>,
         received: &[TransmitPhase1to2],
     ) -> Result<
         (
@@ -812,7 +855,9 @@ impl<C: DklsCurve> Party<C> {
     /// Protocol 3.6 in <https://eprint.iacr.org/2023/765.pdf>.
     ///
     /// The inputs come from the previous phase. The messages received
-    /// should be gathered in a vector (in any order).
+    /// should be gathered in a vector (in any order). The kept data is
+    /// consumed: never run this phase again from a stored copy of it (see
+    /// [the module docs](self#kept-data-is-single-use)).
     ///
     /// The first output is already the value `r` from the ECDSA signature.
     /// The second output should be broadcasted according to the conventions
@@ -831,8 +876,8 @@ impl<C: DklsCurve> Party<C> {
     pub fn sign_phase3(
         &self,
         data: &SignData,
-        unique_kept: &UniqueKeep2to3<C>,
-        kept: &BTreeMap<PartyIndex, KeepPhase2to3<C>>,
+        unique_kept: UniqueKeep2to3<C>,
+        kept: BTreeMap<PartyIndex, KeepPhase2to3<C>>,
         received: &[TransmitPhase2to3<C>],
     ) -> Result<(String, Broadcast3to4<C>), Abort> {
         // Steps 8 and 9
@@ -1361,8 +1406,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -1399,8 +1444,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -1524,8 +1569,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -1562,8 +1607,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -1903,8 +1948,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -1941,8 +1986,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -2174,8 +2219,8 @@ mod tests {
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -2217,8 +2262,8 @@ mod tests {
         for party_index in [PartyIndex::new(1).unwrap(), PartyIndex::new(2).unwrap()] {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -2250,8 +2295,11 @@ mod tests {
 
         let result = parties[0].sign_phase2(
             all_data.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            unique_kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap(),
+            unique_kept_1to2
+                .get(&PartyIndex::new(1).unwrap())
+                .unwrap()
+                .clone(),
+            kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap().clone(),
             &tampered,
         );
         let abort = result.expect_err("unknown sender should be rejected");
@@ -2273,8 +2321,11 @@ mod tests {
 
         let result = parties[0].sign_phase2(
             all_data.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            unique_kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap(),
+            unique_kept_1to2
+                .get(&PartyIndex::new(1).unwrap())
+                .unwrap()
+                .clone(),
+            kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap().clone(),
             &tampered,
         );
         let abort = result.expect_err("wrong receiver should be rejected");
@@ -2289,8 +2340,11 @@ mod tests {
 
         let result = parties[0].sign_phase2(
             all_data.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            unique_kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap(),
+            unique_kept_1to2
+                .get(&PartyIndex::new(1).unwrap())
+                .unwrap()
+                .clone(),
+            kept_1to2.get(&PartyIndex::new(1).unwrap()).unwrap().clone(),
             &[],
         );
         let abort = result.expect_err("wrong message count should be rejected");
@@ -2326,8 +2380,11 @@ mod tests {
 
         let result = parties[0].sign_phase3(
             all_data.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            unique_kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap(),
+            unique_kept_2to3
+                .get(&PartyIndex::new(1).unwrap())
+                .unwrap()
+                .clone(),
+            kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap().clone(),
             &tampered,
         );
         let abort = result.expect_err("invalid decommit should be rejected");
@@ -2353,8 +2410,11 @@ mod tests {
 
         let result = parties[0].sign_phase3(
             all_data.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            unique_kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap(),
+            unique_kept_2to3
+                .get(&PartyIndex::new(1).unwrap())
+                .unwrap()
+                .clone(),
+            kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap().clone(),
             &[],
         );
         let abort = result.expect_err("wrong message count should be rejected");
@@ -2426,8 +2486,8 @@ mod tests {
         parties[0]
             .sign_phase2(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_1to2.get(&party_one).unwrap(),
-                kept_1to2.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap().clone(),
+                kept_1to2.get(&party_one).unwrap().clone(),
                 &messages,
             )
             .map(|_| ())
@@ -2482,8 +2542,8 @@ mod tests {
         let abort = parties[0]
             .sign_phase3(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_2to3.get(&party_one).unwrap(),
-                kept_2to3.get(&party_one).unwrap(),
+                unique_kept_2to3.get(&party_one).unwrap().clone(),
+                kept_2to3.get(&party_one).unwrap().clone(),
                 &tampered,
             )
             .expect_err("a mismatched session binding must abort");
@@ -2512,8 +2572,8 @@ mod tests {
         let (_, _, from_party_one) = parties[0]
             .sign_phase2(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_1to2.get(&party_one).unwrap(),
-                kept_1to2.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap().clone(),
+                kept_1to2.get(&party_one).unwrap().clone(),
                 &stale,
             )
             .unwrap();
@@ -2522,16 +2582,16 @@ mod tests {
         let (unique_kept_2to3, kept_2to3, from_party_two) = parties[1]
             .sign_phase2(
                 all_data.get(&party_two).unwrap(),
-                unique_kept_1to2.get(&party_two).unwrap(),
-                kept_1to2.get(&party_two).unwrap(),
+                unique_kept_1to2.get(&party_two).unwrap().clone(),
+                kept_1to2.get(&party_two).unwrap().clone(),
                 received_1to2.get(&party_two).unwrap(),
             )
             .unwrap();
         let abort = parties[1]
             .sign_phase3(
                 all_data.get(&party_two).unwrap(),
-                &unique_kept_2to3,
-                &kept_2to3,
+                unique_kept_2to3,
+                kept_2to3,
                 &from_party_one,
             )
             .expect_err("a message built on a stale attempt must abort");
@@ -2547,16 +2607,16 @@ mod tests {
         let (unique_kept_1_2to3, kept_1_2to3, _) = parties[0]
             .sign_phase2(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_1to2.get(&party_one).unwrap(),
-                kept_1to2.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap().clone(),
+                kept_1to2.get(&party_one).unwrap().clone(),
                 &stale,
             )
             .unwrap();
         let abort = parties[0]
             .sign_phase3(
                 all_data.get(&party_one).unwrap(),
-                &unique_kept_1_2to3,
-                &kept_1_2to3,
+                unique_kept_1_2to3,
+                kept_1_2to3,
                 &from_party_two,
             )
             .expect_err("a message from another attempt must abort");
@@ -2690,8 +2750,8 @@ mod tests {
         let abort = parties[0]
             .sign_phase3(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_2to3.get(&party_one).unwrap(),
-                kept_2to3.get(&party_one).unwrap(),
+                unique_kept_2to3.get(&party_one).unwrap().clone(),
+                kept_2to3.get(&party_one).unwrap().clone(),
                 &tampered,
             )
             .expect_err("a psi differing from the commitment must abort");
@@ -2739,8 +2799,8 @@ mod tests {
         let abort = parties[0]
             .sign_phase2(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_1to2.get(&party_one).unwrap(),
-                kept_1to2.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap().clone(),
+                kept_1to2.get(&party_one).unwrap().clone(),
                 received_1to2.get(&party_one).unwrap(),
             )
             .expect_err("a malformed local state must abort");
@@ -2771,8 +2831,8 @@ mod tests {
         let abort = parties[0]
             .sign_phase3(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_2to3.get(&party_one).unwrap(),
-                kept_2to3.get(&party_one).unwrap(),
+                unique_kept_2to3.get(&party_one).unwrap().clone(),
+                kept_2to3.get(&party_one).unwrap().clone(),
                 received_2to3.get(&party_one).unwrap(),
             )
             .expect_err("malformed kept data must abort");
@@ -2781,6 +2841,25 @@ mod tests {
             abort.reason,
             AbortReason::InvalidLocalState { .. }
         ));
+    }
+
+    /// Kept data does not print its secrets.
+    #[test]
+    fn test_kept_data_debug_is_redacted() {
+        let (_, _, unique_kept_1to2, kept_1to2, _) = setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+        let party_two = PartyIndex::new(2).unwrap();
+        assert_eq!(
+            format!("{:?}", unique_kept_1to2.get(&party_one).unwrap()),
+            "UniqueKeep1to2 { .. }"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                kept_1to2.get(&party_one).unwrap().get(&party_two).unwrap()
+            ),
+            "KeepPhase1to2 { .. }"
+        );
     }
 
     /// Tampered OT data under a correct session binding is still cheating.
@@ -2796,8 +2875,8 @@ mod tests {
         let abort = parties[0]
             .sign_phase2(
                 all_data.get(&party_one).unwrap(),
-                unique_kept_1to2.get(&party_one).unwrap(),
-                kept_1to2.get(&party_one).unwrap(),
+                unique_kept_1to2.get(&party_one).unwrap().clone(),
+                kept_1to2.get(&party_one).unwrap().clone(),
                 &tampered,
             )
             .expect_err("tampered OT data must abort");
@@ -2893,8 +2972,11 @@ mod tests {
 
         let result = parties[0].sign_phase3(
             all_data.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            unique_kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap(),
-            kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap(),
+            unique_kept_2to3
+                .get(&PartyIndex::new(1).unwrap())
+                .unwrap()
+                .clone(),
+            kept_2to3.get(&PartyIndex::new(1).unwrap()).unwrap().clone(),
             &tampered,
         );
         let abort = result.expect_err("inconsistent gamma_u should be rejected");

@@ -1785,8 +1785,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -1823,8 +1823,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -2027,7 +2027,7 @@ mod tests {
         let (_, _, from_one) = refreshed.sign_phase1(&data_one).unwrap();
         let (unique_two, kept_two, _) = parties[1].sign_phase1(&data_two).unwrap();
         let abort = parties[1]
-            .sign_phase2(&data_two, &unique_two, &kept_two, &from_one)
+            .sign_phase2(&data_two, unique_two, kept_two, &from_one)
             .expect_err("parties with different refresh histories must not sign");
         assert_eq!(abort.kind, AbortKind::Recoverable);
         assert!(matches!(
@@ -2065,7 +2065,7 @@ mod tests {
         let (_, _, from_one) = one_refreshed.sign_phase1(&data_one).unwrap();
         let (unique_two, kept_two, _) = two_refreshed.sign_phase1(&data_two).unwrap();
         let abort = two_refreshed
-            .sign_phase2(&data_two, &unique_two, &kept_two, &from_one)
+            .sign_phase2(&data_two, unique_two, kept_two, &from_one)
             .expect_err("parties holding different refresh attempts must not sign");
         assert_eq!(abort.kind, AbortKind::Recoverable);
         assert!(matches!(
@@ -2339,8 +2339,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -2377,8 +2377,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {

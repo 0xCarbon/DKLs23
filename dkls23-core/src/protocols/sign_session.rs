@@ -46,7 +46,7 @@ impl<'a, C: DklsCurve> SignSession<'a, C> {
         })?;
         let (new_unique, new_kept, transmit) =
             self.party
-                .sign_phase2(&self.data, &unique_kept, &kept, received)?;
+                .sign_phase2(&self.data, unique_kept, kept, received)?;
         self.phase2_to_3 = Some((new_unique, new_kept));
         Ok(transmit)
     }
@@ -62,7 +62,7 @@ impl<'a, C: DklsCurve> SignSession<'a, C> {
         })?;
         let (x_coord, broadcast) =
             self.party
-                .sign_phase3(&self.data, &unique_kept, &kept, received)?;
+                .sign_phase3(&self.data, unique_kept, kept, received)?;
         self.x_coord = Some(x_coord);
         Ok(broadcast)
     }

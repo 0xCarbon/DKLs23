@@ -72,6 +72,12 @@ recommended.
   - `SignData`, `TransmitPhase1to2`, `TransmitPhase2to3`, `Broadcast3to4`,
     `MulDataToReceiver` (signing data and messages)
   - `Party` (manual `Zeroize` + `Drop` implementation)
+- Signing kept data (`UniqueKeep*`, `KeepPhase*`) is single-use:
+  `sign_phase2` and `sign_phase3` take it by value, the types are not `Clone`,
+  and their `Debug` output omits every field. Callers that persist it must
+  delete it before sending the phase's messages, never run a phase again from
+  a stored copy, and start a new attempt from phase 1 after any abort.
+  `SignSession` enforces this in memory.
 
 ## Side-Channel Resistance
 
