@@ -75,18 +75,23 @@ over the session ID, with signs determined by party ordering.
 - **Schnorr DLog proof** with randomized Fischlin transform (R=64, L=4, T=32)
   for non-interactive proofs in the random oracle model.
 - **Chaum-Pedersen proof** for equality of discrete logarithms.
-- **Encryption proof** (EncProof) for the DKLs18 OT transfer step.
+- **Encryption proof** (EncProof) for the receiver of the base OT (endemic OT of
+  Zhou et al.), proving its message encrypts a bit.
 
 ## Protocol Flows
 
 ### DKG (4 phases + 5 steps)
 
-1. **Phase 1**: Sample polynomial, commit to evaluation.
-2. **Phase 2**: Exchange polynomial evaluations and commitments.
-3. **Phase 3**: Decommit, verify proofs, reconstruct public key via Lagrange
-   interpolation in the exponent.
-4. **Phase 4**: Initialize OT correlations, zero-share seeds, multiplication
-   setup, and BIP-32 chain code via XOR of committed auxiliary values.
+1. **Phase 1** (Steps 1-2): Sample a polynomial and evaluate it for every party
+   (sent peer-to-peer, confidentially).
+2. **Phase 2** (Step 3): Sum the received evaluations into the key share,
+   commit to its proof of knowledge; send zero-share seed and chain-code
+   commitments.
+3. **Phase 3**: Initialization only: reveal zero-share seeds and chain-code
+   contributions, and run the base OT that sets up each pair's multiplication.
+4. **Phase 4** (Step 5): Verify the proofs and reconstruct the public key via
+   Lagrange interpolation in the exponent; verify the seed and chain-code
+   commitments and finish the multiplication setup.
 
 Output: `Party` struct ready for signing.
 
