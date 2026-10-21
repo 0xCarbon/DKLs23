@@ -1123,6 +1123,10 @@ pub fn verify_ecdsa_signature<C: DklsCurve>(
     x_coord: &str,
     signature: &str,
 ) -> bool {
+    // No signature is valid under the identity: it is not a public key.
+    if *pk == <C::AffinePoint as CurveAffine>::identity() {
+        return false;
+    }
     let rx_as_scalar = match parse_hex_to_scalar::<C>(x_coord) {
         Some(value) => value,
         None => return false,
@@ -2552,6 +2556,30 @@ mod tests {
                 .push(message);
         }
         (unique_kept, kept, received)
+    }
+
+    /// No signature verifies under the identity "public key": with
+    /// m = 1, s = 1 and r = x(G), the verifier would otherwise compute G.
+    #[test]
+    fn test_verify_rejects_identity_public_key() {
+        let mut message = [0u8; 32];
+        message[31] = 1;
+        let r = hex::encode(AffinePoint::GENERATOR.x());
+        let mut s = [0u8; 32];
+        s[31] = 1;
+        assert!(!verify_ecdsa_signature::<TestCurve>(
+            &message,
+            &AffinePoint::IDENTITY,
+            &r,
+            &hex::encode(s)
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "the secret key must not be zero")]
+    fn test_re_key_rejects_zero_secret() {
+        let parameters = Parameters::new(2, 3).unwrap();
+        let _ = re_key::<TestCurve>(&parameters, &[1u8; 32], &Scalar::ZERO, None, no_address);
     }
 
     /// Phase 1 commits to psi: a phase-2 message carrying a different psi

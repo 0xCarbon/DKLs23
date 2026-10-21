@@ -8,7 +8,8 @@ of the DKLs23 implementation.
 The protocol's security relies on:
 - **Hardness of ECDLP** on secp256k1
 - **Random oracle model** (SHA-256 and SHA3-256 are used as instantiations)
-- **Secure authenticated channels** between all parties
+- **Authenticated and confidential (encrypted) channels** between all parties:
+  DKG and refresh send secret material peer-to-peer in the clear
 
 ## OT Correlation Reuse
 

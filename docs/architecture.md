@@ -146,8 +146,11 @@ a ban.
 
 ### Trust Model
 
-- Messages are authenticated but not encrypted (the protocol provides its own
-  confidentiality via OT).
+- Every message must be authenticated, and peer-to-peer messages must also be
+  confidential. DKG and refresh send secret material peer-to-peer in the
+  clear (polynomial evaluations, zero-share seeds): an eavesdropper on those
+  messages learns key shares. Use authenticated, encrypted channels (e.g. TLS
+  or a Noise session per pair).
 - The orchestrator is trusted to route messages correctly.
 - Party indices must be in `[1, share_count]` and are validated at signing entry.
 
