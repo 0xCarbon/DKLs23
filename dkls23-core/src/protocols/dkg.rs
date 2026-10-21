@@ -468,7 +468,7 @@ pub(crate) fn step5<C: DklsCurve>(
 
 // PHASES
 
-/// Phase 1 = [`step1`] and [`step2`].
+/// Phase 1 = `step1` and `step2`.
 ///
 /// # Input
 ///
@@ -495,7 +495,7 @@ pub fn phase1<C: DklsCurve>(data: &SessionData) -> Vec<C::Scalar> {
 // At the end, Party i should have received all fragments indexed by i.
 // They should add up to p(i), where p is a polynomial not depending on i.
 
-/// Phase 2 = [`step3`].
+/// Phase 2 = `step3`.
 ///
 /// # Input
 ///
@@ -734,7 +734,7 @@ pub fn phase3<C: DklsCurve>(
 // Init: Each party transmits messages for the zero shares and multiplication protocols (one for each party)
 // and broadcasts a message for key derivation (the same for every party).
 
-/// Phase 4 = [`step5`].
+/// Phase 4 = `step5`.
 ///
 /// # Input
 ///

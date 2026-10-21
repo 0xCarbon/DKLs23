@@ -48,4 +48,4 @@ For session orchestration, transport, and resumable flows, see [libtss](https://
 
 ## License
 
-Licensed under either of [Apache License 2.0](../LICENSE-APACHE) or [MIT](../LICENSE-MIT) at your option.
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your option.

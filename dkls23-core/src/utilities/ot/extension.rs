@@ -81,6 +81,7 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
+#[cfg(feature = "serde")]
 const PRG_DATA_SIZE: usize = 78;
 #[cfg(feature = "serde")]
 pub fn serialize_vec_prg<S>(data: &[[u8; PRG_DATA_SIZE]], serializer: S) -> Result<S::Ok, S::Error>
@@ -97,6 +98,15 @@ where
     D: Deserializer<'de>,
 {
     let concatenated: Vec<u8> = serde_bytes::Deserialize::deserialize(deserializer)?;
+
+    // Every such vector holds one PRG output per base OT.
+    let expected = KAPPA as usize * PRG_DATA_SIZE;
+    if concatenated.len() != expected {
+        return Err(D::Error::invalid_length(
+            concatenated.len(),
+            &"KAPPA PRG outputs",
+        ));
+    }
 
     concatenated
         .chunks(PRG_DATA_SIZE)
@@ -184,7 +194,7 @@ impl OTESender {
     /// In this case, it initializes and runs **as a receiver** the first phase
     /// of the base OT ([`KAPPA`] times).
     ///
-    /// See [`OTReceiver`](super::base::OTReceiver) for an explanation of the outputs.
+    /// See [`OTReceiver`] for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1<C: DklsCurve>(
         session_id: &[u8],
@@ -207,7 +217,7 @@ impl OTESender {
 
     /// Finishes the initialization.
     ///
-    /// The inputs are the instance of [`OTReceiver`](super::base::OTReceiver) generated
+    /// The inputs are the instance of [`OTReceiver`] generated
     /// in the previous round and everything needed to finish the OT base protocol
     /// (see the description of the aforementioned struct).
     ///
@@ -544,7 +554,7 @@ impl OTEReceiver {
     /// In this case, it initializes and runs **as a sender** the first phase
     /// of the base OT ([`KAPPA`] times).
     ///
-    /// See [`OTSender`](super::base::OTSender) for an explanation of the outputs.
+    /// See [`OTSender`] for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1<C: DklsCurve>(session_id: &[u8]) -> (OTSender<C>, DLogProof<C>) {
         let ot_sender = OTSender::<C>::init(session_id);
@@ -556,7 +566,7 @@ impl OTEReceiver {
 
     /// Finishes the initialization.
     ///
-    /// The inputs are the instance of [`OTSender`](super::base::OTSender) generated
+    /// The inputs are the instance of [`OTSender`] generated
     /// in the previous round and everything needed to finish the OT base protocol
     /// (see the description of the aforementioned struct).
     ///

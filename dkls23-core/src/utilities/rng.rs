@@ -1,7 +1,7 @@
 //! RNG abstraction for test determinism.
 //!
 //! When the `insecure-rng` feature is enabled **and** the crate is compiled in test mode
-//! (`cfg(test)`), a deterministic `StdRng` seeded with [`DEFAULT_SEED`] is used. In all
+//! (`cfg(test)`), a deterministic `StdRng` seeded with `DEFAULT_SEED` is used. In all
 //! other configurations — including `cargo build --features insecure-rng` — the secure
 //! `ThreadRng` is returned. This makes it impossible to accidentally ship insecure RNG
 //! in production, even if the feature flag is left on.

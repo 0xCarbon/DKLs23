@@ -25,7 +25,7 @@
 //! In this case, we recompute all data from the parties. Hence, we essentially
 //! rerun DKG but we force the final public key to be the original one.
 //!
-//! To adapt the DKG protocol, we change [Step 1](super::dkg::step1): instead of sampling any random
+//! To adapt the DKG protocol, we change Step 1 of the DKG: instead of sampling any random
 //! polynomial, each party generates a polynomial whose constant term is zero.
 //! In this way, the key generation provides each party with a point on a polynomial
 //! whose constant term (the "secret key") is zero. This new point is just a correction

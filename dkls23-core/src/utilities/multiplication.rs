@@ -221,7 +221,7 @@ impl<C: DklsCurve> MulSender<C> {
 
     /// Starts the initialization of the protocol.
     ///
-    /// See [`OTESender`](super::ot::extension::OTESender) for explanation.
+    /// See [`OTESender`] for explanation.
     #[must_use]
     pub fn init_phase1(
         session_id: &[u8],
@@ -231,7 +231,7 @@ impl<C: DklsCurve> MulSender<C> {
 
     /// Finishes the initialization of the protocol.
     ///
-    /// The inputs here come from [`OTESender`](super::ot::extension::OTESender),
+    /// The inputs here come from [`OTESender`],
     /// except for `nonce`, which was sent by the receiver for the
     /// computation of the public gadget vector.
     ///
@@ -287,7 +287,7 @@ impl<C: DklsCurve> MulSender<C> {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the underlying OT extension fails (see [`OTESender`](super::ot::extension::OTESender)).
+    /// Will return `Err` if the underlying OT extension fails (see [`OTESender`]).
     pub fn run(
         &self,
         session_id: &[u8],
@@ -493,7 +493,7 @@ impl<C: DklsCurve> MulReceiver<C> {
 
     /// Starts the initialization of the protocol.
     ///
-    /// See [`OTEReceiver`](super::ot::extension::OTEReceiver) for explanation.
+    /// See [`OTEReceiver`] for explanation.
     ///
     /// The `Scalar` does not come from the OT extension. It is just
     /// a nonce for the generation of the public gadget vector. It should
@@ -512,7 +512,7 @@ impl<C: DklsCurve> MulReceiver<C> {
 
     /// Finishes the initialization of the protocol.
     ///
-    /// The inputs here come from [`OTEReceiver`](super::ot::extension::OTEReceiver),
+    /// The inputs here come from [`OTEReceiver`],
     /// except for `nonce`, which was generated during the previous phase.
     ///
     /// # Errors
@@ -644,7 +644,7 @@ impl<C: DklsCurve> MulReceiver<C> {
     ///
     /// Will return `Err` if received vectors have incorrect dimensions, if the
     /// consistency check using the sender values fails or if the underlying OT
-    /// extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
+    /// extension fails (see [`OTEReceiver`]).
     pub fn run_phase2(
         &self,
         session_id: &[u8],
