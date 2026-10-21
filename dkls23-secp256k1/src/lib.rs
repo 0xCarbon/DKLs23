@@ -101,14 +101,32 @@ pub fn compute_btc_address(pk: &k256::AffinePoint) -> String {
 /// Computes a Bitcoin P2WPKH address with a custom HRP (human-readable part).
 ///
 /// Use `"bc"` for mainnet, `"tb"` for testnet, `"ltc"` for Litecoin mainnet.
+///
+/// # Panics
+///
+/// Panics if `hrp` is not a valid bech32 HRP; use
+/// [`try_compute_btc_address_with_hrp`] for untrusted input.
 #[must_use]
 pub fn compute_btc_address_with_hrp(pk: &k256::AffinePoint, hrp: &str) -> String {
+    try_compute_btc_address_with_hrp(pk, hrp).expect("invalid bech32 HRP")
+}
+
+/// Like [`compute_btc_address_with_hrp`], returning an error for an
+/// invalid HRP.
+///
+/// # Errors
+///
+/// Returns [`InvalidHrp`] if `hrp` is not a valid bech32 HRP for a segwit
+/// address.
+pub fn try_compute_btc_address_with_hrp(
+    pk: &k256::AffinePoint,
+    hrp: &str,
+) -> Result<String, InvalidHrp> {
     let compressed_pk = pk.to_sec1_point(true);
     let witness_program = hash160(compressed_pk.as_bytes());
 
-    let hrp = bech32::Hrp::parse(hrp).expect("invalid bech32 HRP");
-    bech32::segwit::encode_v0(hrp, &witness_program)
-        .expect("witness program encoding should not fail")
+    let hrp = bech32::Hrp::parse(hrp).map_err(|_| InvalidHrp)?;
+    bech32::segwit::encode_v0(hrp, &witness_program).map_err(|_| InvalidHrp)
 }
 
 /// [`AddressScheme`](dkls23_core::curve::AddressScheme) implementation for Bitcoin P2WPKH addresses.
@@ -140,14 +158,45 @@ pub fn compute_cosmos_address(pk: &k256::AffinePoint) -> String {
 ///
 /// The same secp256k1 key produces the same underlying 20-byte address;
 /// only the human-readable prefix changes between Cosmos chains.
+///
+/// # Panics
+///
+/// Panics if `hrp` is not a valid bech32 HRP; use
+/// [`try_compute_cosmos_address_with_hrp`] for untrusted input.
 #[must_use]
 pub fn compute_cosmos_address_with_hrp(pk: &k256::AffinePoint, hrp: &str) -> String {
+    try_compute_cosmos_address_with_hrp(pk, hrp).expect("invalid bech32 HRP")
+}
+
+/// Like [`compute_cosmos_address_with_hrp`], returning an error for an
+/// invalid HRP.
+///
+/// # Errors
+///
+/// Returns [`InvalidHrp`] if `hrp` is not a valid bech32 HRP or the address
+/// would be too long.
+pub fn try_compute_cosmos_address_with_hrp(
+    pk: &k256::AffinePoint,
+    hrp: &str,
+) -> Result<String, InvalidHrp> {
     let compressed_pk = pk.to_sec1_point(true);
     let addr_bytes = hash160(compressed_pk.as_bytes());
 
-    let hrp = bech32::Hrp::parse(hrp).expect("invalid bech32 HRP");
-    bech32::encode::<bech32::Bech32>(hrp, &addr_bytes).expect("bech32 encoding should not fail")
+    let hrp = bech32::Hrp::parse(hrp).map_err(|_| InvalidHrp)?;
+    bech32::encode::<bech32::Bech32>(hrp, &addr_bytes).map_err(|_| InvalidHrp)
 }
+
+/// The human-readable part given for a bech32 address is invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidHrp;
+
+impl std::fmt::Display for InvalidHrp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid bech32 human-readable part")
+    }
+}
+
+impl std::error::Error for InvalidHrp {}
 
 /// [`AddressScheme`](dkls23_core::curve::AddressScheme) implementation for Cosmos Hub addresses.
 pub struct CosmosAddress;
@@ -769,6 +818,26 @@ mod tests {
         assert_eq!(
             compute_tezos_address(&test_keypair()),
             "tz2V2f6Harrwpnm5x7E55ceTAcWmYg4iNhZC"
+        );
+    }
+
+    #[test]
+    fn test_invalid_hrp_is_an_error() {
+        let pk = generator();
+        for hrp in ["", "bc 1", "\u{e9}", &"a".repeat(84)] {
+            assert_eq!(try_compute_btc_address_with_hrp(&pk, hrp), Err(InvalidHrp));
+            assert_eq!(
+                try_compute_cosmos_address_with_hrp(&pk, hrp),
+                Err(InvalidHrp)
+            );
+        }
+        assert_eq!(
+            try_compute_btc_address_with_hrp(&pk, "bc").unwrap(),
+            compute_btc_address(&pk)
+        );
+        assert_eq!(
+            try_compute_cosmos_address_with_hrp(&pk, "cosmos").unwrap(),
+            compute_cosmos_address(&pk)
         );
     }
 }

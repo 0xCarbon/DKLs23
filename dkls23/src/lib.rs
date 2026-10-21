@@ -3,7 +3,7 @@
 //! Re-exports the curve-generic core at the crate root and each curve
 //! instantiation as a module, selected by features:
 //!
-//! - `secp256k1` (default): [`secp256k1`] — Ethereum, Bitcoin, Litecoin,
+//! - `secp256k1` (default): `secp256k1` — Ethereum, Bitcoin, Litecoin,
 //!   Dogecoin, Bitcoin Cash, Cosmos, TRON, XRP, Filecoin, Tezos
 //! - `secp256r1`: `secp256r1` — NEO3, Sui, Tezos
 //! - `serde` (default): serialization of key shares and protocol messages

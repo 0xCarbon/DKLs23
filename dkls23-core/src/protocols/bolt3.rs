@@ -534,8 +534,8 @@ mod tests {
         for &party_index in signers {
             let (unique_keep, keep, transmit) = party(party_index).sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             )?;
             unique_kept_2to3.insert(party_index, unique_keep);
@@ -563,8 +563,8 @@ mod tests {
         for &party_index in signers {
             let (x_coord, broadcast) = party(party_index).sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             )?;
             x_coords.push(x_coord);

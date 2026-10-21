@@ -75,18 +75,23 @@ over the session ID, with signs determined by party ordering.
 - **Schnorr DLog proof** with randomized Fischlin transform (R=64, L=4, T=32)
   for non-interactive proofs in the random oracle model.
 - **Chaum-Pedersen proof** for equality of discrete logarithms.
-- **Encryption proof** (EncProof) for the DKLs18 OT transfer step.
+- **Encryption proof** (EncProof) for the receiver of the base OT (endemic OT of
+  Zhou et al.), proving its message encrypts a bit.
 
 ## Protocol Flows
 
 ### DKG (4 phases + 5 steps)
 
-1. **Phase 1**: Sample polynomial, commit to evaluation.
-2. **Phase 2**: Exchange polynomial evaluations and commitments.
-3. **Phase 3**: Decommit, verify proofs, reconstruct public key via Lagrange
-   interpolation in the exponent.
-4. **Phase 4**: Initialize OT correlations, zero-share seeds, multiplication
-   setup, and BIP-32 chain code via XOR of committed auxiliary values.
+1. **Phase 1** (Steps 1-2): Sample a polynomial and evaluate it for every party
+   (sent peer-to-peer, confidentially).
+2. **Phase 2** (Step 3): Sum the received evaluations into the key share,
+   commit to its proof of knowledge; send zero-share seed and chain-code
+   commitments.
+3. **Phase 3**: Initialization only: reveal zero-share seeds and chain-code
+   contributions, and run the base OT that sets up each pair's multiplication.
+4. **Phase 4** (Step 5): Verify the proofs and reconstruct the public key via
+   Lagrange interpolation in the exponent; verify the seed and chain-code
+   commitments and finish the multiplication setup.
 
 Output: `Party` struct ready for signing.
 
@@ -107,6 +112,12 @@ Output: `Party` struct ready for signing.
 
 Two variants: full refresh (re-runs DKG-like setup) and faster refresh (updates
 OT correlations using shared seeds without re-running base OT).
+
+After a refresh a party's session id is `H(previous session id, refresh id)`,
+so parties that adopted different refreshes never share a session id, and
+`PublicKeyPackage::refresh` updates a public key package's verifying shares
+from the refresh's proof commitments. Zero-share seed commitments are bound
+to the session and direction.
 
 ### Key Derivation (`protocols/derivation.rs`)
 
@@ -138,16 +149,20 @@ Aborts are classified via `AbortKind`:
   OT state. They MUST be permanently excluded from future sessions.
 
 Signing messages carry a session binding (DKG session id, sign id, key, message
-hash, signer set, phase and direction; phase-2 messages also cover both
-parties' phase-1 OT extension nonces, which are fresh per attempt). It is
+hash, signer set, phase, direction and the pair's multiplication setup (both
+public gadgets); phase-2 messages also cover both parties' phase-1 OT
+extension nonces, which are fresh per attempt). It is
 checked before any OT or multiplication work, so a message from a different
 session or attempt yields a `Recoverable` `SessionBindingMismatch` rather than
 a ban.
 
 ### Trust Model
 
-- Messages are authenticated but not encrypted (the protocol provides its own
-  confidentiality via OT).
+- Every message must be authenticated, and peer-to-peer messages must also be
+  confidential. DKG and refresh send secret material peer-to-peer in the
+  clear (polynomial evaluations, zero-share seeds): an eavesdropper on those
+  messages learns key shares. Use authenticated, encrypted channels (e.g. TLS
+  or a Noise session per pair).
 - The orchestrator is trusted to route messages correctly.
 - Party indices must be in `[1, share_count]` and are validated at signing entry.
 

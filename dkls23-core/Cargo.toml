@@ -1,7 +1,8 @@
 [package]
 name = "dkls23-core"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
+rust-version = "1.88"
 license = "Apache-2.0 OR MIT"
 description = "DKLs23 Threshold ECDSA — curve-generic core"
 repository = "https://github.com/0xCarbon/DKLs23"

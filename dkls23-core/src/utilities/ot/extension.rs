@@ -81,6 +81,7 @@ pub type PRGOutput = [u8; (EXTENDED_BATCH_SIZE / 8) as usize];
 /// Encodes an element in the field of 2^`OT_SECURITY` elements.
 pub type FieldElement = [u8; (OT_SECURITY / 8) as usize];
 
+#[cfg(feature = "serde")]
 const PRG_DATA_SIZE: usize = 78;
 #[cfg(feature = "serde")]
 pub fn serialize_vec_prg<S>(data: &[[u8; PRG_DATA_SIZE]], serializer: S) -> Result<S::Ok, S::Error>
@@ -97,6 +98,15 @@ where
     D: Deserializer<'de>,
 {
     let concatenated: Vec<u8> = serde_bytes::Deserialize::deserialize(deserializer)?;
+
+    // Every such vector holds one PRG output per base OT.
+    let expected = KAPPA as usize * PRG_DATA_SIZE;
+    if concatenated.len() != expected {
+        return Err(D::Error::invalid_length(
+            concatenated.len(),
+            &"KAPPA PRG outputs",
+        ));
+    }
 
     concatenated
         .chunks(PRG_DATA_SIZE)
@@ -158,6 +168,19 @@ pub struct OTEDataToSender {
 }
 
 impl OTESender {
+    /// Checks the dimensions of this (possibly deserialized) state.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the correlation or the seeds do not have
+    /// [`KAPPA`] entries.
+    pub fn check_state(&self) -> Result<(), ErrorOT> {
+        if self.correlation.len() != KAPPA as usize || self.seeds.len() != KAPPA as usize {
+            return Err(ErrorOT::new("OTE sender state has incorrect dimensions"));
+        }
+        Ok(())
+    }
+
     // INITIALIZE
 
     // According to KOS (Fig. 10), the initialization is done by applying the OT protocol
@@ -171,7 +194,7 @@ impl OTESender {
     /// In this case, it initializes and runs **as a receiver** the first phase
     /// of the base OT ([`KAPPA`] times).
     ///
-    /// See [`OTReceiver`](super::base::OTReceiver) for an explanation of the outputs.
+    /// See [`OTReceiver`] for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1<C: DklsCurve>(
         session_id: &[u8],
@@ -194,13 +217,14 @@ impl OTESender {
 
     /// Finishes the initialization.
     ///
-    /// The inputs are the instance of [`OTReceiver`](super::base::OTReceiver) generated
+    /// The inputs are the instance of [`OTReceiver`] generated
     /// in the previous round and everything needed to finish the OT base protocol
     /// (see the description of the aforementioned struct).
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the base OT fails (see the file above).
+    /// Will return `Err` if `correlation` or `vec_r` does not hold [`KAPPA`]
+    /// entries or if the base OT fails (see the file above).
     pub fn init_phase2<C: DklsCurve>(
         ot_receiver: &OTReceiver,
         session_id: &[u8],
@@ -208,6 +232,10 @@ impl OTESender {
         vec_r: &[C::Scalar],
         dlog_proof: &DLogProof<C>,
     ) -> Result<OTESender, ErrorOT> {
+        if correlation.len() != KAPPA as usize || vec_r.len() != KAPPA as usize {
+            return Err(ErrorOT::new("Wrong base OT batch size!"));
+        }
+
         // The outputs from the base OT become the sender's seeds.
         let seeds = ot_receiver.run_phase2_batch::<C>(session_id, vec_r, dlog_proof)?;
 
@@ -503,6 +531,21 @@ impl OTESender {
 }
 
 impl OTEReceiver {
+    /// Checks the dimensions of this (possibly deserialized) state.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if either seed vector does not have [`KAPPA`]
+    /// entries.
+    pub fn check_state(&self) -> Result<(), ErrorOT> {
+        if self.seeds0.len() != KAPPA as usize || self.seeds1.len() != KAPPA as usize {
+            return Err(ErrorOT::new(
+                "OTE receiver seed vectors have incorrect dimensions",
+            ));
+        }
+        Ok(())
+    }
+
     // INITIALIZE
 
     // According to KOS (Fig. 10), the initialization is done by applying the OT protocol
@@ -516,7 +559,7 @@ impl OTEReceiver {
     /// In this case, it initializes and runs **as a sender** the first phase
     /// of the base OT ([`KAPPA`] times).
     ///
-    /// See [`OTSender`](super::base::OTSender) for an explanation of the outputs.
+    /// See [`OTSender`] for an explanation of the outputs.
     #[must_use]
     pub fn init_phase1<C: DklsCurve>(session_id: &[u8]) -> (OTSender<C>, DLogProof<C>) {
         let ot_sender = OTSender::<C>::init(session_id);
@@ -528,19 +571,24 @@ impl OTEReceiver {
 
     /// Finishes the initialization.
     ///
-    /// The inputs are the instance of [`OTSender`](super::base::OTSender) generated
+    /// The inputs are the instance of [`OTSender`] generated
     /// in the previous round and everything needed to finish the OT base protocol
     /// (see the description of the aforementioned struct).
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the base OT fails (see the file above).
+    /// Will return `Err` if `enc_proofs` does not hold [`KAPPA`] proofs or
+    /// if the base OT fails (see the file above).
     pub fn init_phase2<C: DklsCurve>(
         ot_sender: &OTSender<C>,
         session_id: &[u8],
         seed: &Seed,
         enc_proofs: &[EncProof<C>],
     ) -> Result<OTEReceiver, ErrorOT> {
+        if enc_proofs.len() != KAPPA as usize {
+            return Err(ErrorOT::new("Wrong base OT batch size!"));
+        }
+
         // The outputs from the base OT become the receiver's seeds.
         let (seeds0, seeds1) = ot_sender.run_phase2_batch(session_id, seed, enc_proofs)?;
 
@@ -1025,6 +1073,43 @@ mod tests {
 
     type TestCurve = Secp256k1;
     type Scalar = <TestCurve as CurveArithmetic>::Scalar;
+
+    /// The base OT batch must hold exactly `KAPPA` instances on both sides.
+    #[test]
+    fn test_init_phase2_rejects_wrong_batch_size() {
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let (ot_sender, dlog_proof) = OTEReceiver::init_phase1::<TestCurve>(&session_id);
+        let (ot_receiver, correlation, vec_r, enc_proofs) =
+            OTESender::init_phase1::<TestCurve>(&session_id);
+        let seed = ot_receiver.seed;
+
+        let short = &enc_proofs[..enc_proofs.len() - 1];
+        assert!(
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, short).is_err()
+        );
+        assert!(
+            OTEReceiver::init_phase2::<TestCurve>(&ot_sender, &session_id, &seed, &[]).is_err()
+        );
+
+        let short_r = &vec_r[..vec_r.len() - 1];
+        let short_correlation = correlation[..correlation.len() - 1].to_vec();
+        assert!(OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            short_correlation,
+            short_r,
+            &dlog_proof,
+        )
+        .is_err());
+        assert!(OTESender::init_phase2::<TestCurve>(
+            &ot_receiver,
+            &session_id,
+            Vec::new(),
+            &vec_r,
+            &dlog_proof,
+        )
+        .is_err());
+    }
 
     fn prepare_ote_sender_inputs(
         session_id: &[u8; crate::utilities::ID_LEN],

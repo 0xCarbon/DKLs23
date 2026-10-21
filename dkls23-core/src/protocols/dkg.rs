@@ -358,10 +358,8 @@ pub(crate) fn step3<C: DklsCurve>(
 /// Will return `Err` if one of the proofs/commitments doesn't
 /// verify or if the consistency check for the public key fails.
 ///
-/// # Panics
-///
-/// Will panic if the list of indices in `proofs_commitments`
-/// are not the numbers from 1 to `parameters.share_count`.
+/// Returns a recoverable abort if `proofs_commitments` does not hold exactly
+/// one entry for each index from 1 to `parameters.share_count`.
 pub(crate) fn step5<C: DklsCurve>(
     parameters: &Parameters,
     party_index: PartyIndex,
@@ -370,19 +368,43 @@ pub(crate) fn step5<C: DklsCurve>(
 ) -> Result<(C::AffinePoint, BTreeMap<PartyIndex, C::AffinePoint>), Abort> {
     let mut committed_points: BTreeMap<PartyIndex, C::AffinePoint> = BTreeMap::new(); //The "public key fragments"
 
+    if proofs_commitments.len() != usize::from(parameters.share_count) {
+        return Err(Abort::recoverable(
+            party_index,
+            AbortReason::WrongMessageCount {
+                expected: usize::from(parameters.share_count),
+                got: proofs_commitments.len(),
+            },
+        ));
+    }
+
     // Verify the proofs and gather the committed points.
     for party_j in proofs_commitments {
-        if party_j.index != party_index {
-            let verification =
-                DLogProof::<C>::decommit_verify(&party_j.proof, &party_j.commitment, session_id);
-            if !verification {
-                return Err(Abort::recoverable(
-                    party_index,
-                    AbortReason::ProofVerificationFailed {
-                        counterparty: party_j.index,
-                    },
-                ));
-            }
+        if party_j.index.as_u8() > parameters.share_count {
+            return Err(Abort::recoverable(
+                party_index,
+                AbortReason::UnexpectedSender {
+                    sender: party_j.index,
+                },
+            ));
+        }
+        if committed_points.contains_key(&party_j.index) {
+            return Err(Abort::recoverable(
+                party_index,
+                AbortReason::DuplicateSender {
+                    sender: party_j.index,
+                },
+            ));
+        }
+        let verification =
+            DLogProof::<C>::decommit_verify(&party_j.proof, &party_j.commitment, session_id);
+        if !verification {
+            return Err(Abort::recoverable(
+                party_index,
+                AbortReason::ProofVerificationFailed {
+                    counterparty: party_j.index,
+                },
+            ));
         }
         committed_points.insert(party_j.index, party_j.proof.point);
     }
@@ -394,16 +416,20 @@ pub(crate) fn step5<C: DklsCurve>(
     // Verify that all points come from the same polynomial. To do so, for each contiguous set of parties,
     // perform Shamir reconstruction in the exponent and check if the results agree.
     // The common value calculated is the public key.
-    for i in 1..=(parameters.share_count - parameters.threshold + 1) {
+    // Indices are u16: the last window ends at share_count + 1, which is 256
+    // for 255 parties.
+    let share_count = u16::from(parameters.share_count);
+    let threshold = u16::from(parameters.threshold);
+    for i in 1..=(share_count - threshold + 1) {
         let mut current_pk = identity;
-        for j in i..(i + parameters.threshold) {
+        for j in i..(i + threshold) {
             // We find the Lagrange coefficient l(j) corresponding to j (and the contiguous set of parties).
             // It is such that the sum of l(j) * p(j) over all j is p(0), where p is the polynomial from Step 3.
             let j_scalar = C::Scalar::from(u64::from(j));
             let mut lj_numerator = <C::Scalar as Field>::ONE;
             let mut lj_denominator = <C::Scalar as Field>::ONE;
 
-            for k in i..(i + parameters.threshold) {
+            for k in i..(i + threshold) {
                 if k != j {
                     let k_scalar = C::Scalar::from(u64::from(k));
                     lj_numerator *= k_scalar;
@@ -412,16 +438,14 @@ pub(crate) fn step5<C: DklsCurve>(
             }
 
             let lj = lj_numerator * (lj_denominator.invert().unwrap());
-            let point_j = committed_points
-                .get(&PartyIndex::new(j).unwrap())
-                .ok_or_else(|| {
-                    Abort::recoverable(
-                        party_index,
-                        AbortReason::MissingCommittedPoint {
-                            party: PartyIndex::new(j).unwrap(),
-                        },
-                    )
-                })?;
+            // j <= share_count <= 255.
+            let index_j = PartyIndex::new(u8::try_from(j).expect("j <= share_count")).unwrap();
+            let point_j = committed_points.get(&index_j).ok_or_else(|| {
+                Abort::recoverable(
+                    party_index,
+                    AbortReason::MissingCommittedPoint { party: index_j },
+                )
+            })?;
             let lj_times_point = *point_j * lj;
 
             current_pk = (lj_times_point + current_pk).to_affine();
@@ -440,9 +464,32 @@ pub(crate) fn step5<C: DklsCurve>(
     Ok((pk, committed_points))
 }
 
+/// Checks that the point committed under our index is `own_scalar * G`.
+///
+/// # Errors
+///
+/// Returns a recoverable abort if the point is missing or differs.
+pub(crate) fn check_own_point<C: DklsCurve>(
+    party_index: PartyIndex,
+    own_scalar: &C::Scalar,
+    committed_points: &BTreeMap<PartyIndex, C::AffinePoint>,
+) -> Result<(), Abort> {
+    let expected = (<C::ProjectivePoint as group::Group>::generator() * own_scalar).to_affine();
+    if committed_points.get(&party_index) == Some(&expected) {
+        Ok(())
+    } else {
+        Err(Abort::recoverable(
+            party_index,
+            AbortReason::ProofVerificationFailed {
+                counterparty: party_index,
+            },
+        ))
+    }
+}
+
 // PHASES
 
-/// Phase 1 = [`step1`] and [`step2`].
+/// Phase 1 = `step1` and `step2`.
 ///
 /// # Input
 ///
@@ -469,7 +516,7 @@ pub fn phase1<C: DklsCurve>(data: &SessionData) -> Vec<C::Scalar> {
 // At the end, Party i should have received all fragments indexed by i.
 // They should add up to p(i), where p is a polynomial not depending on i.
 
-/// Phase 2 = [`step3`].
+/// Phase 2 = `step3`.
 ///
 /// # Input
 ///
@@ -512,8 +559,9 @@ pub fn phase2<C: DklsCurve>(
             continue;
         }
 
-        // Generate initial seeds.
-        let (seed, commitment, salt) = ZeroShare::generate_seed_with_commitment();
+        // Generate initial seeds, committed for this DKG and direction.
+        let context = ZeroShare::seed_context(b"dkg", &[&data.session_id], data.party_index, i_idx);
+        let (seed, commitment, salt) = ZeroShare::generate_seed_with_bound_commitment(&context);
 
         // We first send the commitments. We keep the rest to send later.
         zero_keep.insert(i_idx, KeepInitZeroSharePhase2to3 { seed, salt });
@@ -707,7 +755,7 @@ pub fn phase3<C: DklsCurve>(
 // Init: Each party transmits messages for the zero shares and multiplication protocols (one for each party)
 // and broadcasts a message for key derivation (the same for every party).
 
-/// Phase 4 = [`step5`].
+/// Phase 4 = `step5`.
 ///
 /// # Input
 ///
@@ -759,6 +807,7 @@ pub fn phase4<C: DklsCurve>(
         &data.session_id,
         proofs_commitments,
     )?;
+    check_own_point::<C>(data.party_index, poly_point, &verifying_shares)?;
 
     // The public key cannot be the point at infinity.
     // This is practically impossible, but easy to check.
@@ -892,8 +941,11 @@ pub fn phase4<C: DklsCurve>(
             })?;
 
         // We verify the commitment.
-        let verification = ZeroShare::verify_seed(
+        let context =
+            ZeroShare::seed_context(b"dkg", &[&data.session_id], *target_party, data.party_index);
+        let verification = ZeroShare::verify_bound_seed(
             &message_received_3.seed,
+            &context,
             &message_received_2.commitment,
             &message_received_3.salt,
         );
@@ -1139,6 +1191,73 @@ mod tests {
         String::new()
     }
 
+    /// Proof commitments for a degree-1 polynomial `secret + slope·x` held
+    /// by `share_count` parties.
+    fn line_commitments(
+        share_count: u8,
+        secret: Scalar,
+        session_id: &[u8],
+    ) -> Vec<ProofCommitment<TestCurve>> {
+        let slope = Scalar::random(&mut rng::get_rng());
+        (1..=share_count)
+            .map(|i| {
+                let point = secret + slope * Scalar::from(u64::from(i));
+                step3::<TestCurve>(PartyIndex::new(i).unwrap(), session_id, &[point]).1
+            })
+            .collect()
+    }
+
+    /// The consistency check covers the last window of parties also for
+    /// 255 parties, where its end index is 256.
+    #[test]
+    fn test_step5_with_255_parties() {
+        let parameters = Parameters::new(2, 255).unwrap();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let secret = Scalar::random(&mut rng::get_rng());
+        let commitments = line_commitments(255, secret, &session_id);
+
+        let (pk, points) = step5::<TestCurve>(
+            &parameters,
+            PartyIndex::new(1).unwrap(),
+            &session_id,
+            &commitments,
+        )
+        .unwrap();
+        assert_eq!(pk, (AffinePoint::GENERATOR * secret).to_affine());
+        assert_eq!(points.len(), 255);
+    }
+
+    /// A duplicate or missing index is rejected instead of overwritten.
+    #[test]
+    fn test_step5_rejects_duplicate_index() {
+        let parameters = Parameters::new(2, 3).unwrap();
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let mut commitments = line_commitments(3, Scalar::ONE, &session_id);
+        commitments[2] = commitments[1].clone();
+
+        let abort = step5::<TestCurve>(
+            &parameters,
+            PartyIndex::new(1).unwrap(),
+            &session_id,
+            &commitments,
+        )
+        .unwrap_err();
+        assert!(matches!(abort.reason, AbortReason::DuplicateSender { .. }));
+
+        commitments.pop();
+        let abort = step5::<TestCurve>(
+            &parameters,
+            PartyIndex::new(1).unwrap(),
+            &session_id,
+            &commitments,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            abort.reason,
+            AbortReason::WrongMessageCount { .. }
+        ));
+    }
+
     struct DkgPhase4Inputs {
         all_data: Vec<SessionData>,
         poly_points: Vec<Scalar>,
@@ -1153,12 +1272,16 @@ mod tests {
     }
 
     fn setup_two_party_dkg_phase4_inputs() -> DkgPhase4Inputs {
+        const SESSION_ID_LEN: usize = 32;
+        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        setup_two_party_dkg_phase4_inputs_with_sid(&session_id)
+    }
+
+    fn setup_two_party_dkg_phase4_inputs_with_sid(session_id: &[u8]) -> DkgPhase4Inputs {
         let parameters = Parameters {
             threshold: 2,
             share_count: 2,
         };
-        const SESSION_ID_LEN: usize = 32;
-        let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
 
         // Each party prepares their data for this DKG.
         let mut all_data: Vec<SessionData> = Vec::with_capacity(parameters.share_count as usize);
@@ -1298,6 +1421,67 @@ mod tests {
         }
     }
 
+    fn finish_two_party_dkg(data: &DkgPhase4Inputs, i: usize) -> Party<TestCurve> {
+        phase4::<TestCurve>(
+            &data.all_data[i],
+            &data.poly_points[i],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[i],
+            &data.zero_received_2to4[i],
+            &data.zero_received_3to4[i],
+            &data.mul_kept_3to4[i],
+            &data.mul_received_3to4[i],
+            &data.bip_broadcast_2to4,
+            &data.bip_broadcast_3to4,
+            no_address,
+        )
+        .unwrap()
+        .0
+    }
+
+    /// Two runs share a session id and party 1 adopts the other run's
+    /// multiplication-init message. Signing then reports a recoverable
+    /// session mismatch instead of blaming party 2.
+    #[test]
+    fn test_mul_init_from_another_run_is_a_recoverable_mismatch() {
+        use crate::protocols::signing::SignData;
+        use crate::protocols::AbortKind;
+
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let other_run = setup_two_party_dkg_phase4_inputs_with_sid(&session_id);
+        let mut run = setup_two_party_dkg_phase4_inputs_with_sid(&session_id);
+        run.mul_received_3to4[0] = other_run.mul_received_3to4[0].clone();
+        let parties = [finish_two_party_dkg(&run, 0), finish_two_party_dkg(&run, 1)];
+
+        let sign_id = rng::get_rng().random::<[u8; 32]>();
+        let message_hash = rng::get_rng().random::<HashOutput>();
+        let data: Vec<SignData> = (0..2)
+            .map(|i| SignData {
+                sign_id: sign_id.to_vec(),
+                counterparties: vec![parties[1 - i].party_index],
+                message_hash,
+            })
+            .collect();
+        let phase1: Vec<_> = (0..2)
+            .map(|i| parties[i].sign_phase1(&data[i]).unwrap())
+            .collect();
+
+        // Party 2 receives party 1's phase-1 message.
+        let mut phase1 = phase1;
+        let (_, _, from_one) = phase1.remove(0);
+        let (unique_keep, keep, _) = phase1.remove(0);
+        let abort = parties[1]
+            .sign_phase2(&data[1], unique_keep, keep, &from_one)
+            .unwrap_err();
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert_eq!(
+            abort.reason,
+            AbortReason::SessionBindingMismatch {
+                counterparty: parties[0].party_index
+            }
+        );
+    }
+
     /// Tests if phase 4 aborts when multiplication-init messages are missing.
     #[test]
     fn test_dkg_phase4_rejects_missing_mul_init_messages() {
@@ -1333,6 +1517,44 @@ mod tests {
 
     /// Tests if the main steps of the protocol do not generate
     /// an unexpected [`Abort`] in the 2-of-2 scenario.
+    /// A party checks that the point committed under its own index is its
+    /// own `poly_point`, even when the substituted entry carries a valid proof.
+    #[test]
+    fn test_dkg_phase4_rejects_substituted_own_point() {
+        let mut data = setup_two_party_dkg_phase4_inputs();
+        let one = PartyIndex::new(1).unwrap();
+        let substitute = Scalar::random(&mut rng::get_rng());
+        let (proof, commitment) =
+            DLogProof::<TestCurve>::prove_commit(&substitute, &data.all_data[0].session_id)
+                .unwrap();
+        let own = data
+            .proofs_commitments
+            .iter_mut()
+            .find(|entry| entry.index == one)
+            .unwrap();
+        own.proof = proof;
+        own.commitment = commitment;
+
+        let abort = phase4::<TestCurve>(
+            &data.all_data[0],
+            &data.poly_points[0],
+            &data.proofs_commitments,
+            &data.zero_kept_3to4[0],
+            &data.zero_received_2to4[0],
+            &data.zero_received_3to4[0],
+            &data.mul_kept_3to4[0],
+            &data.mul_received_3to4[0],
+            &data.bip_broadcast_2to4,
+            &data.bip_broadcast_3to4,
+            no_address,
+        )
+        .unwrap_err();
+        assert_eq!(
+            abort.reason,
+            AbortReason::ProofVerificationFailed { counterparty: one }
+        );
+    }
+
     #[test]
     fn test_dkg_t2_n2() {
         let parameters = Parameters {

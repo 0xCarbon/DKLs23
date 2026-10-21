@@ -6,9 +6,12 @@ of the DKLs23 implementation.
 ## Cryptographic Assumptions
 
 The protocol's security relies on:
-- **Hardness of ECDLP** on secp256k1
-- **Random oracle model** (SHA-256 and SHA3-256 are used as instantiations)
-- **Secure authenticated channels** between all parties
+- **Hardness of ECDLP** on the curve in use (secp256k1 or P-256)
+- **Random oracle model**, instantiated with SHA-256 (including RFC 9380
+  `hash_to_curve` with `expand_message_xmd` for the base OT point); Keccak-256
+  and BLAKE2b appear only in address helpers
+- **Authenticated and confidential (encrypted) channels** between all parties:
+  DKG and refresh send secret material peer-to-peer in the clear
 
 ## OT Correlation Reuse
 
@@ -49,8 +52,12 @@ so reusing a `sign_id` (for example on a retry after an abort) does not leak
 key material. The phase-2 session binding also covers both parties' phase-1
 OT extension nonces, so a message mixing attempts (built on a stale phase-1
 message, or answering a different attempt than the one whose commitment we
-hold) is a recoverable `SessionBindingMismatch`, not a ban. A fresh
-`sign_id` per attempt is still recommended.
+hold) is a recoverable `SessionBindingMismatch`, not a ban. The binding also
+covers the pair's multiplication setup, so two parties whose pairwise
+initializations differ (for example, after a DKG or refresh retried under the
+same session id) get the same recoverable mismatch. A fresh `sign_id` per
+attempt, and a fresh session id per DKG or refresh attempt, are still
+recommended.
 
 ## Memory Safety
 
@@ -62,16 +69,28 @@ hold) is a recoverable `SessionBindingMismatch`, not a ban. A fresh
   - `DerivData` (derived key share and chain code)
   - `KeepPhase1to2`, `KeepPhase2to3` (signing intermediates)
   - `UniqueKeep1to2`, `UniqueKeep2to3` (signing intermediates)
+  - `SignData`, `TransmitPhase1to2`, `TransmitPhase2to3`, `Broadcast3to4`,
+    `MulDataToReceiver` (signing data and messages)
   - `Party` (manual `Zeroize` + `Drop` implementation)
+- Signing kept data (`UniqueKeep*`, `KeepPhase*`) is single-use:
+  `sign_phase2` and `sign_phase3` take it by value, the types are not `Clone`,
+  and their `Debug` output omits every field. Callers that persist it must
+  delete it before sending the phase's messages, never run a phase again from
+  a stored copy, and start a new attempt from phase 1 after any abort.
+  `SignSession` enforces this in memory.
 
 ## Side-Channel Resistance
 
-- Scalar arithmetic is delegated to `k256`, which uses constant-time operations
-  from the `subtle` crate.
-- Hash comparisons in the commitment scheme (`commits.rs`) use standard `==` on
-  `[u8; 32]`. This is a potential timing side-channel, though exploitation
-  requires an attacker who can both supply malicious messages AND measure
-  sub-microsecond timing differences.
+- Scalar and point arithmetic is delegated to `k256` / `p256`, which use
+  constant-time operations from the `subtle` crate.
+- Commitment checks (`commits.rs`) compare digests in constant time
+  (`subtle::ConstantTimeEq`).
+- Known limitation: the OT extension (`field_mul` on the receiver's choice
+  bits, output selection by choice bit), the multiplication (accumulation by
+  choice bit) and the fast refresh (selection by correlation bit) branch on
+  secret bits. An attacker with fine-grained local timing or microarchitectural
+  observation of a party could learn some of those bits; remote timing is not
+  expected to resolve them. Constant-time selection is planned.
 
 ## BOLT 3 Key Derivation
 

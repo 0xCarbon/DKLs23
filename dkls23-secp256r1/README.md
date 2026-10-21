@@ -33,9 +33,10 @@ dkls23-secp256r1 = "0.6"
 - **Threshold Signing** — produce ECDSA signatures with a subset of parties
 - **Key Refresh** — rotate key shares without changing the public key
 - **BIP-32 Derivation** — derive child keys from a master key share
+- **BOLT 3 Key Derivation** — per-commitment and revocation key shares (curve-generic; Lightning itself uses secp256k1)
 
 For session orchestration, transport, and resumable flows, see [libtss](https://github.com/0xCarbon/libtss).
 
 ## License
 
-Licensed under either of [Apache License 2.0](../LICENSE-APACHE) or [MIT](../LICENSE-MIT) at your option.
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your option.
