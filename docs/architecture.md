@@ -108,6 +108,12 @@ Output: `Party` struct ready for signing.
 Two variants: full refresh (re-runs DKG-like setup) and faster refresh (updates
 OT correlations using shared seeds without re-running base OT).
 
+After a refresh a party's session id is `H(previous session id, refresh id)`,
+so parties that adopted different refreshes never share a session id, and
+`PublicKeyPackage::refresh` updates a public key package's verifying shares
+from the refresh's proof commitments. Zero-share seed commitments are bound
+to the session and direction.
+
 ### Key Derivation (`protocols/derivation.rs`)
 
 BIP-32 non-hardened derivation adapted for threshold setting. Each party derives

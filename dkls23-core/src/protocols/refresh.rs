@@ -103,7 +103,7 @@ use crate::protocols::dkg::{
     KeepInitZeroSharePhase3to4, ProofCommitment, TransmitInitMulPhase3to4,
     TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
 };
-use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
+use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex, PublicKeyPackage};
 
 /// Session id of a party after a refresh: the previous session id chained
 /// with the refresh id. Parties that adopted different sets of refreshes
@@ -1230,6 +1230,51 @@ impl<C: DklsCurve> Party<C> {
     }
 }
 
+/// Refresh of a public key package.
+impl<C: DklsCurve> PublicKeyPackage<C> {
+    /// The package after a refresh (fast or complete) whose phase-2 proof
+    /// commitments, from all parties, are `proofs_commitments`.
+    ///
+    /// The commitments are verified as each party does in phase 4. The group
+    /// key is unchanged, and each verifying share moves by the refreshed
+    /// party's committed correction, so the package matches the refreshed
+    /// parties' shares.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`AbortReason`] a party would abort with if a commitment
+    /// does not verify or the corrections do not share a zero constant term.
+    pub fn refresh(
+        &self,
+        refresh_sid: &[u8],
+        proofs_commitments: &[ProofCommitment<C>],
+    ) -> Result<PublicKeyPackage<C>, AbortReason> {
+        // step5 needs some index to attribute an abort to; only its reason
+        // is returned.
+        let any_index = PartyIndex::new(1).expect("1 is a valid index");
+        let (zero_point, corrections) =
+            step5::<C>(&self.parameters, any_index, refresh_sid, proofs_commitments)
+                .map_err(|abort| abort.reason)?;
+        if zero_point != <C::AffinePoint as group::CurveAffine>::identity() {
+            return Err(AbortReason::PolynomialInconsistency);
+        }
+
+        let mut verifying_shares = self.verifying_shares.clone();
+        for (index, share) in &mut verifying_shares {
+            let correction = corrections
+                .get(index)
+                .ok_or(AbortReason::MissingCommittedPoint { party: *index })?;
+            *share = group::Curve::to_affine(&(C::ProjectivePoint::from(*share) + *correction));
+        }
+
+        Ok(PublicKeyPackage::new(
+            *self.verifying_key(),
+            verifying_shares,
+            self.parameters.clone(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1868,13 +1913,41 @@ mod tests {
     }
 
     fn two_of_three() -> Vec<Party<Secp256k1>> {
+        two_of_three_with_package().0
+    }
+
+    fn two_of_three_with_package() -> (Vec<Party<Secp256k1>>, PublicKeyPackage<Secp256k1>) {
         let parameters = Parameters::new(2, 3).unwrap();
         let session_id = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
         let secret_key = k256::Scalar::random(&mut rng::get_rng());
         re_key::<Secp256k1>(&parameters, &session_id, &secret_key, None, |_| {
             String::new()
         })
-        .0
+    }
+
+    /// The refreshed package matches the refreshed parties' shares and keeps
+    /// the group key; tampered commitments are rejected.
+    #[test]
+    fn test_public_key_package_refresh() {
+        let (parties, package) = two_of_three_with_package();
+        let refresh_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        let run = run_fast_refresh(&parties, &refresh_sid);
+        let refreshed_package = package
+            .refresh(&refresh_sid, &run.proofs_commitments)
+            .unwrap();
+        assert_eq!(refreshed_package.verifying_key(), package.verifying_key());
+
+        for (i, party) in parties.iter().enumerate() {
+            let refreshed = finish_fast_refresh(party, i, &refresh_sid, &run).unwrap();
+            let share = (k256::AffinePoint::GENERATOR * refreshed.poly_point).to_affine();
+            assert!(refreshed_package.verify_share(party.party_index, &share));
+            assert!(!package.verify_share(party.party_index, &share));
+        }
+
+        let other_sid = rng::get_rng().random::<[u8; SESSION_ID_LEN]>();
+        assert!(package
+            .refresh(&other_sid, &run.proofs_commitments)
+            .is_err());
     }
 
     /// A malformed (e.g. corrupted on disk) local OT state is a recoverable
