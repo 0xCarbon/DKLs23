@@ -1,7 +1,8 @@
 [package]
 name = "dkls23-core"
-version = "0.5.2"
+version = "0.6.1"
 edition = "2021"
+rust-version = "1.88"
 license = "Apache-2.0 OR MIT"
 description = "DKLs23 Threshold ECDSA — curve-generic core"
 repository = "https://github.com/0xCarbon/DKLs23"
@@ -11,15 +12,13 @@ readme = "README.md"
 elliptic-curve = { version = "0.14.1", features = ["arithmetic", "sec1"] }
 ff = { version = "0.14", default-features = false }
 group = { version = "0.14", default-features = false }
-k256 = { version = "0.14", features = ["hash2curve"] }
-p256 = { version = "0.14", features = ["hash2curve"] }
 hash2curve = "0.14"
 sha2 = "0.11"
 hmac = "0.13"
 ripemd = "0.2"
 rand = "0.10"
 hex = "0.4"
-bincode = { version = "1", optional = true }
+postcard = { version = "1.1", default-features = false, features = ["alloc"], optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_bytes = { version = "0.11.12", optional = true }
 zeroize = { version = "1", features = ["derive"] }
@@ -30,9 +29,11 @@ version = "0.4"
 features = ["wasm_js"]
 
 [dev-dependencies]
+k256 = { version = "0.14", features = ["group-digest", "serde"] }
+p256 = { version = "0.14", features = ["group-digest"] }
 serde_json = "1"
 
 [features]
 default = ["serde"]
-serde = ["dep:serde", "dep:serde_bytes", "dep:bincode", "k256/serde"]
+serde = ["dep:serde", "dep:serde_bytes", "dep:postcard"]
 insecure-rng = []

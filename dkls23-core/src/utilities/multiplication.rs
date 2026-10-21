@@ -15,7 +15,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::curve::DklsCurve;
 use crate::utilities::hashes::{scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput};
 use crate::utilities::oracle_tags::{
-    TAG_MUL_CHI_HAT, TAG_MUL_CHI_TILDE, TAG_MUL_GADGET, TAG_MUL_VERIFY,
+    TAG_MUL_CHI_HAT, TAG_MUL_CHI_TILDE, TAG_MUL_GADGET, TAG_MUL_TRANSCRIPT,
+    TAG_MUL_TRANSCRIPT_RECEIVER, TAG_MUL_VERIFY,
 };
 use crate::utilities::proofs::{DLogProof, EncProof};
 use crate::utilities::rng;
@@ -24,7 +25,7 @@ use crate::utilities::rng;
 use super::ot::extension::{deserialize_vec_prg, serialize_vec_prg};
 use crate::utilities::ot::base::{OTReceiver, OTSender, Seed};
 use crate::utilities::ot::extension::{
-    OTEDataToSender, OTEReceiver, OTESender, PRGOutput, BATCH_SIZE,
+    OTEDataToSender, OTEReceiver, OTESender, OteNonce, PRGOutput, BATCH_SIZE, KAPPA,
 };
 use crate::utilities::ot::ErrorOT;
 use rand::RngExt;
@@ -84,6 +85,8 @@ pub struct MulReceiver<C: DklsCurve> {
 )]
 pub struct MulDataToReceiver<C: DklsCurve> {
     pub vector_of_tau: Vec<Vec<C::Scalar>>,
+    /// The sender's fresh salt for the OT extension's output randomization.
+    pub ote_salt: OteNonce,
     pub verify_r: HashOutput,
     pub verify_u: Vec<C::Scalar>,
     pub gamma_sender: Vec<C::Scalar>,
@@ -110,8 +113,12 @@ pub struct MulDataToKeepReceiver<C: DklsCurve> {
         )
     )]
     pub extended_seeds: Vec<PRGOutput>,
-    pub chi_tilde: Vec<C::Scalar>,
-    pub chi_hat: Vec<C::Scalar>,
+    /// Digest of the receiver's OT extension message from Step 3. The
+    /// shared random values of Step 4 are derived from it, the sender's salt
+    /// and `tau`.
+    pub ote_transcript: HashOutput,
+    /// The receiver's OT extension nonce from Step 3, needed to finish it.
+    pub ote_nonce: OteNonce,
     #[zeroize(skip)]
     #[cfg_attr(feature = "serde", serde(skip))]
     _curve: PhantomData<C>,
@@ -133,8 +140,78 @@ impl ErrorMul {
     }
 }
 
+/// Digest of the receiver's OT extension message from Step 3.
+fn receiver_transcript(session_id: &[u8], data: &OTEDataToSender) -> HashOutput {
+    tagged_hash(
+        TAG_MUL_TRANSCRIPT_RECEIVER,
+        &[
+            session_id,
+            &data.nonce,
+            &data.u.concat(),
+            &data.verify_x,
+            &data.verify_t.concat(),
+        ],
+    )
+}
+
+/// Computes the shared random values of Step 4.
+///
+/// They are derived from the whole transcript of Step 3, including the
+/// sender's salt and OT corrections `tau` (DKLs19, Protocol 9).
+fn shared_random_values<C: DklsCurve>(
+    session_id: &[u8],
+    receiver_transcript: &HashOutput,
+    ote_salt: &OteNonce,
+    vector_of_tau: &[Vec<C::Scalar>],
+) -> (Vec<C::Scalar>, Vec<C::Scalar>) {
+    let tau_rows: Vec<Vec<u8>> = vector_of_tau
+        .iter()
+        .map(|row| row.iter().flat_map(scalar_to_bytes::<C>).collect())
+        .collect();
+    let mut components: Vec<&[u8]> = Vec::with_capacity(3 + tau_rows.len());
+    components.push(session_id);
+    components.push(receiver_transcript);
+    components.push(ote_salt);
+    components.extend(tau_rows.iter().map(Vec::as_slice));
+    let transcript = tagged_hash(TAG_MUL_TRANSCRIPT, &components);
+
+    // At this point, the constant L from DKLs23 behaves as the
+    // constant l from DKLs19.
+    let mut chi_tilde: Vec<C::Scalar> = Vec::with_capacity(L as usize);
+    let mut chi_hat: Vec<C::Scalar> = Vec::with_capacity(L as usize);
+    for i in 0..L {
+        chi_tilde.push(tagged_hash_as_scalar::<C>(
+            TAG_MUL_CHI_TILDE,
+            &[session_id, &i.to_be_bytes(), &transcript],
+        ));
+        chi_hat.push(tagged_hash_as_scalar::<C>(
+            TAG_MUL_CHI_HAT,
+            &[session_id, &i.to_be_bytes(), &transcript],
+        ));
+    }
+
+    (chi_tilde, chi_hat)
+}
+
 // We implement the protocol.
 impl<C: DklsCurve> MulSender<C> {
+    /// Checks the dimensions of this (possibly deserialized) state, so that
+    /// a corrupted local state is reported as such instead of panicking or
+    /// failing a check that blames the counterparty.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the public gadget or the OT extension state has
+    /// incorrect dimensions.
+    pub fn check_state(&self) -> Result<(), ErrorMul> {
+        if self.public_gadget.len() != BATCH_SIZE as usize {
+            return Err(ErrorMul::new("Public gadget has incorrect length"));
+        }
+        self.ote_sender
+            .check_state()
+            .map_err(|error| ErrorMul::new(&error.description))
+    }
+
     // INITIALIZE
 
     // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
@@ -144,7 +221,7 @@ impl<C: DklsCurve> MulSender<C> {
 
     /// Starts the initialization of the protocol.
     ///
-    /// See [`OTESender`](super::ot::extension::OTESender) for explanation.
+    /// See [`OTESender`] for explanation.
     #[must_use]
     pub fn init_phase1(
         session_id: &[u8],
@@ -154,7 +231,7 @@ impl<C: DklsCurve> MulSender<C> {
 
     /// Finishes the initialization of the protocol.
     ///
-    /// The inputs here come from [`OTESender`](super::ot::extension::OTESender),
+    /// The inputs here come from [`OTESender`],
     /// except for `nonce`, which was sent by the receiver for the
     /// computation of the public gadget vector.
     ///
@@ -210,13 +287,18 @@ impl<C: DklsCurve> MulSender<C> {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the underlying OT extension fails (see [`OTESender`](super::ot::extension::OTESender)).
+    /// Will return `Err` if the underlying OT extension fails (see [`OTESender`]).
     pub fn run(
         &self,
         session_id: &[u8],
         input: &[C::Scalar],
         data: &OTEDataToSender,
     ) -> Result<(Vec<C::Scalar>, MulDataToReceiver<C>), ErrorMul> {
+        self.check_state()?;
+        if input.len() != L as usize {
+            return Err(ErrorMul::new("Sender input has incorrect length"));
+        }
+
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - No action for the sender.
@@ -277,9 +359,10 @@ impl<C: DklsCurve> MulSender<C> {
 
         let ot_outputs: Vec<Vec<C::Scalar>>;
         let vector_of_tau: Vec<Vec<C::Scalar>>; // Used by the receiver to finish the OT protocol.
+        let ote_salt: OteNonce; // Likewise.
         match result {
-            Ok((out, tau)) => {
-                (ot_outputs, vector_of_tau) = (out, tau);
+            Ok((out, tau, salt)) => {
+                (ot_outputs, vector_of_tau, ote_salt) = (out, tau, salt);
             }
             Err(error) => {
                 return Err(ErrorMul::new(&format!(
@@ -292,30 +375,14 @@ impl<C: DklsCurve> MulSender<C> {
         // This is the sender's output from the OT protocol with the notation from DKLs19.
         let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
-        // Step 4 - We compute the shared random values.
-
-        // We use data as a transcript from Step 3.
-        let transcript = [
-            data.u.concat(),
-            data.verify_x.to_vec(),
-            data.verify_t.concat(),
-        ]
-        .concat();
-
-        // At this point, the constant L from DKLs23 behaves as the
-        // constant l from DKLs19.
-        let mut chi_tilde: Vec<C::Scalar> = Vec::with_capacity(L as usize);
-        let mut chi_hat: Vec<C::Scalar> = Vec::with_capacity(L as usize);
-        for i in 0..L {
-            chi_tilde.push(tagged_hash_as_scalar::<C>(
-                TAG_MUL_CHI_TILDE,
-                &[session_id, &i.to_be_bytes(), &transcript],
-            ));
-            chi_hat.push(tagged_hash_as_scalar::<C>(
-                TAG_MUL_CHI_HAT,
-                &[session_id, &i.to_be_bytes(), &transcript],
-            ));
-        }
+        // Step 4 - We compute the shared random values from the
+        // transcript of Step 3, including tau.
+        let (chi_tilde, chi_hat) = shared_random_values::<C>(
+            session_id,
+            &receiver_transcript(session_id, data),
+            &ote_salt,
+            &vector_of_tau,
+        );
 
         // Step 5 - We compute the verification value.
         // We use Section 5.1 in DKLs23 for an optimization of the
@@ -377,6 +444,7 @@ impl<C: DklsCurve> MulSender<C> {
 
         let data_to_receiver = MulDataToReceiver {
             vector_of_tau,
+            ote_salt,
             verify_r,
             verify_u,
             gamma_sender: gamma,
@@ -387,6 +455,35 @@ impl<C: DklsCurve> MulSender<C> {
 }
 
 impl<C: DklsCurve> MulReceiver<C> {
+    /// Checks the dimensions of this (possibly deserialized) state and, if
+    /// given, of the data kept from phase 1.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the public gadget, the OT extension state or the
+    /// kept data has incorrect dimensions.
+    pub fn check_state(
+        &self,
+        data_kept: Option<&MulDataToKeepReceiver<C>>,
+    ) -> Result<(), ErrorMul> {
+        if self.public_gadget.len() != BATCH_SIZE as usize {
+            return Err(ErrorMul::new("Public gadget has incorrect length"));
+        }
+        self.ote_receiver
+            .check_state()
+            .map_err(|error| ErrorMul::new(&error.description))?;
+        if let Some(kept) = data_kept {
+            if kept.choice_bits.len() != BATCH_SIZE as usize
+                || kept.extended_seeds.len() != KAPPA as usize
+            {
+                return Err(ErrorMul::new(
+                    "Kept multiplication data has incorrect dimensions",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     // INITIALIZE
 
     // As in DKLs19 (https://eprint.iacr.org/2019/523.pdf), the initialization of the
@@ -396,7 +493,7 @@ impl<C: DklsCurve> MulReceiver<C> {
 
     /// Starts the initialization of the protocol.
     ///
-    /// See [`OTEReceiver`](super::ot::extension::OTEReceiver) for explanation.
+    /// See [`OTEReceiver`] for explanation.
     ///
     /// The `Scalar` does not come from the OT extension. It is just
     /// a nonce for the generation of the public gadget vector. It should
@@ -415,7 +512,7 @@ impl<C: DklsCurve> MulReceiver<C> {
 
     /// Finishes the initialization of the protocol.
     ///
-    /// The inputs here come from [`OTEReceiver`](super::ot::extension::OTEReceiver),
+    /// The inputs here come from [`OTEReceiver`],
     /// except for `nonce`, which was generated during the previous phase.
     ///
     /// # Errors
@@ -475,6 +572,8 @@ impl<C: DklsCurve> MulReceiver<C> {
         &self,
         session_id: &[u8],
     ) -> Result<(C::Scalar, MulDataToKeepReceiver<C>, OTEDataToSender), ErrorMul> {
+        self.check_state(None)?;
+
         // RANDOMIZED MULTIPLICATION
 
         // Step 1 - We sample the choice bits and compute the pad b_tilde.
@@ -514,30 +613,10 @@ impl<C: DklsCurve> MulReceiver<C> {
                 }
             };
 
-        // Step 4 - We compute the shared random values.
-
-        // We use data_to_sender as a transcript from Step 3.
-        let transcript = [
-            data_to_sender.u.concat(),
-            data_to_sender.verify_x.to_vec(),
-            data_to_sender.verify_t.concat(),
-        ]
-        .concat();
-
-        // At this point, the constant L from DKLs23 behaves as the
-        // constant l from DKLs19.
-        let mut chi_tilde: Vec<C::Scalar> = Vec::with_capacity(L as usize);
-        let mut chi_hat: Vec<C::Scalar> = Vec::with_capacity(L as usize);
-        for i in 0..L {
-            chi_tilde.push(tagged_hash_as_scalar::<C>(
-                TAG_MUL_CHI_TILDE,
-                &[session_id, &i.to_be_bytes(), &transcript],
-            ));
-            chi_hat.push(tagged_hash_as_scalar::<C>(
-                TAG_MUL_CHI_HAT,
-                &[session_id, &i.to_be_bytes(), &transcript],
-            ));
-        }
+        // Step 4 (Incomplete) - The shared random values also depend on
+        // tau, which we have not received yet, so we keep a digest of our
+        // message for now.
+        let ote_transcript = receiver_transcript(session_id, &data_to_sender);
 
         // Step 5 - No action for the receiver, but he will receive
         // some values for the next step, so we stop here.
@@ -548,8 +627,8 @@ impl<C: DklsCurve> MulReceiver<C> {
             b,
             choice_bits,
             extended_seeds,
-            chi_tilde,
-            chi_hat,
+            ote_transcript,
+            ote_nonce: data_to_sender.nonce,
             _curve: PhantomData,
         };
 
@@ -565,13 +644,14 @@ impl<C: DklsCurve> MulReceiver<C> {
     ///
     /// Will return `Err` if received vectors have incorrect dimensions, if the
     /// consistency check using the sender values fails or if the underlying OT
-    /// extension fails (see [`OTEReceiver`](super::ot::extension::OTEReceiver)).
+    /// extension fails (see [`OTEReceiver`]).
     pub fn run_phase2(
         &self,
         session_id: &[u8],
         data_kept: &MulDataToKeepReceiver<C>,
         data_received: &MulDataToReceiver<C>,
     ) -> Result<Vec<C::Scalar>, ErrorMul> {
+        self.check_state(Some(data_kept))?;
         if data_received.verify_u.len() != L as usize
             || data_received.gamma_sender.len() != L as usize
         {
@@ -588,6 +668,8 @@ impl<C: DklsCurve> MulReceiver<C> {
 
         let result = self.ote_receiver.run_phase2::<C>(
             &ote_sid,
+            &data_kept.ote_nonce,
+            &data_received.ote_salt,
             OT_WIDTH,
             &data_kept.choice_bits,
             &data_kept.extended_seeds,
@@ -607,6 +689,14 @@ impl<C: DklsCurve> MulReceiver<C> {
         // This is the receiver's output from the OT protocol with the notation from DKLs19.
         let (z_tilde, z_hat) = ot_outputs.split_at(L as usize);
 
+        // Step 4 (Conclusion) - We compute the shared random values.
+        let (chi_tilde, chi_hat) = shared_random_values::<C>(
+            session_id,
+            &data_kept.ote_transcript,
+            &data_received.ote_salt,
+            &data_received.vector_of_tau,
+        );
+
         // Step 6 - We verify if the data sent by the sender is consistent.
 
         // We use Section 5.1 in DKLs23 for an optimization of the
@@ -622,9 +712,8 @@ impl<C: DklsCurve> MulReceiver<C> {
             let mut entries_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
                 // The entry depends on the choice bits.
-                let mut entry = (-(data_kept.chi_tilde[i as usize]
-                    * z_tilde[i as usize][j as usize]))
-                    - (data_kept.chi_hat[i as usize] * z_hat[i as usize][j as usize]);
+                let mut entry = (-(chi_tilde[i as usize] * z_tilde[i as usize][j as usize]))
+                    - (chi_hat[i as usize] * z_hat[i as usize][j as usize]);
                 if data_kept.choice_bits[j as usize] {
                     entry += &data_received.verify_u[i as usize];
                 }
@@ -910,46 +999,52 @@ mod tests {
         assert!(error.description.contains("Consistency check failed"));
     }
 
-    /// Tests that tampering tau vectors is either rejected or changes receiver output.
-    ///
-    /// The protocol does not authenticate tau values directly, so some tampering
-    /// patterns can propagate as incorrect outputs instead of immediate rejection.
+    /// Tests that a tampered sender salt is rejected: it changes the
+    /// receiver's OT outputs and the shared random values.
     #[test]
-    fn test_multiplication_rejects_tampered_tau_vectors() {
+    fn test_multiplication_rejects_tampered_ote_salt() {
         let session_id = rng::get_rng().random::<[u8; 32]>();
         let (mul_receiver, data_to_keep, mut data_to_receiver) =
             prepare_mul_receiver_inputs(&session_id);
+        data_to_receiver.ote_salt[0] ^= 1;
 
-        let honest_output =
-            match mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver) {
-                Ok(output) => output,
-                Err(error) => {
-                    panic!("Two-party multiplication error: {:?}", error.description);
-                }
-            };
+        let error = mul_receiver
+            .run_phase2(&session_id, &data_to_keep, &data_to_receiver)
+            .expect_err("tampered salt must be rejected");
+        assert!(error.description.contains("Consistency check failed"));
+    }
 
-        for tau_row in &mut data_to_receiver.vector_of_tau {
-            for value in tau_row {
-                *value += Scalar::ONE;
-            }
-        }
+    /// Tests that tampering with a single tau entry is rejected even where
+    /// it does not affect the receiver's OT output.
+    ///
+    /// The shared random values are derived from tau, so a changed tau
+    /// changes them and the consistency check fails.
+    #[test]
+    fn test_multiplication_rejects_tampered_tau_vectors() {
+        let session_id = rng::get_rng().random::<[u8; 32]>();
+        let (mul_receiver, data_to_keep, data_to_receiver) =
+            prepare_mul_receiver_inputs(&session_id);
 
-        let result = mul_receiver.run_phase2(&session_id, &data_to_keep, &data_to_receiver);
-        match result {
-            Err(error) => {
-                assert!(
-                    error
-                        .description
-                        .contains("OTE error during multiplication")
-                        || error.description.contains("Consistency check failed")
-                );
-            }
-            Ok(tampered_output) => {
-                assert_ne!(
-                    tampered_output, honest_output,
-                    "tampered tau vectors should not preserve honest receiver output"
-                );
-            }
+        assert!(mul_receiver
+            .run_phase2(&session_id, &data_to_keep, &data_to_receiver)
+            .is_ok());
+
+        // A column the receiver did not select: tau there does not change
+        // the receiver's OT output, so only its effect on the shared random
+        // values can make the check fail.
+        let column = data_to_keep
+            .choice_bits
+            .iter()
+            .position(|bit| !bit)
+            .expect("some choice bit is 0");
+        for row in 0..OT_WIDTH as usize {
+            let mut tampered = data_to_receiver.clone();
+            tampered.vector_of_tau[row][column] += Scalar::ONE;
+
+            let error = mul_receiver
+                .run_phase2(&session_id, &data_to_keep, &tampered)
+                .expect_err("tampered tau must be rejected");
+            assert!(error.description.contains("Consistency check failed"));
         }
     }
 }

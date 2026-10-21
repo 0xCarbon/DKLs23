@@ -138,3 +138,19 @@ https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0
 
 # ignore blockchain account address
 ^0x[a-fA-F0-9]{40}$\b
+
+# ignore bech32 / CashAddr addresses (Bitcoin, Litecoin, Cosmos SDK chains, Bitcoin Cash)
+\b(?:bc|tb|ltc|cosmos|osmo)1[02-9ac-hj-np-z]{20,}\b
+\bbitcoincash:[02-9ac-hj-np-z]{42}\b
+
+# ignore Base58Check addresses (Bitcoin, Litecoin, Dogecoin, TRON, XRP, NEO3, Tezos)
+\b[13LDTrNt][1-9A-HJ-NP-Za-km-z]{25,35}\b
+
+# ignore Filecoin f1 addresses
+\bf1[a-z2-7]{39}\b
+
+# ignore the bech32 / CashAddr charset literal
+qpzry9x8gf2tvdw0s3jn54khce6mua7l
+
+# ignore quoted hex of any case (test vectors)
+(['"])[0-9A-Fa-f]{40,}\g{-1}

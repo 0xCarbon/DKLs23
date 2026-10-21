@@ -24,11 +24,9 @@ jobs:
       - name: Run cargo unmaintained
         run: |
           # Known exceptions:
-          # - bincode v1: repo archived but crate is stable, widely used, and
-          #   pinned behind the optional "serde" feature gate.
           # - cfg-if: repo archived but crate is complete and stable; pulled in
           #   transitively by rand, getrandom, and RustCrypto crates.
-          EXCEPTIONS="bincode cfg-if"
+          EXCEPTIONS="cfg-if"
           OUTPUT=$(cargo unmaintained 2>&1) || true
           # Filter out accepted exceptions and check if anything remains
           echo "$OUTPUT"

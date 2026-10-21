@@ -15,15 +15,24 @@ use group::prime::{PrimeCurveAffine, PrimeGroup};
 use group::CurveAffine;
 use group::{Curve as GroupCurve, Group, GroupEncoding};
 
+/// RFC 9380 hash-to-curve, required by [`DklsCurve`].
+pub use hash2curve::GroupDigest;
+
 /// Marker trait bundling all elliptic-curve bounds needed by DKLs23.
 ///
 /// Any curve implementing the RustCrypto `CurveArithmetic` + `PrimeCurve`
-/// traits (with the right associated-type bounds) automatically satisfies
-/// this via the blanket impl.
+/// traits (with the right associated-type bounds) and RFC 9380
+/// hash-to-curve ([`GroupDigest`]) automatically satisfies this via the
+/// blanket impl.
 ///
 /// The associated-type bounds in the supertrait ensure that callers get
 /// `GroupEncoding`, `CurveAffine`, `Reduce`, `Field`, etc. for free
 /// whenever they write `C: DklsCurve`.
+///
+/// The base OT uses [`GroupDigest`] to derive a point nobody knows the
+/// discrete logarithm of. For `k256` and `p256`, enable their
+/// `group-digest` feature; without it the compiler reports that
+/// `GroupDigest` is not implemented for the curve.
 pub trait DklsCurve:
     CurveArithmetic<
         AffinePoint: GroupEncoding
@@ -41,6 +50,7 @@ pub trait DklsCurve:
                              + PrimeGroup
                              + GroupCurve<Affine = <Self as CurveArithmetic>::AffinePoint>,
     > + PrimeCurve
+    + GroupDigest
     + Sized
     + 'static
 {
@@ -49,7 +59,7 @@ pub trait DklsCurve:
 /// Blanket impl: any curve satisfying the required bounds is a `DklsCurve`.
 impl<C> DklsCurve for C
 where
-    C: CurveArithmetic + PrimeCurve + Sized + 'static,
+    C: CurveArithmetic + PrimeCurve + GroupDigest + Sized + 'static,
     C::Uint: ArrayEncoding,
     <C as CurveArithmetic>::AffinePoint: GroupEncoding
         + PrimeCurveAffine

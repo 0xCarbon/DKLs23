@@ -40,6 +40,10 @@ use crate::utilities::zero_shares::{self, ZeroShare};
 ///
 /// The `address_fn` parameter computes a human-readable address
 /// from the public key (e.g. Ethereum address, NEO3 address, etc.).
+///
+/// # Panics
+///
+/// Panics if `secret_key` is zero, which has no public key.
 #[must_use]
 pub fn re_key<C: DklsCurve>(
     parameters: &Parameters,
@@ -48,6 +52,11 @@ pub fn re_key<C: DklsCurve>(
     option_chain_code: Option<ChainCode>,
     address_fn: impl Fn(&C::AffinePoint) -> String,
 ) -> (Vec<Party<C>>, PublicKeyPackage<C>) {
+    assert!(
+        !bool::from(secret_key.is_zero()),
+        "re_key: the secret key must not be zero"
+    );
+
     // Public key.
     let generator = <C::AffinePoint as CurveAffine>::generator();
     let pk = (generator * *secret_key).to_affine();

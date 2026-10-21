@@ -1,4 +1,3 @@
-use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -49,21 +48,23 @@ pub struct PhaseInput {
 const FRAME_HEADER_LEN: usize = 5; // 1 byte tag + 4 bytes length
 
 fn encode_frame<T: MessageTag>(message: &T) -> Result<Vec<u8>, MessageError> {
-    let payload =
-        bincode::serialize(message).map_err(|e| MessageError::Serialization(e.to_string()))?;
-    let len = u32::try_from(payload.len())
+    // Serialize straight after a placeholder header, then fill in the length.
+    let mut buf = vec![T::TAG, 0, 0, 0, 0];
+    buf = postcard::to_extend(message, buf)
+        .map_err(|e| MessageError::Serialization(e.to_string()))?;
+    let len = u32::try_from(buf.len() - FRAME_HEADER_LEN)
         .map_err(|_| MessageError::Serialization("payload exceeds u32::MAX".into()))?;
-    let mut buf = Vec::with_capacity(FRAME_HEADER_LEN + payload.len());
-    buf.push(T::TAG);
-    buf.extend_from_slice(&len.to_be_bytes());
-    buf.extend_from_slice(&payload);
+    buf[1..FRAME_HEADER_LEN].copy_from_slice(&len.to_be_bytes());
     Ok(buf)
 }
 
 fn find_in_stream<T: MessageTag>(stream: &[u8]) -> Result<T, MessageError> {
     let mut offset = 0;
+    // `offset <= stream.len()` holds throughout, so the remaining length is
+    // computed by subtraction; adding a peer-supplied length could overflow
+    // `usize` on 32-bit targets.
     while offset < stream.len() {
-        if offset + FRAME_HEADER_LEN > stream.len() {
+        if stream.len() - offset < FRAME_HEADER_LEN {
             return Err(MessageError::InvalidFrame("truncated header".into()));
         }
         let tag = stream[offset];
@@ -74,21 +75,24 @@ fn find_in_stream<T: MessageTag>(stream: &[u8]) -> Result<T, MessageError> {
             stream[offset + 4],
         ]) as usize;
         offset += FRAME_HEADER_LEN;
-        if offset + len > stream.len() {
+        if stream.len() - offset < len {
             return Err(MessageError::InvalidFrame("truncated payload".into()));
         }
         if tag == T::TAG {
-            // Limit deserialization to the actual payload size to prevent
-            // internal length-prefix attacks (e.g. a tiny frame claiming a
-            // multi-GB string). We cap at the payload length already validated
-            // by the frame header.
+            // Deserialize from the payload slice only: postcard reads every
+            // element from the input, so an internal length prefix cannot
+            // claim more data than the frame header already validated. The
+            // payload must be consumed exactly.
             let payload = &stream[offset..offset + len];
-            return bincode::options()
-                .with_fixint_encoding()
-                .with_limit(len as u64)
-                .allow_trailing_bytes()
-                .deserialize(payload)
-                .map_err(|e| MessageError::Deserialization(e.to_string()));
+            let (message, rest) = postcard::take_from_bytes::<T>(payload)
+                .map_err(|e| MessageError::Deserialization(e.to_string()))?;
+            if !rest.is_empty() {
+                return Err(MessageError::Deserialization(format!(
+                    "{} trailing bytes after payload",
+                    rest.len()
+                )));
+            }
+            return Ok(message);
         }
         offset += len;
     }
@@ -338,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_large_u32_round_trip() {
-        // Use a value > 250 to distinguish varint from fixint encoding.
+        // A value that needs a multi-byte varint.
         let msg = MsgA { value: 100_000 };
         let mut output = PhaseOutput::new();
         output.add_broadcast(&msg).unwrap();
@@ -374,5 +378,74 @@ mod tests {
         let result = input.get_broadcast::<MsgA>(1);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), MessageError::InvalidFrame(_)));
+    }
+
+    fn frame(tag: u8, payload: &[u8]) -> Vec<u8> {
+        let mut buf = vec![tag];
+        buf.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    #[test]
+    fn test_trailing_bytes_rejected() {
+        let mut payload = postcard::to_allocvec(&MsgA { value: 5 }).unwrap();
+        payload.push(0x00);
+        let mut input = PhaseInput {
+            broadcasts: BTreeMap::new(),
+            p2p: BTreeMap::new(),
+        };
+        input.broadcasts.insert(1, frame(MSG_A_TAG, &payload));
+
+        assert!(matches!(
+            input.get_broadcast::<MsgA>(1).unwrap_err(),
+            MessageError::Deserialization(_)
+        ));
+    }
+
+    #[test]
+    fn test_inner_length_prefix_beyond_payload_rejected() {
+        // A string claiming u32::MAX bytes inside a 5-byte payload.
+        let payload = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
+        let mut input = PhaseInput {
+            broadcasts: BTreeMap::new(),
+            p2p: BTreeMap::new(),
+        };
+        input.broadcasts.insert(1, frame(MSG_B_TAG, &payload));
+
+        assert!(matches!(
+            input.get_broadcast::<MsgB>(1).unwrap_err(),
+            MessageError::Deserialization(_)
+        ));
+    }
+
+    #[test]
+    fn test_frame_layout() {
+        let mut output = PhaseOutput::new();
+        output.add_broadcast(&MsgA { value: 300 }).unwrap();
+        // tag, big-endian payload length, postcard varint 300 = [0xAC, 0x02].
+        assert_eq!(
+            output.broadcasts[0],
+            vec![MSG_A_TAG, 0, 0, 0, 2, 0xAC, 0x02]
+        );
+    }
+
+    #[test]
+    fn test_frame_length_near_u32_max_rejected() {
+        for len in [u32::MAX, u32::MAX - 4] {
+            for tag in [MSG_A_TAG, MSG_B_TAG] {
+                let mut buf = vec![tag];
+                buf.extend_from_slice(&len.to_be_bytes());
+                let mut input = PhaseInput {
+                    broadcasts: BTreeMap::new(),
+                    p2p: BTreeMap::new(),
+                };
+                input.broadcasts.insert(1, buf);
+                assert!(matches!(
+                    input.get_broadcast::<MsgA>(1).unwrap_err(),
+                    MessageError::InvalidFrame(_)
+                ));
+            }
+        }
     }
 }

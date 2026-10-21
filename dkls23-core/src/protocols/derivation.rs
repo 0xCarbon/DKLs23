@@ -216,6 +216,19 @@ impl<C: DklsCurve> DerivData<C> {
 
 /// Implementations related to BIP-32 derivation ([read more](self)).
 impl<C: DklsCurve> Party<C> {
+    /// The BIP-32 chain code this party derives children with.
+    ///
+    /// Established at DKG (or supplied to `re_key`), shared by every party,
+    /// and left unchanged by refresh and by BOLT 3 derivations. Pair it with
+    /// [`PublicKeyPackage::derive_child`] so package-side and party-side
+    /// derivation agree. It is not secret, but together with the public key
+    /// it forms an extended public key that reveals every non-hardened child
+    /// public key, so share it only where that is acceptable.
+    #[must_use]
+    pub fn chain_code(&self) -> &ChainCode {
+        &self.derivation_data.chain_code
+    }
+
     /// Derives an instance of `Party` given a child number.
     ///
     /// The `address_fn` parameter computes the address from the derived public key.
@@ -582,8 +595,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase2(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_1to2.get(&party_index).unwrap(),
-                kept_1to2.get(&party_index).unwrap(),
+                unique_kept_1to2.get(&party_index).unwrap().clone(),
+                kept_1to2.get(&party_index).unwrap().clone(),
                 received_1to2.get(&party_index).unwrap(),
             );
             match result {
@@ -624,8 +637,8 @@ mod tests {
         for party_index in executing_parties.clone() {
             let result = parties[(party_index.as_u8() - 1) as usize].sign_phase3(
                 all_data.get(&party_index).unwrap(),
-                unique_kept_2to3.get(&party_index).unwrap(),
-                kept_2to3.get(&party_index).unwrap(),
+                unique_kept_2to3.get(&party_index).unwrap().clone(),
+                kept_2to3.get(&party_index).unwrap().clone(),
                 received_2to3.get(&party_index).unwrap(),
             );
             match result {
@@ -688,5 +701,39 @@ mod tests {
             let expected_share = (AffinePoint::GENERATOR * derived_party.poly_point).to_affine();
             assert!(derived_pkg.verify_share(party.party_index, &expected_share));
         }
+    }
+
+    /// Tests that [`Party::chain_code`] exposes the chain code every party
+    /// agreed on, so it can be paired with [`PublicKeyPackage::derive_child`].
+    #[test]
+    fn test_chain_code_accessor() {
+        let parameters = Parameters {
+            threshold: 2,
+            share_count: 3,
+        };
+        let session_id = rng::get_rng().random::<[u8; crate::utilities::ID_LEN]>();
+        let secret_key = Scalar::random(&mut rng::get_rng());
+        let chain_code: ChainCode = [7u8; CHAIN_CODE_LEN];
+
+        let (parties, package) = re_key::<TestCurve>(
+            &parameters,
+            &session_id,
+            &secret_key,
+            Some(chain_code),
+            no_address,
+        );
+        for party in &parties {
+            assert_eq!(party.chain_code(), &chain_code);
+            assert_eq!(party.chain_code(), &party.derivation_data.chain_code);
+        }
+
+        let child_package = package.derive_child(parties[0].chain_code(), 1).unwrap();
+        let child_party = parties[0].derive_child(1, no_address).unwrap();
+        assert_eq!(child_package.verifying_key(), &child_party.pk);
+        assert_eq!(
+            child_party.chain_code(),
+            &child_party.derivation_data.chain_code
+        );
+        assert_ne!(child_party.chain_code(), &chain_code);
     }
 }

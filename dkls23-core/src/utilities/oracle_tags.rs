@@ -15,6 +15,8 @@ pub const TAG_ENCPROOF_FS: &[u8] = b"dkls23/proofs/enc/fs/v1";
 
 /// Zero-share fragment derivation oracle.
 pub const TAG_ZERO_SHARE_FRAGMENT: &[u8] = b"dkls23/zero-share/fragment/v1";
+/// Zero-share seed commitment context oracle (protocol, session ids, direction).
+pub const TAG_ZERO_SHARE_SEED_CONTEXT: &[u8] = b"dkls23/zero-share/seed-context/v1";
 
 /// Base OT hash-to-curve oracle (RFC 9380 domain-separation tag).
 pub const TAG_OT_BASE_H: &[u8] = b"dkls23/ot/base/h/v2";
@@ -23,6 +25,8 @@ pub const TAG_OT_BASE_MSG: &[u8] = b"dkls23/ot/base/msg/v1";
 
 /// OTE PRG expansion oracle.
 pub const TAG_OTE_PRG: &[u8] = b"dkls23/ot/extension/prg/v1";
+/// OTE per-execution session-id oracle (caller session id and receiver nonce).
+pub const TAG_OTE_SESSION: &[u8] = b"dkls23/ot/extension/session/v1";
 /// OTE consistency-check chi oracle.
 pub const TAG_OTE_CHI: &[u8] = b"dkls23/ot/extension/chi/v1";
 /// OTE final randomization oracle.
@@ -30,12 +34,30 @@ pub const TAG_OTE_RANDOMIZE: &[u8] = b"dkls23/ot/extension/randomize/v1";
 
 /// Multiplication public gadget oracle.
 pub const TAG_MUL_GADGET: &[u8] = b"dkls23/mul/gadget/v1";
+/// Multiplication receiver transcript oracle (Step 3 message digest).
+pub const TAG_MUL_TRANSCRIPT_RECEIVER: &[u8] = b"dkls23/mul/transcript/receiver/v1";
+/// Multiplication transcript oracle (Step 3 including the sender's salt and `tau`).
+pub const TAG_MUL_TRANSCRIPT: &[u8] = b"dkls23/mul/transcript/v1";
 /// Multiplication chi-tilde oracle.
-pub const TAG_MUL_CHI_TILDE: &[u8] = b"dkls23/mul/chi-tilde/v1";
+pub const TAG_MUL_CHI_TILDE: &[u8] = b"dkls23/mul/chi-tilde/v2";
 /// Multiplication chi-hat oracle.
-pub const TAG_MUL_CHI_HAT: &[u8] = b"dkls23/mul/chi-hat/v1";
+pub const TAG_MUL_CHI_HAT: &[u8] = b"dkls23/mul/chi-hat/v2";
 /// Multiplication verify-r oracle.
 pub const TAG_MUL_VERIFY: &[u8] = b"dkls23/mul/verify/v1";
+
+/// Signing message session-binding oracle.
+pub const TAG_SIGN_SESSION_BINDING: &[u8] = b"dkls23/sign/session-binding/v1";
+/// Signing multiplication session-id oracle.
+pub const TAG_SIGN_MUL_SESSION: &[u8] = b"dkls23/sign/mul-session/v1";
+/// Signing zero-share session-id oracle.
+pub const TAG_SIGN_ZERO_SESSION: &[u8] = b"dkls23/sign/zero-session/v1";
+
+/// Refresh session-id chaining oracle (previous session id, refresh id).
+pub const TAG_REFRESH_SESSION: &[u8] = b"dkls23/refresh/session/v1";
+/// Complete-refresh multiplication session-id oracle.
+pub const TAG_REFRESH_MUL_SESSION: &[u8] = b"dkls23/refresh/mul-session/v1";
+/// Signing oracle for a pair's multiplication setup (both public gadgets).
+pub const TAG_SIGN_PAIR_SETUP: &[u8] = b"dkls23/sign/pair-setup/v1";
 
 /// Fast-refresh OT re-randomization oracle for `r0'`.
 pub const TAG_REFRESH_FAST_R0: &[u8] = b"dkls23/refresh/fast/r0/v1";
@@ -54,15 +76,25 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_DLOG_PROOF_COMMITMENT,
     TAG_ENCPROOF_FS,
     TAG_ZERO_SHARE_FRAGMENT,
+    TAG_ZERO_SHARE_SEED_CONTEXT,
     TAG_OT_BASE_H,
     TAG_OT_BASE_MSG,
     TAG_OTE_PRG,
+    TAG_OTE_SESSION,
     TAG_OTE_CHI,
     TAG_OTE_RANDOMIZE,
     TAG_MUL_GADGET,
+    TAG_MUL_TRANSCRIPT_RECEIVER,
+    TAG_MUL_TRANSCRIPT,
     TAG_MUL_CHI_TILDE,
     TAG_MUL_CHI_HAT,
     TAG_MUL_VERIFY,
+    TAG_SIGN_SESSION_BINDING,
+    TAG_SIGN_MUL_SESSION,
+    TAG_SIGN_ZERO_SESSION,
+    TAG_REFRESH_SESSION,
+    TAG_REFRESH_MUL_SESSION,
+    TAG_SIGN_PAIR_SETUP,
     TAG_REFRESH_FAST_R0,
     TAG_REFRESH_FAST_R1,
     TAG_REFRESH_FAST_B,

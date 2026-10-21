@@ -12,6 +12,7 @@ use crate::protocols::derivation::DerivData;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::zero_shares::ZeroShare;
 
+pub mod bolt3;
 pub mod derivation;
 pub mod dkg;
 pub mod dkg_session;
@@ -89,11 +90,31 @@ impl fmt::Display for PartyIndex {
 }
 
 /// Contains the values `t` and  `n` from `DKLs23`.
+///
+/// Deserialization validates them as [`Parameters::new`] does.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "UncheckedParameters"))]
 pub struct Parameters {
     pub threshold: u8,   //t
     pub share_count: u8, //n
+}
+
+/// The serialized form of [`Parameters`], validated on deserialization.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct UncheckedParameters {
+    threshold: u8,
+    share_count: u8,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<UncheckedParameters> for Parameters {
+    type Error = InvalidParameters;
+
+    fn try_from(value: UncheckedParameters) -> Result<Self, Self::Error> {
+        Parameters::new(value.threshold, value.share_count)
+    }
 }
 
 impl Parameters {
@@ -293,6 +314,12 @@ pub enum AbortReason {
     MissingMessageFromParty {
         party: PartyIndex,
     },
+    /// A message belongs to a different signing session (sign id, message,
+    /// signer set or key) or, for a phase-2 message, a different attempt (its
+    /// OT extension nonces) than ours.
+    SessionBindingMismatch {
+        counterparty: PartyIndex,
+    },
 
     // --- Cryptographic verification (severity varies) ---
     ProofVerificationFailed {
@@ -348,6 +375,14 @@ pub enum AbortReason {
     InvalidHex {
         detail: String,
     },
+    // New variants go last: binary encodings (e.g. postcard) use variant
+    // ordinals.
+    /// Our own (possibly deserialized) state for this counterparty is
+    /// malformed; the counterparty is not at fault.
+    InvalidLocalState {
+        counterparty: PartyIndex,
+        detail: String,
+    },
 }
 
 impl fmt::Display for AbortReason {
@@ -385,6 +420,18 @@ impl fmt::Display for AbortReason {
             }
             Self::MissingMessageFromParty { party } => {
                 write!(f, "missing message from party {party}")
+            }
+            Self::InvalidLocalState {
+                counterparty,
+                detail,
+            } => {
+                write!(f, "invalid local state for party {counterparty}: {detail}")
+            }
+            Self::SessionBindingMismatch { counterparty } => {
+                write!(
+                    f,
+                    "message from party {counterparty} belongs to a different signing session"
+                )
             }
             Self::ProofVerificationFailed { counterparty } => {
                 write!(f, "proof verification failed for party {counterparty}")
@@ -526,6 +573,57 @@ mod tests {
         }
     }
 
+    /// AbortReason variant ordinals are part of binary encodings: these are
+    /// the 0.6.0 positions, and new variants must be appended.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn abort_reason_ordinals_are_stable() {
+        let one = PartyIndex::new(1).unwrap();
+        for (reason, ordinal) in [
+            (
+                AbortReason::SessionBindingMismatch { counterparty: one },
+                10u8,
+            ),
+            (AbortReason::CommitmentMismatch { counterparty: one }, 12),
+            (AbortReason::ZeroDenominator, 22),
+            (
+                AbortReason::InvalidHex {
+                    detail: String::new(),
+                },
+                28,
+            ),
+            (
+                AbortReason::InvalidLocalState {
+                    counterparty: one,
+                    detail: String::new(),
+                },
+                29,
+            ),
+        ] {
+            assert_eq!(postcard::to_allocvec(&reason).unwrap()[0], ordinal);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn parameters_serde_validates() {
+        let parameters: Parameters =
+            serde_json::from_str(r#"{"threshold":2,"share_count":3}"#).unwrap();
+        assert_eq!((parameters.threshold, parameters.share_count), (2, 3));
+        assert_eq!(
+            serde_json::to_string(&parameters).unwrap(),
+            r#"{"threshold":2,"share_count":3}"#
+        );
+        for invalid in [
+            r#"{"threshold":0,"share_count":3}"#,
+            r#"{"threshold":1,"share_count":3}"#,
+            r#"{"threshold":4,"share_count":3}"#,
+        ] {
+            assert!(serde_json::from_str::<Parameters>(invalid).is_err());
+        }
+    }
+
+    #[cfg(feature = "serde")]
     #[test]
     fn party_index_serde_json_transparent() {
         let pi = PartyIndex::new(5).unwrap();
@@ -536,6 +634,7 @@ mod tests {
         assert_eq!(deserialized, pi);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn party_index_serde_rejects_zero() {
         let result: Result<PartyIndex, _> = serde_json::from_str("0");
