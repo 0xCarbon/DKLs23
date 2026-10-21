@@ -44,8 +44,8 @@ use hex;
 use crate::curve::DklsCurve;
 use crate::protocols::{Abort, AbortReason, PartiesMessage, Party, PartyIndex};
 
-use crate::utilities::commits::{commit_point, verify_commitment_point};
-use crate::utilities::hashes::{point_to_bytes, tagged_hash, HashOutput};
+use crate::utilities::commits::{commit, verify_commitment};
+use crate::utilities::hashes::{point_to_bytes, scalar_to_bytes, tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulDataToKeepReceiver, MulDataToReceiver};
 use crate::utilities::oracle_tags::{
     TAG_SIGN_MUL_SESSION, TAG_SIGN_SESSION_BINDING, TAG_SIGN_ZERO_SESSION,
@@ -431,9 +431,6 @@ impl<C: DklsCurve> Party<C> {
         let mut transmit: Vec<TransmitPhase1to2> =
             Vec::with_capacity((self.parameters.threshold - 1) as usize);
         for counterparty in &data.counterparties {
-            // Commit functionality.
-            let (commitment, salt) = commit_point::<C>(&instance_point);
-
             // Two-party multiplication functionality.
             // We start as the receiver.
 
@@ -462,6 +459,13 @@ impl<C: DklsCurve> Party<C> {
                     ));
                 }
             };
+
+            // Commit functionality. We commit to the instance point and to
+            // psi, which phase 2 sends to this counterparty and which is
+            // already fixed here, so that neither can change between phases.
+            let psi = inversion_mask - chi;
+            let (commitment, salt) =
+                commit(&instance_commitment_message::<C>(&instance_point, &psi));
 
             // We gather the messages.
             keep.insert(
@@ -838,9 +842,9 @@ impl<C: DklsCurve> Party<C> {
                 ));
             }
 
-            // Checking the committed value.
-            let verification = verify_commitment_point::<C>(
-                &message.instance_point,
+            // Checking the committed values.
+            let verification = verify_commitment(
+                &instance_commitment_message::<C>(&message.instance_point, &message.psi),
                 &current_kept.commitment,
                 &message.salt,
             );
@@ -1067,6 +1071,19 @@ impl<C: DklsCurve> Party<C> {
 ///
 /// Returns `None` if the hex string is invalid or represents a value >= n.
 /// This enforces strict ECDSA range requirements for signature verification.
+/// The message a signer commits to in phase 1 for one counterparty: its
+/// instance point and the psi it will send to that counterparty in phase 2.
+fn instance_commitment_message<C: DklsCurve>(
+    instance_point: &C::AffinePoint,
+    psi: &C::Scalar,
+) -> Vec<u8> {
+    [
+        point_to_bytes::<C>(instance_point),
+        scalar_to_bytes::<C>(psi),
+    ]
+    .concat()
+}
+
 fn parse_hex_to_scalar<C: DklsCurve>(hex_value: &str) -> Option<C::Scalar> {
     let mut bytes = vec![0u8; elliptic_curve::FieldBytes::<C>::default().len()];
     if hex::decode_to_slice(hex_value, &mut bytes).is_err() {
@@ -2535,6 +2552,38 @@ mod tests {
                 .push(message);
         }
         (unique_kept, kept, received)
+    }
+
+    /// Phase 1 commits to psi: a phase-2 message carrying a different psi
+    /// than the one committed is rejected in phase 3.
+    #[test]
+    fn test_sign_phase3_rejects_psi_differing_from_commitment() {
+        let (parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
+            setup_two_party_signing_phase1();
+        let (unique_kept_2to3, kept_2to3, received_2to3) = run_two_party_phase2(
+            &parties,
+            &all_data,
+            &unique_kept_1to2,
+            &kept_1to2,
+            &received_1to2,
+        );
+        let party_one = PartyIndex::new(1).unwrap();
+
+        let mut tampered = received_2to3.get(&party_one).unwrap().clone();
+        tampered[0].psi += Scalar::ONE;
+
+        let abort = parties[0]
+            .sign_phase3(
+                all_data.get(&party_one).unwrap(),
+                unique_kept_2to3.get(&party_one).unwrap(),
+                kept_2to3.get(&party_one).unwrap(),
+                &tampered,
+            )
+            .expect_err("a psi differing from the commitment must abort");
+        assert!(matches!(
+            abort.reason,
+            AbortReason::CommitmentMismatch { .. }
+        ));
     }
 
     /// Tampered OT data under a correct session binding is still cheating.
