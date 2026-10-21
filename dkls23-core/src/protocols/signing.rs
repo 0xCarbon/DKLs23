@@ -447,18 +447,17 @@ impl<C: DklsCurve> Party<C> {
                     },
                 )
             })?;
-            let (chi, mul_keep, mul_transmit) = match mul_receiver.run_phase1(&mul_sid) {
-                Ok(values) => values,
-                Err(error) => {
-                    return Err(Abort::recoverable(
+            // Phase 1 receives nothing, so it only fails on local state.
+            let (chi, mul_keep, mul_transmit) =
+                mul_receiver.run_phase1(&mul_sid).map_err(|error| {
+                    Abort::recoverable(
                         self.party_index,
-                        AbortReason::MultiplicationVerificationFailed {
+                        AbortReason::InvalidLocalState {
                             counterparty: *counterparty,
-                            detail: error.description.clone(),
+                            detail: error.description,
                         },
-                    ));
-                }
-            };
+                    )
+                })?;
 
             // Commit functionality. We commit to the instance point and to
             // psi, which phase 2 sends to this counterparty and which is
@@ -2640,6 +2639,26 @@ mod tests {
     /// recoverable local error, not a panic or a ban of the counterparty.
     #[test]
     fn test_malformed_local_mul_state_is_recoverable() {
+        // The receiver's state in phase 1.
+        let (mut parties, all_data, _, _, _) = setup_two_party_signing_phase1();
+        let party_one = PartyIndex::new(1).unwrap();
+        let party_two = PartyIndex::new(2).unwrap();
+        parties[0]
+            .mul_receivers
+            .get_mut(&party_two)
+            .unwrap()
+            .ote_receiver
+            .seeds0
+            .pop();
+        let abort = parties[0]
+            .sign_phase1(all_data.get(&party_one).unwrap())
+            .expect_err("a malformed local state must abort");
+        assert_eq!(abort.kind, AbortKind::Recoverable);
+        assert!(matches!(
+            abort.reason,
+            AbortReason::InvalidLocalState { .. }
+        ));
+
         let (mut parties, all_data, unique_kept_1to2, kept_1to2, received_1to2) =
             setup_two_party_signing_phase1();
         let party_one = PartyIndex::new(1).unwrap();
