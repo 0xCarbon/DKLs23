@@ -52,7 +52,9 @@ use crate::utilities::oracle_tags::{
     TAG_DLOG_PROOF_COMMITMENT, TAG_DLOG_PROOF_FISCHLIN, TAG_ENCPROOF_FS,
 };
 use crate::utilities::rng;
-use subtle::ConstantTimeEq;
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+
+use crate::utilities::ct;
 
 /// Error returned when the Fischlin proof-of-work search is exhausted
 /// without finding all required hash collisions.
@@ -560,6 +562,16 @@ pub struct RandomCommitments<C: DklsCurve> {
     pub rc_h: C::AffinePoint,
 }
 
+impl<C: DklsCurve> RandomCommitments<C> {
+    /// `a` if `choice` is 0, `b` if it is 1, in constant time.
+    fn select(a: &Self, b: &Self, choice: Choice) -> Self {
+        RandomCommitments {
+            rc_g: C::AffinePoint::conditional_select(&a.rc_g, &b.rc_g, choice),
+            rc_h: C::AffinePoint::conditional_select(&a.rc_h, &b.rc_h, choice),
+        }
+    }
+}
+
 /// Chaum-Pedersen protocol (interactive version).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -577,6 +589,23 @@ pub struct CPProof<C: DklsCurve> {
     pub point_v: C::AffinePoint,
 
     pub challenge_response: C::Scalar,
+}
+
+impl<C: DklsCurve> CPProof<C> {
+    /// `a` if `choice` is 0, `b` if it is 1, in constant time.
+    fn select(a: &Self, b: &Self, choice: Choice) -> Self {
+        CPProof {
+            base_g: C::AffinePoint::conditional_select(&a.base_g, &b.base_g, choice),
+            base_h: C::AffinePoint::conditional_select(&a.base_h, &b.base_h, choice),
+            point_u: C::AffinePoint::conditional_select(&a.point_u, &b.point_u, choice),
+            point_v: C::AffinePoint::conditional_select(&a.point_v, &b.point_v, choice),
+            challenge_response: C::Scalar::conditional_select(
+                &a.challenge_response,
+                &b.challenge_response,
+                choice,
+            ),
+        }
+    }
 }
 
 impl<C: DklsCurve> CPProof<C> {
@@ -759,11 +788,10 @@ impl<C: DklsCurve> EncProof<C> {
         let fake_v_if_true = v_if_true;
         let fake_v_if_false = (g_times_scalar - base_h_proj).to_affine();
 
-        let (v, fake_v) = if bit {
-            (v_if_true, fake_v_if_true)
-        } else {
-            (v_if_false, fake_v_if_false)
-        };
+        let bit_choice = ct::choice(bit);
+        let v = C::AffinePoint::conditional_select(&v_if_false, &v_if_true, bit_choice);
+        let fake_v =
+            C::AffinePoint::conditional_select(&fake_v_if_false, &fake_v_if_true, bit_choice);
 
         // STEP 1
         // We start our real proof and simulate the fake proof.
@@ -802,31 +830,18 @@ impl<C: DklsCurve> EncProof<C> {
         // If bit = 0, it is the real proof, otherwise it is the fake one.
         // For the message, we first put the commitments for the first proof
         // since the verifier does not know which proof is the real one.
-        let msg_for_challenge = if bit {
-            [
-                base_g_as_bytes,
-                base_h_as_bytes,
-                u_as_bytes,
-                v_as_bytes,
-                f_rc_g_as_bytes,
-                f_rc_h_as_bytes,
-                r_rc_g_as_bytes,
-                r_rc_h_as_bytes,
-            ]
-            .concat()
-        } else {
-            [
-                base_g_as_bytes,
-                base_h_as_bytes,
-                u_as_bytes,
-                v_as_bytes,
-                r_rc_g_as_bytes,
-                r_rc_h_as_bytes,
-                f_rc_g_as_bytes,
-                f_rc_h_as_bytes,
-            ]
-            .concat()
-        };
+        // The order is selected in constant time.
+        let real_commitments_bytes = [r_rc_g_as_bytes, r_rc_h_as_bytes].concat();
+        let fake_commitments_bytes = [f_rc_g_as_bytes, f_rc_h_as_bytes].concat();
+        let msg_for_challenge = [
+            base_g_as_bytes,
+            base_h_as_bytes,
+            u_as_bytes,
+            v_as_bytes,
+            ct::select_slice(&real_commitments_bytes, &fake_commitments_bytes, bit_choice),
+            ct::select_slice(&fake_commitments_bytes, &real_commitments_bytes, bit_choice),
+        ]
+        .concat();
 
         let challenge =
             tagged_hash_as_scalar::<C>(TAG_ENCPROOF_FS, &[session_id, &msg_for_challenge]);
@@ -856,28 +871,23 @@ impl<C: DklsCurve> EncProof<C> {
 
         // The proof containing u and v goes first.
         // It is the real proof if bit = 0 and the false one otherwise.
-        if bit {
-            EncProof {
-                proof0: fake_proof,
-                proof1: real_proof,
+        EncProof {
+            proof0: CPProof::select(&real_proof, &fake_proof, bit_choice),
+            proof1: CPProof::select(&fake_proof, &real_proof, bit_choice),
 
-                commitments0: fake_commitments,
-                commitments1: real_commitments,
+            commitments0: RandomCommitments::select(
+                &real_commitments,
+                &fake_commitments,
+                bit_choice,
+            ),
+            commitments1: RandomCommitments::select(
+                &fake_commitments,
+                &real_commitments,
+                bit_choice,
+            ),
 
-                challenge0: fake_challenge,
-                challenge1: real_challenge,
-            }
-        } else {
-            EncProof {
-                proof0: real_proof,
-                proof1: fake_proof,
-
-                commitments0: real_commitments,
-                commitments1: fake_commitments,
-
-                challenge0: real_challenge,
-                challenge1: fake_challenge,
-            }
+            challenge0: C::Scalar::conditional_select(&real_challenge, &fake_challenge, bit_choice),
+            challenge1: C::Scalar::conditional_select(&fake_challenge, &real_challenge, bit_choice),
         }
     }
 

@@ -88,6 +88,7 @@ use std::collections::BTreeMap;
 use ff::Field;
 
 use crate::curve::DklsCurve;
+use crate::utilities::ct;
 use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::oracle_tags::{
@@ -1128,7 +1129,8 @@ impl<C: DklsCurve> Party<C> {
                     == 1; // We take the first digit.
 
                 let b_double_prime = new_ote_sender.correlation[i as usize] ^ b_prime;
-                let r_prime_b_double_prime = if b_double_prime { r1_prime } else { r0_prime };
+                let r_prime_b_double_prime =
+                    ct::select_bytes(&r0_prime, &r1_prime, ct::choice(b_double_prime));
 
                 let mut r_double_prime: HashOutput = [0; crate::SECURITY as usize];
                 for j in 0..crate::SECURITY {
@@ -1159,16 +1161,16 @@ impl<C: DklsCurve> Party<C> {
                 )[0] % 2)
                     == 1; // We take the first digit.
 
-                let r_b_prime = if b_prime {
-                    new_ote_receiver.seeds1[i as usize]
-                } else {
-                    new_ote_receiver.seeds0[i as usize]
-                };
-                let r_opposite_b_prime = if b_prime {
-                    new_ote_receiver.seeds0[i as usize]
-                } else {
-                    new_ote_receiver.seeds1[i as usize]
-                };
+                let r_b_prime = ct::select_bytes(
+                    &new_ote_receiver.seeds0[i as usize],
+                    &new_ote_receiver.seeds1[i as usize],
+                    ct::choice(b_prime),
+                );
+                let r_opposite_b_prime = ct::select_bytes(
+                    &new_ote_receiver.seeds1[i as usize],
+                    &new_ote_receiver.seeds0[i as usize],
+                    ct::choice(b_prime),
+                );
 
                 let mut r0_double_prime: HashOutput = [0; crate::SECURITY as usize];
                 let mut r1_double_prime: HashOutput = [0; crate::SECURITY as usize];

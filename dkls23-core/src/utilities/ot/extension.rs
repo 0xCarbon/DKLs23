@@ -41,7 +41,9 @@ use rand::RngExt;
 use serde::de::Error;
 #[cfg(feature = "serde")]
 use serde::{Deserializer, Serializer};
-use subtle::ConstantTimeEq;
+use subtle::{ConditionallySelectable, ConstantTimeEq};
+
+use crate::utilities::ct;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::curve::DklsCurve;
@@ -892,10 +894,11 @@ impl OTEReceiver {
 
             let mut t_b: Vec<C::Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
-                let mut t_b_j = -v[j as usize];
-                if choice_bits[j as usize] {
-                    t_b_j = tau[j as usize] + t_b_j;
-                }
+                let t_b_j = C::Scalar::conditional_select(
+                    &<C::Scalar as ff::Field>::ZERO,
+                    &tau[j as usize],
+                    ct::choice(choice_bits[j as usize]),
+                ) - v[j as usize];
                 t_b.push(t_b_j);
             }
 
@@ -1001,11 +1004,12 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> Result<FieldElement, ErrorOT> {
     // Algorithm 2.34 (page 49)
     for k in 0..W {
         for j in 0..T {
-            //If the k-th bit of a[j] is 1, we add b to c (with the correct shift).
-            if (a[j as usize] >> k) % 2 == 1 {
-                for i in 0..=T {
-                    c[(j + i) as usize] ^= b[i as usize];
-                }
+            // If the k-th bit of a[j] is 1, we add b to c (with the correct
+            // shift). `left` can hold secret bits, so the addition is masked
+            // instead of branched on.
+            let mask = 0u64.wrapping_sub((a[j as usize] >> k) & 1);
+            for i in 0..=T {
+                c[(j + i) as usize] ^= b[i as usize] & mask;
             }
         }
 

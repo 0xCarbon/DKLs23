@@ -21,6 +21,7 @@ use rand::RngExt;
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Parameters, Party, PartyIndex, PublicKeyPackage};
 
+use crate::utilities::ct;
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot::{
@@ -153,11 +154,11 @@ pub fn re_key<C: DklsCurve>(
             let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for i in 0..ot::extension::KAPPA {
                 let current_bit: bool = rng::get_rng().random();
-                if current_bit {
-                    seeds.push(seeds1[i as usize]);
-                } else {
-                    seeds.push(seeds0[i as usize]);
-                }
+                seeds.push(ct::select_bytes(
+                    &seeds0[i as usize],
+                    &seeds1[i as usize],
+                    ct::choice(current_bit),
+                ));
                 correlation.push(current_bit);
             }
 

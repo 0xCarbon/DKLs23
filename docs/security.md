@@ -85,12 +85,14 @@ recommended.
   constant-time operations from the `subtle` crate.
 - Commitment checks (`commits.rs`) compare digests in constant time
   (`subtle::ConstantTimeEq`).
-- Known limitation: the OT extension (`field_mul` on the receiver's choice
-  bits, output selection by choice bit), the multiplication (accumulation by
-  choice bit) and the fast refresh (selection by correlation bit) branch on
-  secret bits. An attacker with fine-grained local timing or microarchitectural
-  observation of a party could learn some of those bits; remote timing is not
-  expected to resolve them. Constant-time selection is planned.
+- OT choice and correlation bits are handled without data-dependent
+  branches: the base OT encryption proof, the OT extension (`field_mul` and
+  output selection), the multiplication (accumulation by choice bit), the fast
+  refresh and `re_key` select with `subtle::ConditionallySelectable` or
+  masks.
+- Limitation: memory access patterns and the platform's code generation are
+  not verified to be constant time (no dudect-style measurement); the
+  protection is source-level.
 
 ## BOLT 3 Key Derivation
 
