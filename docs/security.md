@@ -84,7 +84,8 @@ recommended.
 `protocols::repair` rebuilds a lost share from at least `threshold` helpers'
 masked terms. The masks are zero-sum shares from the helpers' pairwise
 zero-share seeds, bound to the session, the share's public key, the repair
-id, the target and the helper set, so no two repairs share a mask and a
+id, the target and the helper set. Requests that differ in any of these
+never share a mask (an identical request gets the identical term), and a
 coalition below the threshold learns no honest share. Requirements:
 
 - The application authenticates the target: repair hands index `target`'s

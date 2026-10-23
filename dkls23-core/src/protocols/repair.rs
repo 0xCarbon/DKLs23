@@ -15,8 +15,9 @@
 //! ([`ZeroShare::try_compute`]). Only the sum of all terms equals
 //! `f(target)`; a proper subset of the terms reveals nothing about any share.
 //! The masks are bound to the helpers' session and public key, the repair
-//! id, the target and the helper set, so terms from two different repairs
-//! never share a mask.
+//! id, the target and the helper set: requests that differ in any of these
+//! never share a mask, and an identical request gets the identical term
+//! (which reveals nothing new).
 //!
 //! The target assembles the terms with [`repair_assemble`] into a *hollow*
 //! party: its share, group key and derivation data are correct, but it holds
@@ -138,15 +139,18 @@ fn validate_helpers(
     helpers: &[PartyIndex],
     target: PartyIndex,
 ) -> Result<(), RepairError> {
-    if target.as_u8() > parameters.share_count {
+    // Index 0 cannot be built through `PartyIndex::new` or deserialization,
+    // but a zeroized index is 0, and terms for target 0 would add up to the
+    // group secret.
+    if target.as_u8() == 0 || target.as_u8() > parameters.share_count {
         return Err(RepairError::InvalidTarget);
     }
     let sorted_unique = helpers.windows(2).all(|pair| pair[0] < pair[1]);
     if !sorted_unique
         || helpers.len() < usize::from(parameters.threshold)
-        || helpers
-            .iter()
-            .any(|&helper| helper == target || helper.as_u8() > parameters.share_count)
+        || helpers.iter().any(|&helper| {
+            helper == target || helper.as_u8() == 0 || helper.as_u8() > parameters.share_count
+        })
     {
         return Err(RepairError::InvalidHelperSet);
     }
@@ -235,6 +239,9 @@ pub fn repair_assemble<C: DklsCurve>(
     terms: &[C::Scalar],
     address_fn: impl Fn(&C::AffinePoint) -> String,
 ) -> Result<Party<C>, RepairError> {
+    if target.as_u8() == 0 {
+        return Err(RepairError::InvalidTarget);
+    }
     let expected = package
         .verifying_share(target)
         .ok_or(RepairError::InvalidTarget)?;
@@ -592,6 +599,52 @@ mod tests {
         assert_ne!(
             parties[0].repair_term(&helpers, index(3), b"r").unwrap(),
             other_session.repair_term(&helpers, index(3), b"r").unwrap()
+        );
+    }
+
+    /// An identical request repeats the identical term.
+    #[test]
+    fn test_identical_repair_requests_repeat_the_term() {
+        let (parties, _) = group::<k256::Secp256k1>(2, 3);
+        let helpers = [index(1), index(2)];
+        assert_eq!(
+            parties[0].repair_term(&helpers, index(3), b"r").unwrap(),
+            parties[0].repair_term(&helpers, index(3), b"r").unwrap()
+        );
+    }
+
+    /// A zeroized (index 0) target or helper is refused: terms for target 0
+    /// would add up to the group secret.
+    #[test]
+    fn test_repair_rejects_index_zero() {
+        use zeroize::Zeroize;
+
+        let (parties, package) = group::<k256::Secp256k1>(2, 3);
+        let mut zero = index(1);
+        zero.zeroize();
+        assert_eq!(zero.as_u8(), 0);
+        assert_eq!(
+            parties[0].repair_term(&[index(1), index(2)], zero, b"r"),
+            Err(RepairError::InvalidTarget)
+        );
+        assert_eq!(
+            parties[1].repair_term(&[zero, index(2)], index(3), b"r"),
+            Err(RepairError::InvalidHelperSet)
+        );
+        let a = parties[0]
+            .repair_term(&[index(1), index(2)], index(3), b"r")
+            .unwrap();
+        assert_eq!(
+            repair_assemble(
+                &package,
+                &parties[0].session_id,
+                *parties[0].chain_code(),
+                zero,
+                &[a, a],
+                |_| String::new()
+            )
+            .unwrap_err(),
+            RepairError::InvalidTarget
         );
     }
 
