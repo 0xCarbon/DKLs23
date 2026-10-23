@@ -291,11 +291,8 @@ mod tests {
         re_key::<C>(&parameters, &session_id, &secret, None, |_| String::new())
     }
 
-    /// A complete refresh of every party (all `n`).
-    fn complete_refresh<C: DklsCurve>(parties: &[Party<C>], refresh_sid: &[u8]) -> Vec<Party<C>> {
-        complete_refresh_with_proofs(parties, refresh_sid).0
-    }
-
+    /// A complete refresh of every party (all `n`), with the round-2 proof
+    /// commitments for `PublicKeyPackage::refresh`.
     fn complete_refresh_with_proofs<C: DklsCurve>(
         parties: &[Party<C>],
         refresh_sid: &[u8],
