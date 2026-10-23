@@ -506,7 +506,7 @@ pub(crate) fn check_own_point<C: DklsCurve>(
 #[must_use]
 pub fn phase1<C: DklsCurve>(data: &SessionData) -> Vec<C::Scalar> {
     // DKG
-    let secret_polynomial = step1::<C>(&data.parameters);
+    let secret_polynomial = zeroize::Zeroizing::new(step1::<C>(&data.parameters));
 
     step2::<C>(&data.parameters, &secret_polynomial)
 }

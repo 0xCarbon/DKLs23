@@ -200,8 +200,8 @@ impl<C: DklsCurve> Party<C> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let mut secret_polynomial: Vec<C::Scalar> =
-            Vec::with_capacity(self.parameters.threshold as usize);
+        let mut secret_polynomial: zeroize::Zeroizing<Vec<C::Scalar>> =
+            zeroize::Zeroizing::new(Vec::with_capacity(self.parameters.threshold as usize));
         secret_polynomial.push(C::Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
             secret_polynomial.push(C::Scalar::random(&mut rng::get_rng()));
@@ -758,8 +758,8 @@ impl<C: DklsCurve> Party<C> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let mut secret_polynomial: Vec<C::Scalar> =
-            Vec::with_capacity(self.parameters.threshold as usize);
+        let mut secret_polynomial: zeroize::Zeroizing<Vec<C::Scalar>> =
+            zeroize::Zeroizing::new(Vec::with_capacity(self.parameters.threshold as usize));
         secret_polynomial.push(C::Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
             secret_polynomial.push(C::Scalar::random(&mut rng::get_rng()));
