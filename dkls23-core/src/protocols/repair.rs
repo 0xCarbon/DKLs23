@@ -78,11 +78,14 @@ pub enum RepairError {
     NotInHelperSet,
     /// The target index is out of range.
     InvalidTarget,
-    /// The caller's share is derived; repair applies to root shares.
+    /// The caller's share is a BIP-32 child (`depth != 0`); repair the
+    /// parent share and derive again.
     DerivedShare,
     /// The caller holds no zero-share seed with this helper, so its term
     /// could not be masked.
     MissingSeed { counterparty: PartyIndex },
+    /// The public key package has invalid threshold parameters.
+    InvalidPackage,
     /// Fewer terms than the threshold.
     NotEnoughTerms,
     /// The terms do not add up to the target's verifying share (wrong
@@ -97,10 +100,11 @@ impl fmt::Display for RepairError {
             Self::InvalidHelperSet => write!(f, "invalid helper set"),
             Self::NotInHelperSet => write!(f, "this party is not in the helper set"),
             Self::InvalidTarget => write!(f, "invalid target index"),
-            Self::DerivedShare => write!(f, "repair applies to root shares only"),
+            Self::DerivedShare => write!(f, "repair does not apply to BIP-32 child shares"),
             Self::MissingSeed { counterparty } => {
                 write!(f, "no zero-share seed for helper {counterparty}")
             }
+            Self::InvalidPackage => write!(f, "invalid public key package parameters"),
             Self::NotEnoughTerms => write!(f, "fewer repair terms than the threshold"),
             Self::ShareMismatch => {
                 write!(f, "repair terms do not match the target's verifying share")
@@ -239,7 +243,9 @@ pub fn repair_assemble<C: DklsCurve>(
     terms: &[C::Scalar],
     address_fn: impl Fn(&C::AffinePoint) -> String,
 ) -> Result<Party<C>, RepairError> {
-    if target.as_u8() == 0 {
+    let parameters = Parameters::new(package.threshold(), package.share_count())
+        .map_err(|_| RepairError::InvalidPackage)?;
+    if target.as_u8() == 0 || target.as_u8() > parameters.share_count {
         return Err(RepairError::InvalidTarget);
     }
     let expected = package
@@ -253,8 +259,6 @@ pub fn repair_assemble<C: DklsCurve>(
         return Err(RepairError::ShareMismatch);
     }
 
-    let parameters = Parameters::new(package.threshold(), package.share_count())
-        .map_err(|_| RepairError::InvalidTarget)?;
     let pk = *package.verifying_key();
     Ok(Party {
         parameters,
@@ -720,6 +724,33 @@ mod tests {
             })
             .unwrap_err(),
             RepairError::ShareMismatch
+        );
+        assert_eq!(
+            repair_assemble(&package, session, chain_code, index(4), &[a, a], |_| {
+                String::new()
+            })
+            .unwrap_err(),
+            RepairError::InvalidTarget
+        );
+
+        // A package with invalid parameters is refused before any arithmetic.
+        let shares = (1..=3)
+            .map(|i| (index(i), *package.verifying_share(index(i)).unwrap()))
+            .collect();
+        let bad_package = PublicKeyPackage::<k256::Secp256k1>::new(
+            *package.verifying_key(),
+            shares,
+            Parameters {
+                threshold: 4,
+                share_count: 3,
+            },
+        );
+        assert_eq!(
+            repair_assemble(&bad_package, session, chain_code, target, &[a, a], |_| {
+                String::new()
+            })
+            .unwrap_err(),
+            RepairError::InvalidPackage
         );
     }
 }
