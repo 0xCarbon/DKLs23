@@ -14,9 +14,9 @@
 //! from the pairwise zero-share seeds the helpers already hold
 //! ([`ZeroShare::try_compute`]). Only the sum of all terms equals
 //! `f(target)`; a proper subset of the terms reveals nothing about any share.
-//! The masks are bound to the helpers' session, the repair id, the target
-//! and the helper set, so terms from two different repairs never share a
-//! mask.
+//! The masks are bound to the helpers' session and public key, the repair
+//! id, the target and the helper set, so terms from two different repairs
+//! never share a mask.
 //!
 //! The target assembles the terms with [`repair_assemble`] into a *hollow*
 //! party: its share, group key and derivation data are correct, but it holds
@@ -32,11 +32,15 @@
 //!   target. If the real party with that index still exists, an impostor
 //!   gains a second share and the effective threshold drops by one. Helpers
 //!   must authenticate the target out of band, and the group should run the
-//!   complete refresh right after the repair: it invalidates every share
-//!   from before the repair, including the lost one.
+//!   complete refresh right after the repair. Refreshed shares do not sign
+//!   with shares from before the refresh, but a refresh cannot revoke old
+//!   shares that someone keeps: every party must adopt its refreshed share
+//!   and erase the old one, including backups.
 //! - Terms travel over a confidential, authenticated channel to the target.
-//! - Repair applies to the root shares from DKG, a refresh or `re_key`, not
-//!   to derived (BIP-32 or BOLT 3) shares.
+//! - Repair is meant for the root shares from DKG, a refresh or `re_key`.
+//!   BIP-32-derived shares are refused. The masks are bound to the share's
+//!   public key, so terms for a root key and for a key derived from it
+//!   (e.g. with BOLT 3) never share a mask.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -48,7 +52,7 @@ use zeroize::Zeroizing;
 use crate::curve::DklsCurve;
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Parameters, Party, PartyIndex, PublicKeyPackage};
-use crate::utilities::hashes::tagged_hash;
+use crate::utilities::hashes::{point_to_bytes, tagged_hash};
 use crate::utilities::oracle_tags::TAG_REPAIR_MASK;
 use crate::utilities::zero_shares::ZeroShare;
 
@@ -181,6 +185,7 @@ impl<C: DklsCurve> Party<C> {
             TAG_REPAIR_MASK,
             &[
                 &self.session_id,
+                &point_to_bytes::<C>(&self.pk),
                 repair_id,
                 &[target.as_u8()],
                 &helper_bytes,
@@ -493,6 +498,52 @@ mod tests {
             .unwrap();
         let lambda3 = lagrange_at::<k256::Secp256k1>(&[index(1), index(2)], index(1), index(3));
         assert_ne!(a - a3, parties[0].poly_point * (lambda - lambda3));
+    }
+
+    /// Without the helper-set binding, helper 1's terms for target 4 over
+    /// {1,2}, {1,3} and {1,2,3} would combine to a known multiple of its
+    /// share.
+    #[test]
+    fn test_repair_masks_differ_across_helper_sets() {
+        let (parties, _) = group::<k256::Secp256k1>(2, 4);
+        let p = &parties[0];
+        let target = index(4);
+        let t12 = p.repair_term(&[index(1), index(2)], target, b"r").unwrap();
+        let t13 = p.repair_term(&[index(1), index(3)], target, b"r").unwrap();
+        let t123 = p
+            .repair_term(&[index(1), index(2), index(3)], target, b"r")
+            .unwrap();
+        let lambda =
+            |helpers: &[PartyIndex]| lagrange_at::<k256::Secp256k1>(helpers, index(1), target);
+        let factor = lambda(&[index(1), index(2), index(3)])
+            - lambda(&[index(1), index(2)])
+            - lambda(&[index(1), index(3)]);
+        assert_ne!(t123 - t12 - t13, p.poly_point * factor);
+    }
+
+    /// A root share and a key derived from it (BOLT 3 revocation keeps
+    /// depth 0, the session and the seeds) never share a mask.
+    #[test]
+    fn test_repair_masks_differ_for_derived_keys() {
+        let (parties, _) = group::<k256::Secp256k1>(2, 3);
+        let per_commitment_secret = k256::Scalar::from(5u64);
+        let per_commitment_point =
+            (k256::ProjectivePoint::GENERATOR * per_commitment_secret).to_affine();
+        let derived = parties[0]
+            .bolt3_derive_revocation(&per_commitment_point, &per_commitment_secret, |_| {
+                String::new()
+            })
+            .unwrap();
+        assert_eq!(derived.derivation_data.depth, 0);
+        let helpers = [index(1), index(2)];
+        let root_term = parties[0].repair_term(&helpers, index(3), b"r").unwrap();
+        let derived_term = derived.repair_term(&helpers, index(3), b"r").unwrap();
+        let lambda = lagrange_at::<k256::Secp256k1>(&helpers, index(1), index(3));
+        // Equal masks would make the difference exactly λ·(s' − s).
+        assert_ne!(
+            derived_term - root_term,
+            lambda * (derived.poly_point - parties[0].poly_point)
+        );
     }
 
     #[test]
