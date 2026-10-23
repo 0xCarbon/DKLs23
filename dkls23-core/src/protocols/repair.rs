@@ -13,11 +13,17 @@
 //! index over the helper set, and the masks are additive shares of zero drawn
 //! from the pairwise zero-share seeds the helpers already hold
 //! ([`ZeroShare::try_compute`]). Only the sum of all terms equals
-//! `f(target)`; a proper subset of the terms reveals nothing about any share.
+//! `f(target)`. A coalition of fewer than `threshold` parties (counting the
+//! target if it is dishonest) learns no honest party's share from the terms.
 //! The masks are bound to the helpers' session and public key, the repair
 //! id, the target and the helper set: requests that differ in any of these
 //! never share a mask, and an identical request gets the identical term
 //! (which reveals nothing new).
+//!
+//! Each term ([`RepairTerm`]) also carries the helper's session id, chain
+//! code and public key; [`repair_assemble`] requires every helper to report
+//! the same values and the public key to match the package, so a single
+//! helper cannot hand the target a share with the wrong context.
 //!
 //! The target assembles the terms with [`repair_assemble`] into a *hollow*
 //! party: its share, group key and derivation data are correct, but it holds
@@ -46,6 +52,9 @@
 //!   [`PublicKeyPackage::refresh`] before any later repair: `repair_assemble`
 //!   checks the terms against the package's verifying shares.
 //! - Terms travel over a confidential, authenticated channel to the target.
+//! - A wrong term makes [`repair_assemble`] fail with
+//!   [`RepairError::ShareMismatch`] without naming the helper; retry with
+//!   another helper set to isolate it.
 //! - Repair is meant for the root shares from DKG, a refresh or `re_key`.
 //!   BIP-32-derived shares are refused. The masks are bound to the share's
 //!   public key, so terms for a root key and for a key derived from it
@@ -56,7 +65,7 @@ use std::fmt;
 
 use elliptic_curve::Field;
 use group::{Curve, Group};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::curve::DklsCurve;
 use crate::protocols::derivation::{ChainCode, DerivData};
@@ -84,13 +93,17 @@ pub enum RepairError {
     /// The caller holds no zero-share seed with this helper, so its term
     /// could not be masked.
     MissingSeed { counterparty: PartyIndex },
-    /// The public key package has invalid threshold parameters.
-    InvalidPackage,
+    /// The party's or the package's threshold parameters are invalid.
+    InvalidParameters,
     /// Fewer terms than the threshold.
     NotEnoughTerms,
     /// The terms do not add up to the target's verifying share (wrong
     /// helper set, repair id or session, or a corrupted term).
     ShareMismatch,
+    /// The terms are for another target, come twice from one helper, or
+    /// disagree on the session id, chain code or public key (or the public
+    /// key does not match the package).
+    InconsistentTerms,
 }
 
 impl fmt::Display for RepairError {
@@ -104,8 +117,9 @@ impl fmt::Display for RepairError {
             Self::MissingSeed { counterparty } => {
                 write!(f, "no zero-share seed for helper {counterparty}")
             }
-            Self::InvalidPackage => write!(f, "invalid public key package parameters"),
+            Self::InvalidParameters => write!(f, "invalid threshold parameters"),
             Self::NotEnoughTerms => write!(f, "fewer repair terms than the threshold"),
+            Self::InconsistentTerms => write!(f, "repair terms disagree on their context"),
             Self::ShareMismatch => {
                 write!(f, "repair terms do not match the target's verifying share")
             }
@@ -143,6 +157,10 @@ fn validate_helpers(
     helpers: &[PartyIndex],
     target: PartyIndex,
 ) -> Result<(), RepairError> {
+    // `Parameters` has public fields; a threshold below 2 would allow a
+    // one-helper set whose term is the unmasked share.
+    Parameters::new(parameters.threshold, parameters.share_count)
+        .map_err(|_| RepairError::InvalidParameters)?;
     // Index 0 cannot be built through `PartyIndex::new` or deserialization,
     // but a zeroized index is 0, and terms for target 0 would add up to the
     // group secret.
@@ -159,6 +177,45 @@ fn validate_helpers(
         return Err(RepairError::InvalidHelperSet);
     }
     Ok(())
+}
+
+/// One helper's contribution to a repair, sent to the target only.
+///
+/// `term` is masked; only the sum over the whole helper set is meaningful.
+/// The other fields are the helper's view of the group, which
+/// [`repair_assemble`] cross-checks across helpers.
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "C::AffinePoint: serde::Serialize, C::Scalar: serde::Serialize",
+        deserialize = "C::AffinePoint: serde::Deserialize<'de>, C::Scalar: serde::Deserialize<'de>"
+    ))
+)]
+#[non_exhaustive]
+pub struct RepairTerm<C: DklsCurve> {
+    pub helper: PartyIndex,
+    pub target: PartyIndex,
+    pub term: C::Scalar,
+    pub session_id: Vec<u8>,
+    pub chain_code: ChainCode,
+    pub public_key: C::AffinePoint,
+}
+
+impl<C: DklsCurve> fmt::Debug for RepairTerm<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RepairTerm")
+            .field("helper", &self.helper)
+            .field("target", &self.target)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<C: DklsCurve> Drop for RepairTerm<C> {
+    fn drop(&mut self) {
+        self.term.zeroize();
+    }
 }
 
 impl<C: DklsCurve> Party<C> {
@@ -179,7 +236,7 @@ impl<C: DklsCurve> Party<C> {
         helpers: &[PartyIndex],
         target: PartyIndex,
         repair_id: &[u8],
-    ) -> Result<C::Scalar, RepairError> {
+    ) -> Result<RepairTerm<C>, RepairError> {
         if repair_id.is_empty() {
             return Err(RepairError::EmptyRepairId);
         }
@@ -216,35 +273,43 @@ impl<C: DklsCurve> Party<C> {
         );
         let lambda = lagrange_at::<C>(helpers, self.party_index, target);
         let scaled = Zeroizing::new(self.poly_point * lambda);
-        Ok(*scaled + *mask)
+        Ok(RepairTerm {
+            helper: self.party_index,
+            target,
+            term: *scaled + *mask,
+            session_id: self.session_id.clone(),
+            chain_code: self.derivation_data.chain_code,
+            public_key: self.pk,
+        })
     }
 }
 
 /// Assembles the helpers' terms into the target's hollow party.
 ///
-/// `package` and `session_id` are the group's public key package and
-/// session id (`Party::session_id`), and `chain_code` the group's chain code,
-/// as the helpers report them. The terms must add up to a share whose public
-/// point is the target's verifying share in `package`.
+/// `package` is the group's public key package. The terms must come from
+/// distinct helpers, be for `target`, agree on the session id and chain code,
+/// carry `package`'s group key, and add up to a share whose public point is
+/// the target's verifying share in `package`. The hollow party takes the
+/// helpers' session id and chain code.
 ///
 /// The hollow party cannot sign until all `n` parties run a complete
 /// refresh.
 ///
 /// # Errors
 ///
-/// Returns [`RepairError::InvalidTarget`] for an index outside `package`,
-/// [`RepairError::NotEnoughTerms`] for fewer than `threshold` terms and
-/// [`RepairError::ShareMismatch`] if the sum does not match.
+/// Returns [`RepairError::InvalidParameters`] or [`RepairError::InvalidTarget`]
+/// for an invalid package or target, [`RepairError::NotEnoughTerms`] for
+/// fewer than `threshold` terms, [`RepairError::InconsistentTerms`] if the
+/// terms disagree, and [`RepairError::ShareMismatch`] if the sum does not
+/// match.
 pub fn repair_assemble<C: DklsCurve>(
     package: &PublicKeyPackage<C>,
-    session_id: &[u8],
-    chain_code: ChainCode,
     target: PartyIndex,
-    terms: &[C::Scalar],
+    terms: &[RepairTerm<C>],
     address_fn: impl Fn(&C::AffinePoint) -> String,
 ) -> Result<Party<C>, RepairError> {
     let parameters = Parameters::new(package.threshold(), package.share_count())
-        .map_err(|_| RepairError::InvalidPackage)?;
+        .map_err(|_| RepairError::InvalidParameters)?;
     if target.as_u8() == 0 || target.as_u8() > parameters.share_count {
         return Err(RepairError::InvalidTarget);
     }
@@ -254,7 +319,21 @@ pub fn repair_assemble<C: DklsCurve>(
     if terms.len() < usize::from(package.threshold()) {
         return Err(RepairError::NotEnoughTerms);
     }
-    let poly_point = Zeroizing::new(terms.iter().copied().sum::<C::Scalar>());
+    let first = &terms[0];
+    let mut helpers: Vec<PartyIndex> = terms.iter().map(|t| t.helper).collect();
+    helpers.sort_unstable();
+    helpers.dedup();
+    if helpers.len() != terms.len()
+        || terms.iter().any(|t| {
+            t.target != target
+                || t.session_id != first.session_id
+                || t.chain_code != first.chain_code
+                || t.public_key != *package.verifying_key()
+        })
+    {
+        return Err(RepairError::InconsistentTerms);
+    }
+    let poly_point = Zeroizing::new(terms.iter().map(|t| t.term).sum::<C::Scalar>());
     if (C::ProjectivePoint::generator() * *poly_point).to_affine() != *expected {
         return Err(RepairError::ShareMismatch);
     }
@@ -263,7 +342,7 @@ pub fn repair_assemble<C: DklsCurve>(
     Ok(Party {
         parameters,
         party_index: target,
-        session_id: session_id.to_vec(),
+        session_id: first.session_id.clone(),
         poly_point: *poly_point,
         pk,
         zero_share: ZeroShare::initialize(Vec::new()),
@@ -275,7 +354,7 @@ pub fn repair_assemble<C: DklsCurve>(
             parent_fingerprint: [0; 4],
             poly_point: *poly_point,
             pk,
-            chain_code,
+            chain_code: first.chain_code,
         },
         address: address_fn(&pk),
     })
@@ -293,6 +372,18 @@ mod tests {
 
     fn index(i: u8) -> PartyIndex {
         PartyIndex::new(i).unwrap()
+    }
+
+    /// The masked scalar of a repair term.
+    fn rt<C: DklsCurve>(
+        party: &Party<C>,
+        helpers: &[PartyIndex],
+        target: PartyIndex,
+        repair_id: &[u8],
+    ) -> Result<C::Scalar, RepairError> {
+        party
+            .repair_term(helpers, target, repair_id)
+            .map(|term| term.term)
     }
 
     fn group<C: DklsCurve>(threshold: u8, share_count: u8) -> (Vec<Party<C>>, PublicKeyPackage<C>) {
@@ -433,14 +524,7 @@ mod tests {
             .iter()
             .map(|h| parties[usize::from(h.as_u8() - 1)].repair_term(helpers, target, repair_id))
             .collect::<Result<Vec<_>, _>>()?;
-        repair_assemble(
-            package,
-            &parties[0].session_id,
-            *parties[0].chain_code(),
-            target,
-            &terms,
-            |_| String::new(),
-        )
+        repair_assemble(package, target, &terms, |_| String::new())
     }
 
     fn repair_then_refresh_signs<C: DklsCurve>() {
@@ -515,18 +599,10 @@ mod tests {
     fn test_repair_terms_are_bound_and_masked() {
         let (parties, package) = group::<k256::Secp256k1>(2, 4);
         let target = index(4);
-        let a = parties[0]
-            .repair_term(&[index(1), index(2)], target, b"r")
-            .unwrap();
-        let b = parties[1]
-            .repair_term(&[index(1), index(2)], target, b"r")
-            .unwrap();
-        let b_other_id = parties[1]
-            .repair_term(&[index(1), index(2)], target, b"s")
-            .unwrap();
-        let b_other_set = parties[1]
-            .repair_term(&[index(2), index(3)], target, b"r")
-            .unwrap();
+        let a = rt(&parties[0], &[index(1), index(2)], target, b"r").unwrap();
+        let b = rt(&parties[1], &[index(1), index(2)], target, b"r").unwrap();
+        let b_other_id = rt(&parties[1], &[index(1), index(2)], target, b"s").unwrap();
+        let b_other_set = rt(&parties[1], &[index(2), index(3)], target, b"r").unwrap();
         let expected = package.verifying_share(target).unwrap();
         let point = |s: k256::Scalar| (k256::ProjectivePoint::GENERATOR * s).to_affine();
         assert_eq!(point(a + b), *expected);
@@ -539,9 +615,7 @@ mod tests {
 
         // The same helper's terms for two targets differ by more than the
         // Lagrange coefficients, so their difference hides poly_point.
-        let a3 = parties[0]
-            .repair_term(&[index(1), index(2)], index(3), b"r")
-            .unwrap();
+        let a3 = rt(&parties[0], &[index(1), index(2)], index(3), b"r").unwrap();
         let lambda3 = lagrange_at::<k256::Secp256k1>(&[index(1), index(2)], index(1), index(3));
         assert_ne!(a - a3, parties[0].poly_point * (lambda - lambda3));
     }
@@ -554,11 +628,9 @@ mod tests {
         let (parties, _) = group::<k256::Secp256k1>(2, 4);
         let p = &parties[0];
         let target = index(4);
-        let t12 = p.repair_term(&[index(1), index(2)], target, b"r").unwrap();
-        let t13 = p.repair_term(&[index(1), index(3)], target, b"r").unwrap();
-        let t123 = p
-            .repair_term(&[index(1), index(2), index(3)], target, b"r")
-            .unwrap();
+        let t12 = rt(p, &[index(1), index(2)], target, b"r").unwrap();
+        let t13 = rt(p, &[index(1), index(3)], target, b"r").unwrap();
+        let t123 = rt(p, &[index(1), index(2), index(3)], target, b"r").unwrap();
         let lambda =
             |helpers: &[PartyIndex]| lagrange_at::<k256::Secp256k1>(helpers, index(1), target);
         let factor = lambda(&[index(1), index(2), index(3)])
@@ -582,8 +654,8 @@ mod tests {
             .unwrap();
         assert_eq!(derived.derivation_data.depth, 0);
         let helpers = [index(1), index(2)];
-        let root_term = parties[0].repair_term(&helpers, index(3), b"r").unwrap();
-        let derived_term = derived.repair_term(&helpers, index(3), b"r").unwrap();
+        let root_term = rt(&parties[0], &helpers, index(3), b"r").unwrap();
+        let derived_term = rt(&derived, &helpers, index(3), b"r").unwrap();
         let lambda = lagrange_at::<k256::Secp256k1>(&helpers, index(1), index(3));
         // Equal masks would make the difference exactly λ·(s' − s).
         assert_ne!(
@@ -601,8 +673,8 @@ mod tests {
         other_session.session_id = b"another session".to_vec();
         let helpers = [index(1), index(2)];
         assert_ne!(
-            parties[0].repair_term(&helpers, index(3), b"r").unwrap(),
-            other_session.repair_term(&helpers, index(3), b"r").unwrap()
+            rt(&parties[0], &helpers, index(3), b"r").unwrap(),
+            rt(&other_session, &helpers, index(3), b"r").unwrap()
         );
     }
 
@@ -612,8 +684,8 @@ mod tests {
         let (parties, _) = group::<k256::Secp256k1>(2, 3);
         let helpers = [index(1), index(2)];
         assert_eq!(
-            parties[0].repair_term(&helpers, index(3), b"r").unwrap(),
-            parties[0].repair_term(&helpers, index(3), b"r").unwrap()
+            rt(&parties[0], &helpers, index(3), b"r").unwrap(),
+            rt(&parties[0], &helpers, index(3), b"r").unwrap()
         );
     }
 
@@ -628,26 +700,71 @@ mod tests {
         zero.zeroize();
         assert_eq!(zero.as_u8(), 0);
         assert_eq!(
-            parties[0].repair_term(&[index(1), index(2)], zero, b"r"),
+            rt(&parties[0], &[index(1), index(2)], zero, b"r"),
             Err(RepairError::InvalidTarget)
         );
         assert_eq!(
-            parties[1].repair_term(&[zero, index(2)], index(3), b"r"),
+            rt(&parties[1], &[zero, index(2)], index(3), b"r"),
             Err(RepairError::InvalidHelperSet)
         );
-        let a = parties[0]
-            .repair_term(&[index(1), index(2)], index(3), b"r")
-            .unwrap();
+        let terms: Vec<_> = [0, 1]
+            .iter()
+            .map(|&i| {
+                parties[i]
+                    .repair_term(&[index(1), index(2)], index(3), b"r")
+                    .unwrap()
+            })
+            .collect();
         assert_eq!(
-            repair_assemble(
-                &package,
-                &parties[0].session_id,
-                *parties[0].chain_code(),
-                zero,
-                &[a, a],
-                |_| String::new()
-            )
-            .unwrap_err(),
+            repair_assemble(&package, zero, &terms, |_| String::new()).unwrap_err(),
+            RepairError::InvalidTarget
+        );
+    }
+
+    /// A party whose public `parameters` fields were set to an invalid
+    /// threshold cannot produce a term (a one-helper term would be the
+    /// unmasked share), and a package with an entry at index 0 is refused.
+    #[test]
+    fn test_repair_rejects_invalid_parameters_and_zero_entries() {
+        use zeroize::Zeroize;
+
+        let (parties, package) = group::<k256::Secp256k1>(2, 3);
+        let mut lowered = parties[0].clone();
+        lowered.parameters.threshold = 1;
+        assert_eq!(
+            rt(&lowered, &[index(1)], index(3), b"r"),
+            Err(RepairError::InvalidParameters)
+        );
+
+        let mut zero = index(1);
+        zero.zeroize();
+        let forged = k256::Scalar::from(42u64);
+        let mut shares: BTreeMap<PartyIndex, k256::AffinePoint> = (1..=3)
+            .map(|i| (index(i), *package.verifying_share(index(i)).unwrap()))
+            .collect();
+        shares.insert(
+            zero,
+            (k256::ProjectivePoint::GENERATOR * forged).to_affine(),
+        );
+        let with_zero = PublicKeyPackage::<k256::Secp256k1>::new(
+            *package.verifying_key(),
+            shares,
+            Parameters::new(2, 3).unwrap(),
+        );
+        let mut terms: Vec<_> = [0, 1]
+            .iter()
+            .map(|&i| {
+                parties[i]
+                    .repair_term(&[index(1), index(2)], index(3), b"r")
+                    .unwrap()
+            })
+            .collect();
+        terms[0].target = zero;
+        terms[0].term = forged;
+        terms[1].target = zero;
+        terms[1].term = k256::Scalar::ZERO;
+        assert_eq!(
+            repair_assemble(&with_zero, zero, &terms, |_| String::new()).unwrap_err(),
             RepairError::InvalidTarget
         );
     }
@@ -658,7 +775,7 @@ mod tests {
         let p = &parties[0];
         let target = index(3);
         assert_eq!(
-            p.repair_term(&[index(1), index(2)], target, b""),
+            rt(p, &[index(1), index(2)], target, b""),
             Err(RepairError::EmptyRepairId)
         );
         for helpers in [
@@ -669,69 +786,84 @@ mod tests {
             vec![index(1), index(4)],
         ] {
             assert_eq!(
-                p.repair_term(&helpers, target, b"r"),
+                rt(p, &helpers, target, b"r"),
                 Err(RepairError::InvalidHelperSet),
                 "{helpers:?}"
             );
         }
         assert_eq!(
-            parties[2].repair_term(&[index(1), index(2)], index(4), b"r"),
+            rt(&parties[2], &[index(1), index(2)], index(4), b"r"),
             Err(RepairError::InvalidTarget)
         );
         // The target itself is not a helper.
         assert_eq!(
-            parties[2].repair_term(&[index(1), index(2)], target, b"r"),
+            rt(&parties[2], &[index(1), index(2)], target, b"r"),
             Err(RepairError::NotInHelperSet)
         );
         assert_eq!(
-            parties[1].repair_term(&[index(1), index(3)], index(2), b"r"),
+            rt(&parties[1], &[index(1), index(3)], index(2), b"r"),
             Err(RepairError::NotInHelperSet)
         );
         let derived = p.derive_child(1, |_| String::new()).unwrap();
         assert_eq!(
-            derived.repair_term(&[index(1), index(2)], target, b"r"),
+            rt(&derived, &[index(1), index(2)], target, b"r"),
             Err(RepairError::DerivedShare)
         );
 
         // A hollow share has no seeds, so it cannot help yet.
         let hollow = repair(&parties, &package, &[index(1), index(2)], target, b"r").unwrap();
         assert_eq!(
-            hollow.repair_term(&[index(1), index(3)], index(2), b"r"),
+            rt(&hollow, &[index(1), index(3)], index(2), b"r"),
             Err(RepairError::MissingSeed {
                 counterparty: index(1)
             })
         );
 
-        // Assembly checks the sum and the number of terms.
-        let a = p.repair_term(&[index(1), index(2)], target, b"r").unwrap();
-        let session = &p.session_id;
-        let chain_code = *p.chain_code();
+        // Assembly checks the number, origin, context and sum of the terms.
+        let term = |party: usize, helpers: &[PartyIndex], id: &[u8]| {
+            parties[party].repair_term(helpers, target, id).unwrap()
+        };
+        let helpers = [index(1), index(2)];
+        let good = vec![term(0, &helpers, b"r"), term(1, &helpers, b"r")];
+        let assemble = |package: &PublicKeyPackage<k256::Secp256k1>,
+                        target: PartyIndex,
+                        terms: &[RepairTerm<k256::Secp256k1>]| {
+            repair_assemble(package, target, terms, |_| String::new()).unwrap_err()
+        };
+        assert!(repair_assemble(&package, target, &good, |_| String::new()).is_ok());
         assert_eq!(
-            repair_assemble(
-                &package,
-                session,
-                chain_code,
-                target,
-                &[a],
-                |_| String::new()
-            )
-            .unwrap_err(),
+            assemble(&package, target, &good[..1]),
             RepairError::NotEnoughTerms
         );
         assert_eq!(
-            repair_assemble(&package, session, chain_code, target, &[a, a], |_| {
-                String::new()
-            })
-            .unwrap_err(),
+            assemble(&package, target, &[good[0].clone(), good[0].clone()]),
+            RepairError::InconsistentTerms
+        );
+        assert_eq!(
+            assemble(
+                &package,
+                target,
+                &[good[0].clone(), term(1, &helpers, b"other")]
+            ),
             RepairError::ShareMismatch
         );
         assert_eq!(
-            repair_assemble(&package, session, chain_code, index(4), &[a, a], |_| {
-                String::new()
-            })
-            .unwrap_err(),
+            assemble(&package, index(4), &good),
             RepairError::InvalidTarget
         );
+        // A helper reporting another chain code, session id or group key.
+        let mut wrong_chain = good[1].clone();
+        wrong_chain.chain_code[0] ^= 1;
+        let mut wrong_session = good[1].clone();
+        wrong_session.session_id.push(0);
+        let mut wrong_key = good[1].clone();
+        wrong_key.public_key = k256::AffinePoint::GENERATOR;
+        for wrong in [wrong_chain, wrong_session, wrong_key] {
+            assert_eq!(
+                assemble(&package, target, &[good[0].clone(), wrong]),
+                RepairError::InconsistentTerms
+            );
+        }
 
         // A package with invalid parameters is refused before any arithmetic.
         let shares = (1..=3)
@@ -746,11 +878,34 @@ mod tests {
             },
         );
         assert_eq!(
-            repair_assemble(&bad_package, session, chain_code, target, &[a, a], |_| {
-                String::new()
-            })
-            .unwrap_err(),
-            RepairError::InvalidPackage
+            assemble(&bad_package, target, &good),
+            RepairError::InvalidParameters
+        );
+
+        // A package that holds a verifying share for an out-of-range index
+        // (here 4 in a 2-of-3 group) is still refused by the range check.
+        let mut stretched: BTreeMap<PartyIndex, k256::AffinePoint> = (1..=3)
+            .map(|i| (index(i), *package.verifying_share(index(i)).unwrap()))
+            .collect();
+        let forged = k256::Scalar::from(42u64);
+        let mut forged_term = good[0].clone();
+        forged_term.target = index(4);
+        forged_term.term = forged;
+        let mut forged_second = good[1].clone();
+        forged_second.target = index(4);
+        forged_second.term = k256::Scalar::ZERO;
+        stretched.insert(
+            index(4),
+            (k256::ProjectivePoint::GENERATOR * forged).to_affine(),
+        );
+        let stretched = PublicKeyPackage::<k256::Secp256k1>::new(
+            *package.verifying_key(),
+            stretched,
+            Parameters::new(2, 3).unwrap(),
+        );
+        assert_eq!(
+            assemble(&stretched, index(4), &[forged_term, forged_second]),
+            RepairError::InvalidTarget
         );
     }
 }

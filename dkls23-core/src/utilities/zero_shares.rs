@@ -199,6 +199,7 @@ impl ZeroShare {
 
 /// A counterparty without a zero-share seed (see [`ZeroShare::try_compute`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct MissingSeed {
     pub counterparty: PartyIndex,
 }

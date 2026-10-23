@@ -86,7 +86,12 @@ masked terms. The masks are zero-sum shares from the helpers' pairwise
 zero-share seeds, bound to the session, the share's public key, the repair
 id, the target and the helper set. Requests that differ in any of these
 never share a mask (an identical request gets the identical term), and a
-coalition below the threshold learns no honest share. Requirements:
+coalition below the threshold, counting the target, learns no honest share,
+provided every target is authenticated (or is itself in the coalition).
+Each term also carries the helper's session id, chain code and public key,
+and assembly requires them to agree, so one helper cannot hand the target a
+share with the wrong context. A wrong term makes assembly fail without naming
+the helper. Requirements:
 
 - The application authenticates the target: repair hands index `target`'s
   share to whoever the helpers accept, so an impostor while the real party

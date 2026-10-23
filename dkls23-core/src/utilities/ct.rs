@@ -14,7 +14,7 @@ pub(crate) fn select_bytes<const N: usize>(a: &[u8; N], b: &[u8; N], choice: Cho
 
 /// [`select_bytes`] for equal-length slices.
 pub(crate) fn select_slice(a: &[u8], b: &[u8], choice: Choice) -> Vec<u8> {
-    debug_assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "select_slice: unequal lengths");
     a.iter()
         .zip(b)
         .map(|(x, y)| u8::conditional_select(x, y, choice))
