@@ -119,6 +119,17 @@ so parties that adopted different refreshes never share a session id, and
 from the refresh's proof commitments. Zero-share seed commitments are bound
 to the session and direction.
 
+### Share Repair (`protocols/repair.rs`)
+
+A lost root share is rebuilt under the same group key. At least `threshold`
+helpers each send the target `poly_point · λ(target) + mask`, where the masks
+are zero-sum shares from their pairwise zero-share seeds
+(`ZeroShare::try_compute`), bound to the session, repair id, target and
+helper set. `repair_assemble` checks the sum against the target's verifying
+share and returns a hollow party (no OT or zero-share state). A complete
+refresh across all `n` parties makes it a signing share and invalidates
+every pre-repair share. Authorizing the target is the application's job.
+
 ### Key Derivation (`protocols/derivation.rs`)
 
 BIP-32 non-hardened derivation adapted for threshold setting. Each party derives
