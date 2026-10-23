@@ -205,10 +205,10 @@ pub fn re_key<C: DklsCurve>(
     let mut parties: Vec<Party<C>> = Vec::with_capacity(parameters.share_count as usize);
     for index in 1..=parameters.share_count {
         // poly_point is polynomial evaluated at index.
-        let mut poly_point = <C::Scalar as Field>::ZERO;
+        let mut poly_point = Zeroizing::new(<C::Scalar as Field>::ZERO);
         let mut power_of_index = <C::Scalar as Field>::ONE;
         for i in 0..parameters.threshold {
-            poly_point += polynomial[i as usize] * power_of_index;
+            *poly_point += polynomial[i as usize] * power_of_index;
             power_of_index *= C::Scalar::from(u64::from(index));
         }
 
@@ -222,7 +222,7 @@ pub fn re_key<C: DklsCurve>(
             depth: 0,
             child_number: 0, // These three values are initialized as zero for the master node.
             parent_fingerprint: [0; 4],
-            poly_point,
+            poly_point: *poly_point,
             pk,
             chain_code,
         };
@@ -231,7 +231,7 @@ pub fn re_key<C: DklsCurve>(
             parameters: parameters.clone(),
             party_index: PartyIndex::new(index).unwrap(),
             session_id: session_id.to_vec(),
-            poly_point,
+            poly_point: *poly_point,
             pk,
             zero_share: zero_shares[(index - 1) as usize].clone(),
             mul_senders: all_mul_senders[(index - 1) as usize].clone(),

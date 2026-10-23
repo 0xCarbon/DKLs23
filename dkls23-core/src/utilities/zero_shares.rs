@@ -159,14 +159,16 @@ impl ZeroShare {
             }
 
             // Seeds generate fragments that add up to the share that will be returned.
-            let fragment =
-                tagged_hash_as_scalar::<C>(TAG_ZERO_SHARE_FRAGMENT, &[session_id, &seed_pair.seed]);
+            let fragment = zeroize::Zeroizing::new(tagged_hash_as_scalar::<C>(
+                TAG_ZERO_SHARE_FRAGMENT,
+                &[session_id, &seed_pair.seed],
+            ));
 
             // This sign guarantees that the shares from different parties add up to zero.
             if seed_pair.lowest_index {
-                share -= fragment;
+                share -= *fragment;
             } else {
-                share += fragment;
+                share += *fragment;
             }
         }
         share

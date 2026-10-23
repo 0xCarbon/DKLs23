@@ -36,6 +36,14 @@
 //!   with shares from before the refresh, but a refresh cannot revoke old
 //!   shares that someone keeps: every party must adopt its refreshed share
 //!   and erase the old one, including backups.
+//! - Use the **complete** refresh after a repair, never the fast refresh
+//!   (`refresh_phase1..4`): the hollow party has no OT state for it, and
+//!   only its own phase 4 notices, after the other parties have already
+//!   moved to the refreshed shares. If that happens, repair the target again
+//!   from the refreshed parties and run a complete refresh.
+//! - After the complete refresh, update the group's public key package with
+//!   [`PublicKeyPackage::refresh`] before any later repair: `repair_assemble`
+//!   checks the terms against the package's verifying shares.
 //! - Terms travel over a confidential, authenticated channel to the target.
 //! - Repair is meant for the root shares from DKG, a refresh or `re_key`.
 //!   BIP-32-derived shares are refused. The masks are bound to the share's
@@ -199,7 +207,8 @@ impl<C: DklsCurve> Party<C> {
                 })?,
         );
         let lambda = lagrange_at::<C>(helpers, self.party_index, target);
-        Ok(self.poly_point * lambda + *mask)
+        let scaled = Zeroizing::new(self.poly_point * lambda);
+        Ok(*scaled + *mask)
     }
 }
 
@@ -284,6 +293,16 @@ mod tests {
 
     /// A complete refresh of every party (all `n`).
     fn complete_refresh<C: DklsCurve>(parties: &[Party<C>], refresh_sid: &[u8]) -> Vec<Party<C>> {
+        complete_refresh_with_proofs(parties, refresh_sid).0
+    }
+
+    fn complete_refresh_with_proofs<C: DklsCurve>(
+        parties: &[Party<C>],
+        refresh_sid: &[u8],
+    ) -> (
+        Vec<Party<C>>,
+        Vec<crate::protocols::dkg::ProofCommitment<C>>,
+    ) {
         let n = parties.len();
         let fragments: Vec<Vec<C::Scalar>> =
             parties.iter().map(Party::refresh_complete_phase1).collect();
@@ -312,7 +331,7 @@ mod tests {
             mul_kept.push(mul_keep);
             mul_3to4.extend(mul_transmit);
         }
-        (0..n)
+        let refreshed = (0..n)
             .map(|i| {
                 let me = parties[i].party_index;
                 parties[i]
@@ -340,7 +359,8 @@ mod tests {
                     )
                     .unwrap()
             })
-            .collect()
+            .collect();
+        (refreshed, proofs)
     }
 
     /// Signs with `signers` and checks the signature under their group key.
@@ -438,10 +458,28 @@ mod tests {
 
         // After a complete refresh across all parties, it signs with each peer.
         let group_after = vec![parties[0].clone(), parties[1].clone(), hollow];
-        let refreshed = complete_refresh(&group_after, b"after-repair");
+        let (refreshed, proofs) = complete_refresh_with_proofs(&group_after, b"after-repair");
         signs(&[&refreshed[0], &refreshed[2]]).unwrap();
         signs(&[&refreshed[1], &refreshed[2]]).unwrap();
         assert_eq!(refreshed[2].pk, parties[0].pk);
+
+        // A share from before the refresh does not sign with refreshed ones.
+        assert!(matches!(
+            signs(&[&refreshed[0], &parties[2]]),
+            Err(AbortReason::SessionBindingMismatch { .. })
+        ));
+
+        // With the refreshed package, a later repair works again.
+        let package = package.refresh(b"after-repair", &proofs).unwrap();
+        let again = repair(
+            &refreshed,
+            &package,
+            &[index(1), index(3)],
+            index(2),
+            b"repair-2",
+        )
+        .unwrap();
+        assert_eq!(again.poly_point, refreshed[1].poly_point);
     }
 
     #[test]
@@ -543,6 +581,20 @@ mod tests {
         assert_ne!(
             derived_term - root_term,
             lambda * (derived.poly_point - parties[0].poly_point)
+        );
+    }
+
+    /// Terms depend on the helper's session: the same request after a
+    /// different session gets a different mask.
+    #[test]
+    fn test_repair_masks_differ_across_sessions() {
+        let (parties, _) = group::<k256::Secp256k1>(2, 3);
+        let mut other_session = parties[0].clone();
+        other_session.session_id = b"another session".to_vec();
+        let helpers = [index(1), index(2)];
+        assert_ne!(
+            parties[0].repair_term(&helpers, index(3), b"r").unwrap(),
+            other_session.repair_term(&helpers, index(3), b"r").unwrap()
         );
     }
 

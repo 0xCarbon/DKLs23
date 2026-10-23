@@ -27,10 +27,11 @@ mod tests {
 
     #[test]
     fn selects_without_mixing() {
-        let a = [1u8; 4];
-        let b = [2u8; 4];
+        let a = [1u8, 2, 3, 4];
+        let b = [5u8, 6, 7, 8];
         assert_eq!(select_bytes(&a, &b, choice(false)), a);
         assert_eq!(select_bytes(&a, &b, choice(true)), b);
+        assert_eq!(select_slice(&a, &b, choice(false)), a.to_vec());
         assert_eq!(select_slice(&a, &b, choice(true)), b.to_vec());
     }
 }

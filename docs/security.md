@@ -79,6 +79,21 @@ recommended.
   a stored copy, and start a new attempt from phase 1 after any abort.
   `SignSession` enforces this in memory.
 
+## Share Repair
+
+`protocols::repair` rebuilds a lost share from at least `threshold` helpers'
+masked terms. The masks are zero-sum shares from the helpers' pairwise
+zero-share seeds, bound to the session, the share's public key, the repair
+id, the target and the helper set, so no two repairs share a mask and a
+coalition below the threshold learns no honest share. Requirements:
+
+- The application authenticates the target: repair hands index `target`'s
+  share to whoever the helpers accept, so an impostor while the real party
+  exists lowers the effective threshold by one.
+- After a repair, all parties run a **complete** refresh (not the fast
+  refresh) and erase their old shares and backups; a refresh cannot revoke
+  shares someone keeps.
+
 ## Side-Channel Resistance
 
 - Scalar and point arithmetic is delegated to `k256` / `p256`, which use
