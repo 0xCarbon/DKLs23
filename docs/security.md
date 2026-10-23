@@ -106,7 +106,7 @@ coalition below the threshold learns no honest share. Requirements:
   refresh and `re_key` select with `subtle::ConditionallySelectable` or
   masks.
 - Limitation: memory access patterns and the platform's code generation are
-  not verified to be constant time (no dudect-style measurement); the
+  not verified to be constant time (no statistical timing measurement); the
   protection is source-level.
 
 ## BOLT 3 Key Derivation

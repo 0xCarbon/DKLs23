@@ -74,7 +74,7 @@ pub enum RepairError {
     /// members, has an index out of range, or contains the target.
     InvalidHelperSet,
     /// The caller is not in the helper set.
-    NotAHelper,
+    NotInHelperSet,
     /// The target index is out of range.
     InvalidTarget,
     /// The caller's share is derived; repair applies to root shares.
@@ -94,7 +94,7 @@ impl fmt::Display for RepairError {
         match self {
             Self::EmptyRepairId => write!(f, "the repair id is empty"),
             Self::InvalidHelperSet => write!(f, "invalid helper set"),
-            Self::NotAHelper => write!(f, "this party is not in the helper set"),
+            Self::NotInHelperSet => write!(f, "this party is not in the helper set"),
             Self::InvalidTarget => write!(f, "invalid target index"),
             Self::DerivedShare => write!(f, "repair applies to root shares only"),
             Self::MissingSeed { counterparty } => {
@@ -177,7 +177,7 @@ impl<C: DklsCurve> Party<C> {
         }
         validate_helpers(&self.parameters, helpers, target)?;
         if !helpers.contains(&self.party_index) {
-            return Err(RepairError::NotAHelper);
+            return Err(RepairError::NotInHelperSet);
         }
         if self.derivation_data.depth != 0 {
             return Err(RepairError::DerivedShare);
@@ -624,11 +624,11 @@ mod tests {
         // The target itself is not a helper.
         assert_eq!(
             parties[2].repair_term(&[index(1), index(2)], target, b"r"),
-            Err(RepairError::NotAHelper)
+            Err(RepairError::NotInHelperSet)
         );
         assert_eq!(
             parties[1].repair_term(&[index(1), index(3)], index(2), b"r"),
-            Err(RepairError::NotAHelper)
+            Err(RepairError::NotInHelperSet)
         );
         let derived = p.derive_child(1, |_| String::new()).unwrap();
         assert_eq!(
