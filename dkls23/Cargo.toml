@@ -1,6 +1,6 @@
 [package]
 name = "dkls23"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0 OR MIT"
@@ -9,13 +9,13 @@ repository = "https://github.com/0xCarbon/DKLs23"
 readme = "README.md"
 
 [dependencies]
-dkls23-core = { version = "0.6.1", path = "../dkls23-core", default-features = false }
-dkls23-secp256k1 = { version = "0.6.1", path = "../dkls23-secp256k1", default-features = false, optional = true }
-dkls23-secp256r1 = { version = "0.6.1", path = "../dkls23-secp256r1", default-features = false, optional = true }
+dkls23-core = { version = "0.6.2", path = "../dkls23-core", default-features = false }
+dkls23-secp256k1 = { version = "0.6.2", path = "../dkls23-secp256k1", default-features = false, optional = true }
+dkls23-secp256r1 = { version = "0.6.2", path = "../dkls23-secp256r1", default-features = false, optional = true }
 
 [dev-dependencies]
-dkls23-secp256k1 = { version = "0.6.1", path = "../dkls23-secp256k1" }
-dkls23-secp256r1 = { version = "0.6.1", path = "../dkls23-secp256r1" }
+dkls23-secp256k1 = { version = "0.6.2", path = "../dkls23-secp256k1" }
+dkls23-secp256r1 = { version = "0.6.2", path = "../dkls23-secp256r1" }
 k256 = "0.14"
 p256 = "0.14"
 

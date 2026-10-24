@@ -79,18 +79,41 @@ recommended.
   a stored copy, and start a new attempt from phase 1 after any abort.
   `SignSession` enforces this in memory.
 
+## Share Repair
+
+`protocols::repair` rebuilds a lost share from at least `threshold` helpers'
+masked terms. The masks are zero-sum shares from the helpers' pairwise
+zero-share seeds, bound to the session, the share's public key, the repair
+id, the target and the helper set. Requests that differ in any of these
+never share a mask (an identical request gets the identical term), and a
+coalition below the threshold, counting the target, learns no honest share,
+provided every target is authenticated (or is itself in the coalition).
+Each term also carries the helper's session id, chain code and public key,
+and assembly requires them to agree, so one helper cannot hand the target a
+share with the wrong context. A wrong term makes assembly fail without naming
+the helper. Requirements:
+
+- The application authenticates the target: repair hands index `target`'s
+  share to whoever the helpers accept, so an impostor while the real party
+  exists lowers the effective threshold by one.
+- After a repair, all parties run a **complete** refresh (not the fast
+  refresh) and erase their old shares and backups; a refresh cannot revoke
+  shares someone keeps.
+
 ## Side-Channel Resistance
 
 - Scalar and point arithmetic is delegated to `k256` / `p256`, which use
   constant-time operations from the `subtle` crate.
 - Commitment checks (`commits.rs`) compare digests in constant time
   (`subtle::ConstantTimeEq`).
-- Known limitation: the OT extension (`field_mul` on the receiver's choice
-  bits, output selection by choice bit), the multiplication (accumulation by
-  choice bit) and the fast refresh (selection by correlation bit) branch on
-  secret bits. An attacker with fine-grained local timing or microarchitectural
-  observation of a party could learn some of those bits; remote timing is not
-  expected to resolve them. Constant-time selection is planned.
+- OT choice and correlation bits are handled without data-dependent
+  branches: the base OT encryption proof, the OT extension (`field_mul` and
+  output selection), the multiplication (accumulation by choice bit), the fast
+  refresh and `re_key` select with `subtle::ConditionallySelectable` or
+  masks.
+- Limitation: memory access patterns and the platform's code generation are
+  not verified to be constant time (no statistical timing measurement); the
+  protection is source-level.
 
 ## BOLT 3 Key Derivation
 

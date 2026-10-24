@@ -20,6 +20,7 @@ pub mod dkg_session;
 pub mod messages;
 pub mod re_key;
 pub mod refresh;
+pub mod repair;
 pub mod sign_session;
 pub mod signature;
 pub mod signing;

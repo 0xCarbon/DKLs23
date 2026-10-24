@@ -32,8 +32,10 @@ fn append_len_prefixed(encoded: &mut Vec<u8>, component: &[u8]) {
 /// `len(tag)||tag||len(component_0)||component_0||...`.
 #[must_use]
 pub fn tagged_hash(tag: &[u8], components: &[&[u8]]) -> HashOutput {
-    let mut encoded =
-        Vec::with_capacity(8 + tag.len() + components.iter().map(|c| 8 + c.len()).sum::<usize>());
+    // Components can be secret (seeds), so the encoding is wiped on drop.
+    let mut encoded = zeroize::Zeroizing::new(Vec::with_capacity(
+        8 + tag.len() + components.iter().map(|c| 8 + c.len()).sum::<usize>(),
+    ));
     append_len_prefixed(&mut encoded, tag);
     for component in components {
         append_len_prefixed(&mut encoded, component);
@@ -47,7 +49,7 @@ pub fn tagged_hash_as_scalar<C: CurveArithmetic>(tag: &[u8], components: &[&[u8]
 where
     C::Scalar: Reduce<FieldBytes<C>>,
 {
-    let as_bytes = tagged_hash(tag, components);
+    let as_bytes = zeroize::Zeroizing::new(tagged_hash(tag, components));
     reduce_hash_to_scalar::<C>(&as_bytes)
 }
 

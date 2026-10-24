@@ -56,6 +56,9 @@ pub const TAG_SIGN_ZERO_SESSION: &[u8] = b"dkls23/sign/zero-session/v1";
 pub const TAG_REFRESH_SESSION: &[u8] = b"dkls23/refresh/session/v1";
 /// Complete-refresh multiplication session-id oracle.
 pub const TAG_REFRESH_MUL_SESSION: &[u8] = b"dkls23/refresh/mul-session/v1";
+/// Share-repair mask session oracle (session, public key, repair id, target,
+/// helpers).
+pub const TAG_REPAIR_MASK: &[u8] = b"dkls23/repair/mask/v1";
 /// Signing oracle for a pair's multiplication setup (both public gadgets).
 pub const TAG_SIGN_PAIR_SETUP: &[u8] = b"dkls23/sign/pair-setup/v1";
 
@@ -95,6 +98,7 @@ pub const ALL_TAGS: &[&[u8]] = &[
     TAG_REFRESH_SESSION,
     TAG_REFRESH_MUL_SESSION,
     TAG_SIGN_PAIR_SETUP,
+    TAG_REPAIR_MASK,
     TAG_REFRESH_FAST_R0,
     TAG_REFRESH_FAST_R1,
     TAG_REFRESH_FAST_B,

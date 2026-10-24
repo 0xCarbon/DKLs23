@@ -88,6 +88,7 @@ use std::collections::BTreeMap;
 use ff::Field;
 
 use crate::curve::DklsCurve;
+use crate::utilities::ct;
 use crate::utilities::hashes::{tagged_hash, HashOutput};
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::oracle_tags::{
@@ -97,6 +98,7 @@ use crate::utilities::oracle_tags::{
 use crate::utilities::ot;
 use crate::utilities::rng;
 use crate::utilities::zero_shares::{self, ZeroShare};
+use zeroize::Zeroizing;
 
 use crate::protocols::derivation::DerivData;
 use crate::protocols::dkg::{
@@ -200,8 +202,8 @@ impl<C: DklsCurve> Party<C> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let mut secret_polynomial: Vec<C::Scalar> =
-            Vec::with_capacity(self.parameters.threshold as usize);
+        let mut secret_polynomial: zeroize::Zeroizing<Vec<C::Scalar>> =
+            zeroize::Zeroizing::new(Vec::with_capacity(self.parameters.threshold as usize));
         secret_polynomial.push(C::Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
             secret_polynomial.push(C::Scalar::random(&mut rng::get_rng()));
@@ -758,8 +760,8 @@ impl<C: DklsCurve> Party<C> {
         // We run Phase 1 in DKG, but we force the constant term in Step 1 to be zero.
 
         // DKG
-        let mut secret_polynomial: Vec<C::Scalar> =
-            Vec::with_capacity(self.parameters.threshold as usize);
+        let mut secret_polynomial: zeroize::Zeroizing<Vec<C::Scalar>> =
+            zeroize::Zeroizing::new(Vec::with_capacity(self.parameters.threshold as usize));
         secret_polynomial.push(C::Scalar::ZERO);
         for _ in 1..self.parameters.threshold {
             secret_polynomial.push(C::Scalar::random(&mut rng::get_rng()));
@@ -1063,7 +1065,7 @@ impl<C: DklsCurve> Party<C> {
             // This is the same as running through the counterparties.
 
             let their_index = seed_pair.index_counterparty;
-            let seed = seed_pair.seed;
+            let seed = Zeroizing::new(seed_pair.seed);
 
             let mul_sender = self.mul_senders.get(&their_index).ok_or_else(|| {
                 Abort::recoverable(
@@ -1113,24 +1115,47 @@ impl<C: DklsCurve> Party<C> {
                 let sender_bytes = u16::from(self.party_index.as_u8()).to_be_bytes();
                 let receiver_bytes = u16::from(their_index.as_u8()).to_be_bytes();
 
-                let r0_prime = tagged_hash(
+                let r0_prime = Zeroizing::new(tagged_hash(
                     TAG_REFRESH_FAST_R0,
-                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
-                );
-                let r1_prime = tagged_hash(
+                    &[
+                        refresh_sid,
+                        &i_bytes,
+                        &sender_bytes,
+                        &receiver_bytes,
+                        &*seed,
+                    ],
+                ));
+                let r1_prime = Zeroizing::new(tagged_hash(
                     TAG_REFRESH_FAST_R1,
-                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
-                );
+                    &[
+                        refresh_sid,
+                        &i_bytes,
+                        &sender_bytes,
+                        &receiver_bytes,
+                        &*seed,
+                    ],
+                ));
                 let b_prime = (tagged_hash(
                     TAG_REFRESH_FAST_B,
-                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                    &[
+                        refresh_sid,
+                        &i_bytes,
+                        &sender_bytes,
+                        &receiver_bytes,
+                        &*seed,
+                    ],
                 )[0] % 2)
                     == 1; // We take the first digit.
 
                 let b_double_prime = new_ote_sender.correlation[i as usize] ^ b_prime;
-                let r_prime_b_double_prime = if b_double_prime { r1_prime } else { r0_prime };
+                let r_prime_b_double_prime = Zeroizing::new(ct::select_bytes(
+                    &r0_prime,
+                    &r1_prime,
+                    ct::choice(b_double_prime),
+                ));
 
-                let mut r_double_prime: HashOutput = [0; crate::SECURITY as usize];
+                let mut r_double_prime: Zeroizing<HashOutput> =
+                    Zeroizing::new([0; crate::SECURITY as usize]);
                 for j in 0..crate::SECURITY {
                     r_double_prime[j as usize] = new_ote_sender.seeds[i as usize][j as usize]
                         ^ r_prime_b_double_prime[j as usize];
@@ -1138,40 +1163,60 @@ impl<C: DklsCurve> Party<C> {
 
                 // Updates new_ote_sender with the new values.
                 new_ote_sender.correlation[i as usize] = b_double_prime;
-                new_ote_sender.seeds[i as usize] = r_double_prime;
+                new_ote_sender.seeds[i as usize] = *r_double_prime;
 
                 // Receiver
                 let i_bytes = i.to_be_bytes();
                 let sender_bytes = u16::from(their_index.as_u8()).to_be_bytes();
                 let receiver_bytes = u16::from(self.party_index.as_u8()).to_be_bytes();
 
-                let r0_prime = tagged_hash(
+                let r0_prime = Zeroizing::new(tagged_hash(
                     TAG_REFRESH_FAST_R0,
-                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
-                );
-                let r1_prime = tagged_hash(
+                    &[
+                        refresh_sid,
+                        &i_bytes,
+                        &sender_bytes,
+                        &receiver_bytes,
+                        &*seed,
+                    ],
+                ));
+                let r1_prime = Zeroizing::new(tagged_hash(
                     TAG_REFRESH_FAST_R1,
-                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
-                );
+                    &[
+                        refresh_sid,
+                        &i_bytes,
+                        &sender_bytes,
+                        &receiver_bytes,
+                        &*seed,
+                    ],
+                ));
                 let b_prime = (tagged_hash(
                     TAG_REFRESH_FAST_B,
-                    &[refresh_sid, &i_bytes, &sender_bytes, &receiver_bytes, &seed],
+                    &[
+                        refresh_sid,
+                        &i_bytes,
+                        &sender_bytes,
+                        &receiver_bytes,
+                        &*seed,
+                    ],
                 )[0] % 2)
                     == 1; // We take the first digit.
 
-                let r_b_prime = if b_prime {
-                    new_ote_receiver.seeds1[i as usize]
-                } else {
-                    new_ote_receiver.seeds0[i as usize]
-                };
-                let r_opposite_b_prime = if b_prime {
-                    new_ote_receiver.seeds0[i as usize]
-                } else {
-                    new_ote_receiver.seeds1[i as usize]
-                };
+                let r_b_prime = Zeroizing::new(ct::select_bytes(
+                    &new_ote_receiver.seeds0[i as usize],
+                    &new_ote_receiver.seeds1[i as usize],
+                    ct::choice(b_prime),
+                ));
+                let r_opposite_b_prime = Zeroizing::new(ct::select_bytes(
+                    &new_ote_receiver.seeds1[i as usize],
+                    &new_ote_receiver.seeds0[i as usize],
+                    ct::choice(b_prime),
+                ));
 
-                let mut r0_double_prime: HashOutput = [0; crate::SECURITY as usize];
-                let mut r1_double_prime: HashOutput = [0; crate::SECURITY as usize];
+                let mut r0_double_prime: Zeroizing<HashOutput> =
+                    Zeroizing::new([0; crate::SECURITY as usize]);
+                let mut r1_double_prime: Zeroizing<HashOutput> =
+                    Zeroizing::new([0; crate::SECURITY as usize]);
                 for j in 0..crate::SECURITY {
                     r0_double_prime[j as usize] = r_b_prime[j as usize] ^ r0_prime[j as usize];
                     r1_double_prime[j as usize] =
@@ -1179,8 +1224,8 @@ impl<C: DklsCurve> Party<C> {
                 }
 
                 // Updates new_ote_receiver with the new values.
-                new_ote_receiver.seeds0[i as usize] = r0_double_prime;
-                new_ote_receiver.seeds1[i as usize] = r1_double_prime;
+                new_ote_receiver.seeds0[i as usize] = *r0_double_prime;
+                new_ote_receiver.seeds1[i as usize] = *r1_double_prime;
             }
 
             // We will not change the public gadget vector (well, it is "public" after all).
