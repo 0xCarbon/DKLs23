@@ -183,7 +183,8 @@ fn validate_helpers(
 ///
 /// `term` is masked; only the sum over the whole helper set is meaningful.
 /// The other fields are the helper's view of the group, which
-/// [`repair_assemble`] cross-checks across helpers.
+/// [`repair_assemble`] cross-checks across helpers. `helper` is self-reported:
+/// the target must check it against the authenticated sender of the term.
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
@@ -215,6 +216,8 @@ impl<C: DklsCurve> fmt::Debug for RepairTerm<C> {
 impl<C: DklsCurve> Drop for RepairTerm<C> {
     fn drop(&mut self) {
         self.term.zeroize();
+        self.session_id.zeroize();
+        self.chain_code.zeroize();
     }
 }
 
@@ -325,7 +328,10 @@ pub fn repair_assemble<C: DklsCurve>(
     helpers.dedup();
     if helpers.len() != terms.len()
         || terms.iter().any(|t| {
-            t.target != target
+            t.helper == target
+                || t.helper.as_u8() == 0
+                || t.helper.as_u8() > parameters.share_count
+                || t.target != target
                 || t.session_id != first.session_id
                 || t.chain_code != first.chain_code
                 || t.public_key != *package.verifying_key()
@@ -860,7 +866,18 @@ mod tests {
         wrong_key.public_key = k256::AffinePoint::GENERATOR;
         let mut wrong_target = good[1].clone();
         wrong_target.target = index(2);
-        for wrong in [wrong_chain, wrong_session, wrong_key, wrong_target] {
+        let mut helper_is_target = good[1].clone();
+        helper_is_target.helper = target;
+        let mut helper_out_of_range = good[1].clone();
+        helper_out_of_range.helper = index(4);
+        for wrong in [
+            wrong_chain,
+            wrong_session,
+            wrong_key,
+            wrong_target,
+            helper_is_target,
+            helper_out_of_range,
+        ] {
             assert_eq!(
                 assemble(&package, target, &[good[0].clone(), wrong]),
                 RepairError::InconsistentTerms
