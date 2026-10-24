@@ -1,6 +1,7 @@
 //! Extra functionalities needed in `protocols`.
 
 pub mod commits;
+pub(crate) mod ct;
 pub mod hashes;
 pub mod multiplication;
 pub mod oracle_tags;

@@ -141,6 +141,10 @@ impl ZeroShare {
     /// for the "random number generator". This is achieved by using the current session id.
     /// Moreover, not all parties need to participate in this step, so we need to provide a
     /// list of counterparties.
+    ///
+    /// A counterparty in `counterparties` without a seed is skipped, so the
+    /// shares no longer add up to zero; [`ZeroShare::try_compute`] reports
+    /// it instead.
     #[must_use]
     pub fn compute<C: DklsCurve>(
         &self,
@@ -148,27 +152,65 @@ impl ZeroShare {
         session_id: &[u8],
     ) -> C::Scalar {
         let mut share = <C::Scalar as Field>::ZERO;
-        let seeds = self.seeds.clone();
-        for seed_pair in seeds {
+        for seed_pair in &self.seeds {
             // We ignore if this seed pair comes from a counterparty not in the current list of counterparties
             if !counterparties.contains(&seed_pair.index_counterparty) {
                 continue;
             }
 
             // Seeds generate fragments that add up to the share that will be returned.
-            let fragment =
-                tagged_hash_as_scalar::<C>(TAG_ZERO_SHARE_FRAGMENT, &[session_id, &seed_pair.seed]);
+            let fragment = zeroize::Zeroizing::new(tagged_hash_as_scalar::<C>(
+                TAG_ZERO_SHARE_FRAGMENT,
+                &[session_id, &seed_pair.seed],
+            ));
 
             // This sign guarantees that the shares from different parties add up to zero.
             if seed_pair.lowest_index {
-                share -= fragment;
+                share -= *fragment;
             } else {
-                share += fragment;
+                share += *fragment;
             }
         }
         share
     }
+
+    /// [`ZeroShare::compute`], but every counterparty must have a seed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MissingSeed`] for the first counterparty in
+    /// `counterparties` without a seed.
+    pub fn try_compute<C: DklsCurve>(
+        &self,
+        counterparties: &[PartyIndex],
+        session_id: &[u8],
+    ) -> Result<C::Scalar, MissingSeed> {
+        if let Some(&counterparty) = counterparties.iter().find(|counterparty| {
+            !self
+                .seeds
+                .iter()
+                .any(|seed_pair| seed_pair.index_counterparty == **counterparty)
+        }) {
+            return Err(MissingSeed { counterparty });
+        }
+        Ok(self.compute::<C>(counterparties, session_id))
+    }
 }
+
+/// A counterparty without a zero-share seed (see [`ZeroShare::try_compute`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MissingSeed {
+    pub counterparty: PartyIndex,
+}
+
+impl core::fmt::Display for MissingSeed {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "no zero-share seed for party {}", self.counterparty)
+    }
+}
+
+impl std::error::Error for MissingSeed {}
 
 #[cfg(test)]
 mod tests {
@@ -249,5 +291,30 @@ mod tests {
         //Final check
         let sum: Scalar = shares.iter().sum();
         assert_eq!(sum, Scalar::ZERO);
+    }
+
+    /// try_compute agrees with compute and reports a counterparty without a
+    /// seed, which compute silently skips.
+    #[test]
+    fn test_try_compute_reports_missing_seed() {
+        let two = PartyIndex::new(2).unwrap();
+        let three = PartyIndex::new(3).unwrap();
+        let zero_share = ZeroShare::initialize(vec![SeedPair {
+            lowest_index: true,
+            index_counterparty: two,
+            seed: [7u8; 32],
+        }]);
+        let session_id = b"session";
+
+        assert_eq!(
+            zero_share.try_compute::<TestCurve>(&[two], session_id),
+            Ok(zero_share.compute::<TestCurve>(&[two], session_id))
+        );
+        assert_eq!(
+            zero_share.try_compute::<TestCurve>(&[two, three], session_id),
+            Err(MissingSeed {
+                counterparty: three
+            })
+        );
     }
 }

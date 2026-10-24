@@ -9,7 +9,9 @@
 
 use ff::Field;
 use std::marker::PhantomData;
-use subtle::ConstantTimeEq;
+use subtle::{ConditionallySelectable, ConstantTimeEq};
+
+use crate::utilities::ct;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::curve::DklsCurve;
@@ -586,9 +588,11 @@ impl<C: DklsCurve> MulReceiver<C> {
         let mut b = <C::Scalar as Field>::ZERO;
         for i in 0..BATCH_SIZE {
             let current_bit: bool = rng::get_rng().random();
-            if current_bit {
-                b += &self.public_gadget[i as usize];
-            }
+            b += C::Scalar::conditional_select(
+                &<C::Scalar as Field>::ZERO,
+                &self.public_gadget[i as usize],
+                ct::choice(current_bit),
+            );
             choice_bits.push(current_bit);
         }
 
@@ -714,9 +718,11 @@ impl<C: DklsCurve> MulReceiver<C> {
                 // The entry depends on the choice bits.
                 let mut entry = (-(chi_tilde[i as usize] * z_tilde[i as usize][j as usize]))
                     - (chi_hat[i as usize] * z_hat[i as usize][j as usize]);
-                if data_kept.choice_bits[j as usize] {
-                    entry += &data_received.verify_u[i as usize];
-                }
+                entry += C::Scalar::conditional_select(
+                    &<C::Scalar as Field>::ZERO,
+                    &data_received.verify_u[i as usize],
+                    ct::choice(data_kept.choice_bits[j as usize]),
+                );
 
                 let entry_as_bytes = scalar_to_bytes::<C>(&entry);
                 entries_as_bytes.push(entry_as_bytes);

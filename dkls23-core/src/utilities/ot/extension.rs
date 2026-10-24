@@ -41,7 +41,9 @@ use rand::RngExt;
 use serde::de::Error;
 #[cfg(feature = "serde")]
 use serde::{Deserializer, Serializer};
-use subtle::ConstantTimeEq;
+use subtle::{ConditionallySelectable, ConstantTimeEq};
+
+use crate::utilities::ct;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::curve::DklsCurve;
@@ -341,9 +343,11 @@ impl OTESender {
         for i in 0..KAPPA {
             let mut q_i = [0; (EXTENDED_BATCH_SIZE / 8) as usize];
             for j in 0..EXTENDED_BATCH_SIZE / 8 {
-                q_i[j as usize] = (u8::from(self.correlation[i as usize])
-                    * data.u[i as usize][j as usize])
-                    ^ extended_seeds[i as usize][j as usize];
+                q_i[j as usize] = u8::conditional_select(
+                    &0,
+                    &data.u[i as usize][j as usize],
+                    ct::choice(self.correlation[i as usize]),
+                ) ^ extended_seeds[i as usize][j as usize];
             }
             q.push(q_i);
         }
@@ -403,7 +407,11 @@ impl OTESender {
             let mut verify_sender_i = [0u8; (OT_SECURITY / 8) as usize];
             for k in 0..OT_SECURITY / 8 {
                 verify_sender_i[k as usize] = data.verify_t[i as usize][k as usize]
-                    ^ (u8::from(self.correlation[i as usize]) * data.verify_x[k as usize]);
+                    ^ u8::conditional_select(
+                        &0,
+                        &data.verify_x[k as usize],
+                        ct::choice(self.correlation[i as usize]),
+                    );
             }
 
             verify_sender.push(verify_sender_i);
@@ -892,10 +900,11 @@ impl OTEReceiver {
 
             let mut t_b: Vec<C::Scalar> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE {
-                let mut t_b_j = -v[j as usize];
-                if choice_bits[j as usize] {
-                    t_b_j = tau[j as usize] + t_b_j;
-                }
+                let t_b_j = C::Scalar::conditional_select(
+                    &<C::Scalar as ff::Field>::ZERO,
+                    &tau[j as usize],
+                    ct::choice(choice_bits[j as usize]),
+                ) - v[j as usize];
                 t_b.push(t_b_j);
             }
 
@@ -1001,11 +1010,12 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> Result<FieldElement, ErrorOT> {
     // Algorithm 2.34 (page 49)
     for k in 0..W {
         for j in 0..T {
-            //If the k-th bit of a[j] is 1, we add b to c (with the correct shift).
-            if (a[j as usize] >> k) % 2 == 1 {
-                for i in 0..=T {
-                    c[(j + i) as usize] ^= b[i as usize];
-                }
+            // If the k-th bit of a[j] is 1, we add b to c (with the correct
+            // shift). `left` can hold secret bits, so the addition is masked
+            // instead of branched on.
+            let bit = subtle::Choice::from(((a[j as usize] >> k) & 1) as u8);
+            for i in 0..=T {
+                c[(j + i) as usize] ^= u64::conditional_select(&0, &b[i as usize], bit);
             }
         }
 

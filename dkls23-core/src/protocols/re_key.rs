@@ -21,6 +21,7 @@ use rand::RngExt;
 use crate::protocols::derivation::{ChainCode, DerivData};
 use crate::protocols::{Parameters, Party, PartyIndex, PublicKeyPackage};
 
+use crate::utilities::ct;
 use crate::utilities::hashes::HashOutput;
 use crate::utilities::multiplication::{MulReceiver, MulSender};
 use crate::utilities::ot::{
@@ -28,6 +29,7 @@ use crate::utilities::ot::{
     extension::{OTEReceiver, OTESender},
 };
 use crate::utilities::zero_shares::{self, ZeroShare};
+use zeroize::Zeroizing;
 
 /// Given a secret key, computes the data needed to make
 /// `DKLs23` signatures under the corresponding public key.
@@ -63,7 +65,8 @@ pub fn re_key<C: DklsCurve>(
 
     // We will compute "poly_point" for each party with this polynomial
     // via Shamir's secret sharing.
-    let mut polynomial: Vec<C::Scalar> = Vec::with_capacity(parameters.threshold as usize);
+    let mut polynomial: Zeroizing<Vec<C::Scalar>> =
+        Zeroizing::new(Vec::with_capacity(parameters.threshold as usize));
     polynomial.push(*secret_key);
     for _ in 1..parameters.threshold {
         polynomial.push(C::Scalar::random(&mut rng::get_rng()));
@@ -77,8 +80,8 @@ pub fn re_key<C: DklsCurve>(
     // (1,3), ..., (1,n). The second entry contains the seeds for the pairs
     // (2,3), (2,4), ..., (2,n), and so on. The last entry contains the
     // seed for the pair (n-1, n).
-    let mut common_seeds: Vec<Vec<zero_shares::Seed>> =
-        Vec::with_capacity((parameters.share_count - 1) as usize);
+    let mut common_seeds: Zeroizing<Vec<Vec<zero_shares::Seed>>> =
+        Zeroizing::new(Vec::with_capacity((parameters.share_count - 1) as usize));
     for lower_index in 1..parameters.share_count {
         let mut seeds_with_lower_index: Vec<zero_shares::Seed> =
             Vec::with_capacity((parameters.share_count - lower_index) as usize);
@@ -151,11 +154,11 @@ pub fn re_key<C: DklsCurve>(
             let mut seeds: Vec<HashOutput> = Vec::with_capacity(ot::extension::KAPPA as usize);
             for i in 0..ot::extension::KAPPA {
                 let current_bit: bool = rng::get_rng().random();
-                if current_bit {
-                    seeds.push(seeds1[i as usize]);
-                } else {
-                    seeds.push(seeds0[i as usize]);
-                }
+                seeds.push(ct::select_bytes(
+                    &seeds0[i as usize],
+                    &seeds1[i as usize],
+                    ct::choice(current_bit),
+                ));
                 correlation.push(current_bit);
             }
 
@@ -202,10 +205,10 @@ pub fn re_key<C: DklsCurve>(
     let mut parties: Vec<Party<C>> = Vec::with_capacity(parameters.share_count as usize);
     for index in 1..=parameters.share_count {
         // poly_point is polynomial evaluated at index.
-        let mut poly_point = <C::Scalar as Field>::ZERO;
+        let mut poly_point = Zeroizing::new(<C::Scalar as Field>::ZERO);
         let mut power_of_index = <C::Scalar as Field>::ONE;
         for i in 0..parameters.threshold {
-            poly_point += polynomial[i as usize] * power_of_index;
+            *poly_point += polynomial[i as usize] * power_of_index;
             power_of_index *= C::Scalar::from(u64::from(index));
         }
 
@@ -219,7 +222,7 @@ pub fn re_key<C: DklsCurve>(
             depth: 0,
             child_number: 0, // These three values are initialized as zero for the master node.
             parent_fingerprint: [0; 4],
-            poly_point,
+            poly_point: *poly_point,
             pk,
             chain_code,
         };
@@ -228,7 +231,7 @@ pub fn re_key<C: DklsCurve>(
             parameters: parameters.clone(),
             party_index: PartyIndex::new(index).unwrap(),
             session_id: session_id.to_vec(),
-            poly_point,
+            poly_point: *poly_point,
             pk,
             zero_share: zero_shares[(index - 1) as usize].clone(),
             mul_senders: all_mul_senders[(index - 1) as usize].clone(),
