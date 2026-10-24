@@ -858,12 +858,23 @@ mod tests {
         wrong_session.session_id.push(0);
         let mut wrong_key = good[1].clone();
         wrong_key.public_key = k256::AffinePoint::GENERATOR;
-        for wrong in [wrong_chain, wrong_session, wrong_key] {
+        let mut wrong_target = good[1].clone();
+        wrong_target.target = index(2);
+        for wrong in [wrong_chain, wrong_session, wrong_key, wrong_target] {
             assert_eq!(
                 assemble(&package, target, &[good[0].clone(), wrong]),
                 RepairError::InconsistentTerms
             );
         }
+        // Terms that agree with each other on a key other than the package's.
+        let mut same_wrong_key = good.clone();
+        for term in &mut same_wrong_key {
+            term.public_key = k256::AffinePoint::GENERATOR;
+        }
+        assert_eq!(
+            assemble(&package, target, &same_wrong_key),
+            RepairError::InconsistentTerms
+        );
 
         // A package with invalid parameters is refused before any arithmetic.
         let shares = (1..=3)

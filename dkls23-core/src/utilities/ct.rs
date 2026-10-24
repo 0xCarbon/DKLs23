@@ -34,4 +34,10 @@ mod tests {
         assert_eq!(select_slice(&a, &b, choice(false)), a.to_vec());
         assert_eq!(select_slice(&a, &b, choice(true)), b.to_vec());
     }
+
+    #[test]
+    #[should_panic(expected = "unequal lengths")]
+    fn select_slice_rejects_unequal_lengths() {
+        let _ = select_slice(&[1, 2, 3], &[4, 5], choice(true));
+    }
 }
